@@ -246,7 +246,13 @@ async function downloadReleasePackage(
 
 function releaseManifestArtifact(
   value: unknown,
-  input: { readonly version: string; readonly packageName: string; readonly filename: string },
+  input: {
+    readonly version: string;
+    readonly packageName: string;
+    readonly filename: string;
+    readonly repository: string;
+    readonly tag: string;
+  },
 ): string {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Release manifest is not an object.");
@@ -260,6 +266,8 @@ function releaseManifestArtifact(
     manifest.profile !== "pi-omp" ||
     manifest.version !== input.version ||
     manifest.packageName !== input.packageName ||
+    manifest.repository !== input.repository ||
+    manifest.tag !== input.tag ||
     packageRecord?.name !== input.packageName ||
     packageRecord.version !== input.version
   ) {
@@ -316,7 +324,13 @@ function prepareForkReleasePackage(input: {
       }
       const manifestChecksum = releaseManifestArtifact(
         await decodeUnknownJsonPromise(Buffer.from(manifestBytes).toString("utf8")),
-        { version: input.version, packageName: input.packageName, filename },
+        {
+          version: input.version,
+          packageName: input.packageName,
+          filename,
+          repository: input.repository,
+          tag,
+        },
       );
       const sumsChecksum = checksumFor(sums, filename);
       if (!sumsChecksum || sumsChecksum !== manifestChecksum) {

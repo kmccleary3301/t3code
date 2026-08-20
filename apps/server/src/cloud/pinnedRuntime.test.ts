@@ -98,6 +98,8 @@ const forkReleaseFetch = (
       profile: "pi-omp",
       version: "1.2.3",
       packageName: "t3-pi-omp",
+      repository: "owner/fork",
+      tag: "fork-v1.2.3",
       package: { name: "t3-pi-omp", version: "1.2.3" },
       artifacts: [{ name: filename, kind: "cli", sha256: packageHash }],
     }),
