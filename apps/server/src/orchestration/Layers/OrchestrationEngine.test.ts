@@ -773,6 +773,7 @@ describe("OrchestrationEngine", () => {
         files: [],
         assistantMessageId: null,
         completedAt: createdAt,
+        nativeCheckpoint: null,
       },
     ]);
     await system.dispose();
