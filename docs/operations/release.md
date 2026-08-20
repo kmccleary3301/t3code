@@ -8,7 +8,7 @@ This document covers the unified release workflow for stable and nightly desktop
 
 - Workflow: `.github/workflows/release.yml`
 - Triggers:
-  - push tag matching `v*.*.*` for stable releases
+  - push tag matching `v*.*.*` (upstream) or `fork-v*.*.*` (Pi + OMP) for stable releases
   - scheduled nightly check every three hours
   - manual `workflow_dispatch` for either channel
 - Runs quality gates first: lint, typecheck, test.
@@ -33,6 +33,8 @@ This document covers the unified release workflow for stable and nightly desktop
   - fork releases always attach a locally packed tarball to GitHub and publish to npm only when the
     repository variable `T3_PI_OMP_PUBLISH_NPM=true`
   - stable npm releases use dist-tag `latest`; nightly npm releases use `nightly`
+  - fork background-service installs and self-updates fetch the same GitHub tarball, verify both
+    `RELEASE-MANIFEST.json` and `SHA256SUMS`, then install from the verified local archive
 - Deploys the hosted web app to Vercel only for the upstream profile after publication:
   - stable releases are aliased to the `latest` hosted app channel
   - nightly releases are aliased to the `nightly` hosted app channel

@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -11,8 +13,10 @@ import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
+  type RuntimeFetch,
   PinnedRuntimeInstallError,
   resolveRuntimePackageName,
+  resolveRuntimeReleaseRepository,
   resolveRuntimeProductProfile,
 } from "./pinnedRuntime.ts";
 
@@ -42,6 +46,20 @@ it("resolves the fork runtime package from explicit identity", () => {
     }),
     "pi-omp",
   );
+  assert.equal(
+    resolveRuntimeReleaseRepository({
+      env: { T3_PI_OMP_RELEASE_REPOSITORY: "https://github.com/owner/fork.git" },
+      argv: [],
+    }),
+    "owner/fork",
+  );
+  assert.equal(
+    resolveRuntimeReleaseRepository({
+      env: { T3_PI_OMP_RELEASE_REPOSITORY: "https://example.com/owner/fork" },
+      argv: [],
+    }),
+    undefined,
+  );
 });
 
 const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
@@ -66,6 +84,33 @@ const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
         };
       }),
   });
+const digest = (value: Uint8Array | string): string =>
+  NodeCrypto.createHash("sha256").update(value).digest("hex");
+
+const forkReleaseFetch = (
+  packageBytes: Uint8Array,
+  downloadedBytes: Uint8Array = packageBytes,
+): RuntimeFetch => {
+  const filename = "t3-pi-omp-1.2.3.tgz";
+  const packageHash = digest(packageBytes);
+  const manifestBytes = Buffer.from(
+    JSON.stringify({
+      profile: "pi-omp",
+      version: "1.2.3",
+      packageName: "t3-pi-omp",
+      package: { name: "t3-pi-omp", version: "1.2.3" },
+      artifacts: [{ name: filename, kind: "cli", sha256: packageHash }],
+    }),
+  );
+  const sums = `${digest(manifestBytes)}  RELEASE-MANIFEST.json\n${packageHash}  ${filename}\n`;
+  return async (input) => {
+    const url = String(input);
+    if (url.endsWith("/SHA256SUMS")) return new Response(sums);
+    if (url.endsWith("/RELEASE-MANIFEST.json")) return new Response(manifestBytes);
+    if (url.endsWith(`/${filename}`)) return new Response(downloadedBytes);
+    return new Response("not found", { status: 404 });
+  };
+};
 
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
   it.effect("validates a staging tree before atomically publishing it", () =>
@@ -202,5 +247,85 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const versionsDir = path.join(baseDir, "runtime", "versions");
       assert.deepEqual(yield* fs.readDirectory(versionsDir), []);
     }),
+  );
+
+  it.effect("installs a checksum-verified fork release package without npm registry access", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-fork-" });
+      const packageBytes = Buffer.from("verified fork package");
+      let installSource = "";
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.gen(function* () {
+            installSource = input.args.at(-1) ?? "";
+            assert.match(installSource, /t3-pi-omp-1\.2\.3\.tgz$/u);
+            assert.isTrue(yield* fs.exists(installSource));
+            const prefix = input.args[input.args.indexOf("--prefix") + 1]!;
+            const entry = path.join(prefix, "node_modules", "t3-pi-omp", "dist", "bin.mjs");
+            yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
+            yield* fs.writeFileString(entry, "export {};\n");
+            return {
+              stdout: "",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }).pipe(Effect.orDie),
+      });
+
+      const installed = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        packageName: "t3-pi-omp",
+        releaseRepository: "owner/fork",
+        fetch: forkReleaseFetch(packageBytes),
+        fs,
+        path,
+        runner,
+        validate: () => Effect.void,
+      });
+
+      assert.isTrue(yield* fs.exists(installed.entryPath));
+      assert.isFalse(yield* fs.exists(installSource));
+    }),
+  );
+
+  it.effect(
+    "rejects a fork release package whose downloaded bytes fail checksum verification",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-fork-" });
+        let ranInstaller = false;
+        const result = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version: "1.2.3",
+          packageName: "t3-pi-omp",
+          releaseRepository: "owner/fork",
+          fetch: forkReleaseFetch(
+            Buffer.from("expected fork package"),
+            Buffer.from("tampered fork package"),
+          ),
+          fs,
+          path,
+          runner: ProcessRunner.ProcessRunner.of({
+            run: () => {
+              ranInstaller = true;
+              return Effect.die("installer must not run");
+            },
+          }),
+          validate: () => Effect.void,
+        }).pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        assert.isFalse(ranInstaller);
+      }),
   );
 });
