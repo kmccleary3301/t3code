@@ -15,7 +15,10 @@ import {
   resolveWebAssetBrandForPackageVersion,
   resolveWebIconOverrides,
 } from "../../../scripts/lib/brand-assets.ts";
-import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
+import {
+  resolveCatalogDependencies,
+  resolveNpmCompatibleOverrides,
+} from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -282,7 +285,7 @@ const publishCmd = Command.make(
               workspaceCatalog,
               "apps/server",
             ),
-            overrides: resolveCatalogDependencies(
+            overrides: resolveNpmCompatibleOverrides(
               workspaceOverrides,
               workspaceCatalog,
               "apps/server",

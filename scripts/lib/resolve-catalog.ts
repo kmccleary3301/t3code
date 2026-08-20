@@ -48,3 +48,17 @@ export function resolveCatalogDependencies(
     }),
   );
 }
+
+/**
+ * Resolve workspace override catalog entries for an npm-published package.
+ * pnpm's `parent>child` selector keys are workspace-only syntax that npm
+ * rejects while packing or installing a tarball; direct package pins remain.
+ */
+export function resolveNpmCompatibleOverrides(
+  overrides: Record<string, string>,
+  catalog: Record<string, string>,
+  workspacePackage: string,
+): Record<string, string> {
+  const resolved = resolveCatalogDependencies(overrides, catalog, workspacePackage);
+  return Object.fromEntries(Object.entries(resolved).filter(([name]) => !name.includes(">")));
+}
