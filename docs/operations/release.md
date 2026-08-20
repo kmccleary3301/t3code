@@ -59,15 +59,15 @@ build provenance attestations. Fork npm publication is an explicit opt-in.
 ### Published private release
 
 The current owner-controlled stable release is
-[`fork-v0.0.35`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.35), built from
-`4919a487fcd7311328c00d3cdcab4a7545b06d46`. Its installer SHA-256 is
+[`fork-v0.0.37`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.37), built from
+`08314d8606bc5953f33396a6abae31d3e0978d7b`. Its installer SHA-256 is
 `452ff311eaff06ce1794be9950a2b0327e8000bb332a65e2641f1a7373069f93`, its release-manifest
-SHA-256 is `9eb2d2a6a76f01ecf5de87a35b4ef01c1e23349af61ebfbbe4d3a0b8f74ceb3d`, and its
-`t3-pi-omp-0.0.35.tgz` SHA-256 is
-`dffc95656e4f1fd389c26a610e0621d15dbcb9894d75b36275d046360a4c5b79`.
+SHA-256 is `30f8d3ab464b07921722c33592e7b66199e0d2cf0ae9a9e0c228c72fd90c5db4`, and its
+`t3-pi-omp-0.0.37.tgz` SHA-256 is
+`f4c48f9d9be4ce5fbc1e2a87d01319b0dcf28cbb0344f21431df65336c1f8c43`.
 
 Release workflow run
-[`32340861002`](https://github.com/kmccleary3301/t3code/actions/runs/32340861002) passed preflight,
+[`32425598994`](https://github.com/kmccleary3301/t3code/actions/runs/32425598994) passed preflight,
 all five desktop builds, local fork CLI packaging, provenance attestation, and GitHub publication.
 The release contains macOS arm64/x64 DMG and ZIP artifacts, Linux arm64/x64 AppImages, a Windows
 x64 NSIS installer, the CLI tarball, updater metadata, the installer, manifest, and checksums. No
