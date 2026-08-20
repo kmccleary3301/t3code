@@ -51,6 +51,53 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("uses first-class labels for Pi-family providers", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "pi",
+          driver: "pi",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "pi-model", name: "Pi model", capabilities: null }],
+        },
+        {
+          instanceId: "omp",
+          driver: "omp",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "omp-model", name: "OMP model", capabilities: null }],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(groupByProvider(buildModelOptions(config, null))).toMatchObject([
+      { providerKey: "pi", providerLabel: "Pi" },
+      { providerKey: "omp", providerLabel: "Oh My Pi" },
+    ]);
+  });
+
+  it("falls back to the canonical provider display name when the server omits one", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "cursor",
+          driver: "cursor",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "composer-2", name: "Composer 2", capabilities: null }],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(groupByProvider(buildModelOptions(config, null))).toMatchObject([
+      { providerKey: "cursor", providerLabel: "Cursor" },
+    ]);
+  });
+
   it("normalizes a legacy fallback selection against current capabilities", () => {
     const config = {
       providers: [

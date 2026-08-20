@@ -1,4 +1,4 @@
-import { OrchestrationCheckpointFile } from "@t3tools/contracts";
+import { NativeCheckpointDescriptor, OrchestrationCheckpointFile } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -20,6 +20,9 @@ import {
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    nativeCheckpoint: Schema.optional(
+      Schema.fromJsonString(Schema.NullOr(NativeCheckpointDescriptor)),
+    ),
   }),
 );
 
@@ -32,7 +35,6 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 
 const makeProjectionCheckpointRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-
   const clearCheckpointConflict = SqlSchema.void({
     Request: GetByThreadAndTurnCountInput,
     execute: ({ threadId, checkpointTurnCount }) =>
@@ -42,7 +44,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_turn_count = NULL,
           checkpoint_ref = NULL,
           checkpoint_status = NULL,
-          checkpoint_files_json = '[]'
+          checkpoint_files_json = '[]',
+          native_checkpoint_json = 'null'
         WHERE thread_id = ${threadId}
           AND checkpoint_turn_count = ${checkpointTurnCount}
       `,
@@ -64,7 +67,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_turn_count,
           checkpoint_ref,
           checkpoint_status,
-          checkpoint_files_json
+          checkpoint_files_json,
+          native_checkpoint_json
         )
         VALUES (
           ${row.threadId},
@@ -78,7 +82,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           ${row.checkpointTurnCount},
           ${row.checkpointRef},
           ${row.status},
-          ${row.files}
+          ${row.files},
+          ${row.nativeCheckpoint ?? "null"}
         )
         ON CONFLICT (thread_id, turn_id)
         DO UPDATE SET
@@ -88,7 +93,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_turn_count = excluded.checkpoint_turn_count,
           checkpoint_ref = excluded.checkpoint_ref,
           checkpoint_status = excluded.checkpoint_status,
-          checkpoint_files_json = excluded.checkpoint_files_json
+          checkpoint_files_json = excluded.checkpoint_files_json,
+          native_checkpoint_json = excluded.native_checkpoint_json
       `,
   });
 
@@ -104,6 +110,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_ref AS "checkpointRef",
           checkpoint_status AS "status",
           checkpoint_files_json AS "files",
+          native_checkpoint_json AS "nativeCheckpoint",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -125,6 +132,7 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_ref AS "checkpointRef",
           checkpoint_status AS "status",
           checkpoint_files_json AS "files",
+          native_checkpoint_json AS "nativeCheckpoint",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -132,7 +140,6 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           AND checkpoint_turn_count = ${checkpointTurnCount}
       `,
   });
-
   const deleteProjectionCheckpointRows = SqlSchema.void({
     Request: DeleteByThreadIdInput,
     execute: ({ threadId }) =>
@@ -142,7 +149,8 @@ const makeProjectionCheckpointRepository = Effect.gen(function* () {
           checkpoint_turn_count = NULL,
           checkpoint_ref = NULL,
           checkpoint_status = NULL,
-          checkpoint_files_json = '[]'
+          checkpoint_files_json = '[]',
+          native_checkpoint_json = 'null'
         WHERE thread_id = ${threadId}
           AND checkpoint_turn_count IS NOT NULL
       `,

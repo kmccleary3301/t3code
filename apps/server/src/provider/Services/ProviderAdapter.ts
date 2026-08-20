@@ -113,6 +113,27 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+  /**
+   * Capture the provider-native checkpoint leaf for a quiescent session.
+   *
+   * Providers without native checkpoint capability omit this method. The
+   * returned value is opaque and may be `undefined` when the runtime has no
+   * native leaf to persist.
+   */
+  readonly captureNativeCheckpoint?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<unknown | undefined, TError>;
+
+  /**
+   * Restore an opaque provider-native checkpoint leaf into a quiescent session.
+   *
+   * Providers without native checkpoint capability omit this method. Callers
+   * must treat an omitted method as unsupported when a native leaf exists.
+   */
+  readonly restoreNativeCheckpoint?: (
+    threadId: ThreadId,
+    checkpoint: unknown,
+  ) => Effect.Effect<void, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

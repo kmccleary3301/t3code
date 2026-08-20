@@ -21,7 +21,7 @@ import {
   TrimmedString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -319,6 +319,27 @@ export type OrchestrationCheckpointFile = typeof OrchestrationCheckpointFile.Typ
 export const OrchestrationCheckpointStatus = Schema.Literals(["ready", "missing", "error"]);
 export type OrchestrationCheckpointStatus = typeof OrchestrationCheckpointStatus.Type;
 
+/**
+ * Versioned envelope for provider-native checkpoint state.
+ *
+ * The native leaf is deliberately opaque to the contracts package. The
+ * identity fields are not opaque: they bind a leaf to the runtime, provider
+ * instance, orchestration thread, and native session that captured it.
+ */
+export const NativeCheckpointDescriptor = Schema.Struct({
+  version: Schema.Literal(1),
+  runtime: TrimmedNonEmptyString,
+  provider: ProviderDriverKind,
+  instanceId: ProviderInstanceId,
+  threadId: ThreadId,
+  sessionId: TrimmedNonEmptyString,
+  captureState: Schema.Literals(["captured"]),
+  opaque: Schema.Unknown,
+});
+export type NativeCheckpointDescriptor = typeof NativeCheckpointDescriptor.Type;
+
+export const isNativeCheckpointDescriptor = Schema.is(NativeCheckpointDescriptor);
+
 export const OrchestrationCheckpointSummary = Schema.Struct({
   turnId: TurnId,
   checkpointTurnCount: NonNegativeInt,
@@ -327,6 +348,11 @@ export const OrchestrationCheckpointSummary = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
+  /**
+   * Versioned provider-native state captured alongside the filesystem ref.
+   * Clients must not interpret the opaque leaf.
+   */
+  nativeCheckpoint: Schema.optional(Schema.NullOr(NativeCheckpointDescriptor)),
 });
 export type OrchestrationCheckpointSummary = typeof OrchestrationCheckpointSummary.Type;
 
@@ -1010,6 +1036,7 @@ const ThreadTurnDiffCompleteCommand = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.optional(MessageId),
   checkpointTurnCount: NonNegativeInt,
+  nativeCheckpoint: Schema.optional(Schema.NullOr(NativeCheckpointDescriptor)),
   createdAt: IsoDateTime,
 });
 
@@ -1302,7 +1329,6 @@ export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
   threadId: ThreadId,
   proposedPlan: OrchestrationProposedPlan,
 });
-
 export const ThreadTurnDiffCompletedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
@@ -1312,8 +1338,8 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
+  nativeCheckpoint: Schema.optional(Schema.NullOr(NativeCheckpointDescriptor)),
 });
-
 export const ThreadActivityAppendedPayload = Schema.Struct({
   threadId: ThreadId,
   activity: OrchestrationThreadActivity,
@@ -1543,8 +1569,6 @@ const ProjectionThreadTurnStatus = Schema.Literals([
   "interrupted",
   "error",
 ]);
-export type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
-
 const ProjectionCheckpointRow = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
@@ -1554,9 +1578,9 @@ const ProjectionCheckpointRow = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
+  nativeCheckpoint: Schema.optional(Schema.NullOr(NativeCheckpointDescriptor)),
 });
 export type ProjectionCheckpointRow = typeof ProjectionCheckpointRow.Type;
-
 export const ProjectionPendingApprovalStatus = Schema.Literals(["pending", "resolved"]);
 export type ProjectionPendingApprovalStatus = typeof ProjectionPendingApprovalStatus.Type;
 

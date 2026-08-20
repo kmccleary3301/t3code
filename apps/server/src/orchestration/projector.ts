@@ -667,6 +667,7 @@ export function projectEvent(
             files: payload.files,
             assistantMessageId: payload.assistantMessageId,
             completedAt: payload.completedAt,
+            nativeCheckpoint: payload.nativeCheckpoint,
           },
           event.type,
           "checkpoint",

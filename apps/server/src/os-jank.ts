@@ -1,3 +1,8 @@
+import {
+  parseProductProfile,
+  resolveProductIdentity,
+  type ProductProfile,
+} from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   listLoginShellCandidates,
@@ -102,10 +107,23 @@ export const expandHomePath = Effect.fn(function* (input: string) {
   return input;
 });
 
-export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
+export const resolveProfileBaseDir = Effect.fn(function* (
+  baseDir: string,
+  profile: ProductProfile = parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+) {
+  const { join } = yield* Path.Path;
+  return profile === "upstream"
+    ? baseDir
+    : join(baseDir, resolveProductIdentity(profile).stateDirectoryName);
+});
+
+export const resolveBaseDir = Effect.fn(function* (
+  raw: string | undefined,
+  profile: ProductProfile = parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+) {
   const { join, resolve } = yield* Path.Path;
-  if (!raw || raw.trim().length === 0) {
-    return join(NodeOS.homedir(), ".t3");
+  if (raw && raw.trim().length > 0) {
+    return resolve(yield* expandHomePath(raw.trim()));
   }
-  return resolve(yield* expandHomePath(raw.trim()));
+  return yield* resolveProfileBaseDir(join(NodeOS.homedir(), ".t3"), profile);
 });

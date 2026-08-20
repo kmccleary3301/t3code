@@ -340,6 +340,8 @@ describe("ProviderCommandReactor", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      captureNativeCheckpoint: () => Effect.succeed(undefined),
+      restoreNativeCheckpoint: () => Effect.void,
       get streamEvents() {
         return Stream.fromPubSub(runtimeEventPubSub);
       },

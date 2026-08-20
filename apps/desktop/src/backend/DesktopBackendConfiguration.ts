@@ -403,6 +403,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
+        T3_PRODUCT_PROFILE: environment.productProfile,
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
       extendEnv: true,
@@ -522,6 +523,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       forwardedEnvNames.push(name);
     }
   }
+  forwardedEnv.T3_PRODUCT_PROFILE = environment.productProfile;
+  forwardedEnvNames.push("T3_PRODUCT_PROFILE");
 
   // Build an explicit copy of process.env minus T3CODE_HOME (dev-runner
   // exports the Windows-side base dir for the primary; if it leaks into
@@ -538,11 +541,11 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const baseConfig = {
     executablePath: "wsl.exe",
     entryPath: wslEntryPath,
-    cwd: environment.backendCwd,
     env: {
       ...parentEnvWithoutT3Home,
       ...backendChildEnvPatch(),
       ...forwardedEnv,
+      T3_PRODUCT_PROFILE: environment.productProfile,
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
     // env is already a complete process.env minus T3CODE_HOME; pass it

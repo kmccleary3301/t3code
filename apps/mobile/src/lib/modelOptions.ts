@@ -1,7 +1,9 @@
-import type {
-  ModelCapabilities,
-  ModelSelection,
-  ServerConfig as T3ServerConfig,
+import {
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind,
+  type ModelCapabilities,
+  type ModelSelection,
+  type ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
@@ -33,9 +35,7 @@ function providerDisplayLabel(provider: {
   readonly instanceId: string;
 }): string {
   if (provider.displayName) return provider.displayName;
-  if (provider.driver === "codex") return "Codex";
-  if (provider.driver === "claudeAgent") return "Claude";
-  return provider.instanceId;
+  return PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make(provider.driver)] ?? provider.instanceId;
 }
 
 function normalizeSelectionOptions(

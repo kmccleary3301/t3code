@@ -62,7 +62,7 @@ function makeReadModel(
     readonly session: {
       readonly threadId: ThreadId;
       readonly status: "starting" | "running" | "ready" | "interrupted" | "stopped" | "error";
-      readonly providerName: "codex" | "claudeAgent";
+      readonly providerName: "codex" | "claudeAgent" | "pi" | "omp";
       readonly runtimeMode: "approval-required" | "full-access" | "auto-accept-edits";
       readonly activeTurnId: TurnId | null;
       readonly lastError: string | null;
@@ -184,6 +184,8 @@ describe("ProviderSessionReaper", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      captureNativeCheckpoint: () => Effect.succeed(undefined),
+      restoreNativeCheckpoint: () => Effect.void,
       streamEvents: Stream.empty,
     };
 
@@ -277,6 +279,46 @@ describe("ProviderSessionReaper", () => {
 
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
     expect(harness.stoppedThreadIds.has(threadId)).toBe(true);
+  });
+
+  it("retains stale Pi-family sessions without native resume state", async () => {
+    const threadId = ThreadId.make("thread-reaper-pi");
+    const now = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "pi",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "pi",
+        providerInstanceId: null,
+        adapterKey: "pi",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        resumeCursor: null,
+        runtimePayload: null,
+      }),
+    );
+    await startReaper();
+    await Effect.runPromise(drainFibers);
+    expect(harness.stopSession).not.toHaveBeenCalled();
   });
 
   it("skips stale sessions when the thread still has an active turn", async () => {

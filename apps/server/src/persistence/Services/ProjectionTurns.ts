@@ -10,6 +10,7 @@ import {
   CheckpointRef,
   IsoDateTime,
   MessageId,
+  NativeCheckpointDescriptor,
   NonNegativeInt,
   OrchestrationProposedPlanId,
   OrchestrationCheckpointFile,
@@ -48,9 +49,9 @@ export const ProjectionTurn = Schema.Struct({
   checkpointRef: Schema.NullOr(CheckpointRef),
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
   checkpointFiles: Schema.Array(OrchestrationCheckpointFile),
+  nativeCheckpoint: Schema.NullOr(Schema.optional(NativeCheckpointDescriptor)),
 });
 export type ProjectionTurn = typeof ProjectionTurn.Type;
-
 export const ProjectionTurnById = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
@@ -66,6 +67,7 @@ export const ProjectionTurnById = Schema.Struct({
   checkpointRef: Schema.NullOr(CheckpointRef),
   checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
   checkpointFiles: Schema.Array(OrchestrationCheckpointFile),
+  nativeCheckpoint: Schema.NullOr(Schema.optional(NativeCheckpointDescriptor)),
 });
 export type ProjectionTurnById = typeof ProjectionTurnById.Type;
 

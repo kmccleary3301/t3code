@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+import {
+  parseProductProfile,
+  resolveProductIdentity,
+  type ProductProfile,
+} from "@t3tools/contracts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
@@ -185,25 +190,48 @@ const parseNightlyTag = (tag: string): NightlyVersion | undefined => {
     major: Number(major),
     minor: Number(minor),
     patch: Number(patch),
+
     date: Number(date),
     runNumber: Number(runNumber),
   };
+};
+const normalizeReleaseTag = (
+  tag: string,
+  tagPrefix: string,
+  allowLegacyNightly = false,
+): string | undefined => {
+  if (tag.startsWith(tagPrefix)) return `v${tag.slice(tagPrefix.length)}`;
+  if (allowLegacyNightly && tag.startsWith(`nightly-${tagPrefix}`)) {
+    return `v${tag.slice(`nightly-${tagPrefix}`.length)}`;
+  }
+  return undefined;
 };
 
 export const resolvePreviousReleaseTag = (
   channel: ReleaseChannel,
   currentTag: string,
   tags: ReadonlyArray<string>,
+  profile: ProductProfile = "upstream",
 ) =>
   Effect.gen(function* () {
+    const tagPrefix = resolveProductIdentity(profile).releaseTagPrefix;
+    const normalizedCurrentTag = normalizeReleaseTag(currentTag, tagPrefix, channel === "nightly");
+    if (normalizedCurrentTag === undefined) {
+      return yield* new InvalidReleaseTagError({ channel, currentTag });
+    }
+
     if (channel === "stable") {
-      const current = parseStableTag(currentTag);
+      const current = parseStableTag(normalizedCurrentTag);
       if (!current) {
         return yield* new InvalidReleaseTagError({ channel, currentTag });
       }
 
       const candidates = tags
-        .map((tag) => ({ tag, parsed: parseStableTag(tag) }))
+        .map((tag) => ({ tag, normalized: normalizeReleaseTag(tag, tagPrefix) }))
+        .map((entry) => ({
+          tag: entry.tag,
+          parsed: entry.normalized ? parseStableTag(entry.normalized) : undefined,
+        }))
         .filter(
           (entry): entry is { tag: string; parsed: StableVersion } => entry.parsed !== undefined,
         )
@@ -213,13 +241,17 @@ export const resolvePreviousReleaseTag = (
       return candidates[0]?.tag;
     }
 
-    const current = parseNightlyTag(currentTag);
+    const current = parseNightlyTag(normalizedCurrentTag);
     if (!current) {
       return yield* new InvalidReleaseTagError({ channel, currentTag });
     }
 
     const candidates = tags
-      .map((tag) => ({ tag, parsed: parseNightlyTag(tag) }))
+      .map((tag) => ({ tag, normalized: normalizeReleaseTag(tag, tagPrefix, true) }))
+      .map((entry) => ({
+        tag: entry.tag,
+        parsed: entry.normalized ? parseNightlyTag(entry.normalized) : undefined,
+      }))
       .filter(
         (entry): entry is { tag: string; parsed: NightlyVersion } => entry.parsed !== undefined,
       )
@@ -345,14 +377,20 @@ const command = Command.make(
     currentTag: Flag.string("current-tag").pipe(
       Flag.withDescription("Current release tag to compare against."),
     ),
+    profile: Flag.string("profile").pipe(
+      Flag.withDescription("Product profile whose release tags should be compared."),
+      Flag.withDefault("upstream"),
+    ),
     githubOutput: Flag.boolean("github-output").pipe(
-      Flag.withDescription("Write values to GITHUB_OUTPUT instead of stdout."),
+      Flag.withDescription("Write GITHUB_OUTPUT instead of stdout."),
       Flag.withDefault(false),
     ),
   },
-  ({ channel, currentTag, githubOutput }) =>
+  ({ channel, currentTag, profile, githubOutput }) =>
     listGitTags().pipe(
-      Effect.flatMap((tags) => resolvePreviousReleaseTag(channel, currentTag, tags)),
+      Effect.flatMap((tags) =>
+        resolvePreviousReleaseTag(channel, currentTag, tags, parseProductProfile(profile)),
+      ),
       Effect.flatMap((previousTag) => writePreviousReleaseTagOutput(previousTag, githubOutput)),
     ),
 ).pipe(Command.withDescription("Resolve the previous release tag for a stable or nightly series."));

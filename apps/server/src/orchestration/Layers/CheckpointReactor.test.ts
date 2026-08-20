@@ -55,6 +55,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
@@ -81,12 +82,18 @@ function createProviderServiceHarness(
   hasSession = true,
   sessionCwd = cwd,
   providerName: ProviderSession["provider"] = ProviderDriverKind.make("codex"),
+  native?: {
+    readonly currentCheckpoint?: unknown;
+    readonly restore?: ProviderServiceShape["restoreNativeCheckpoint"];
+  },
 ) {
   const now = "2026-01-01T00:00:00.000Z";
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const rollbackConversation = vi.fn(
     (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
   );
+  const captureNativeCheckpoint = vi.fn(() => Effect.succeed(native?.currentCheckpoint));
+  const restoreNativeCheckpoint = native?.restore ?? (() => Effect.void);
 
   const unsupported = <A>() =>
     Effect.die(new Error("Unsupported provider call in test")) as Effect.Effect<A, never>;
@@ -95,6 +102,7 @@ function createProviderServiceHarness(
       ? Effect.succeed([
           {
             provider: providerName,
+            providerInstanceId: ProviderInstanceId.make(String(providerName)),
             status: "ready",
             runtimeMode: "full-access",
             threadId: ThreadId.make("thread-1"),
@@ -125,6 +133,8 @@ function createProviderServiceHarness(
         },
       }),
     rollbackConversation,
+    captureNativeCheckpoint,
+    restoreNativeCheckpoint,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },
@@ -137,6 +147,8 @@ function createProviderServiceHarness(
   return {
     service,
     rollbackConversation,
+    captureNativeCheckpoint,
+    restoreNativeCheckpoint,
     emit,
   };
 }
@@ -148,12 +160,14 @@ async function waitForThread(
       readonly latestTurn: { readonly turnId: string } | null;
       readonly checkpoints: ReadonlyArray<{ readonly checkpointTurnCount: number }>;
       readonly activities: ReadonlyArray<{ readonly kind: string }>;
+      readonly session: { readonly status: string; readonly lastError: string | null } | null;
     }>;
   }>,
   predicate: (thread: {
     latestTurn: { turnId: string } | null;
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
+    session: { readonly status: string; readonly lastError: string | null } | null;
   }) => boolean,
   timeoutMs = 15_000,
 ) {
@@ -162,6 +176,7 @@ async function waitForThread(
     latestTurn: { turnId: string } | null;
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
+    session: { readonly status: string; readonly lastError: string | null } | null;
   }> => {
     const snapshot = await readModel();
     const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
@@ -285,6 +300,8 @@ describe("CheckpointReactor", () => {
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
+    readonly nativeCurrentCheckpoint?: unknown;
+    readonly nativeRestore?: ProviderServiceShape["restoreNativeCheckpoint"];
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -293,6 +310,12 @@ describe("CheckpointReactor", () => {
       options?.hasSession ?? true,
       options?.providerSessionCwd ?? cwd,
       options?.providerName ?? ProviderDriverKind.make("codex"),
+      {
+        ...(options?.nativeCurrentCheckpoint === undefined
+          ? {}
+          : { currentCheckpoint: options.nativeCurrentCheckpoint }),
+        ...(options?.nativeRestore === undefined ? {} : { restore: options.nativeRestore }),
+      },
     );
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -1080,6 +1103,93 @@ describe("CheckpointReactor", () => {
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
     ).toBe(false);
+  });
+
+  it("blocks the thread when native restore fails after filesystem restore", async () => {
+    let restoreAttempts = 0;
+    const nativeRestore = vi.fn(() => {
+      restoreAttempts += 1;
+      return restoreAttempts === 1
+        ? Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: "pi",
+              method: "restore_checkpoint",
+              detail: "injected native restore failure",
+            }),
+          )
+        : Effect.void;
+    });
+    const harness = await createHarness({
+      providerName: ProviderDriverKind.make("pi"),
+      nativeCurrentCheckpoint: { cursor: "current" },
+      nativeRestore,
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-native-failure"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "pi",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-diff-native-failure"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-native-failure"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        nativeCheckpoint: {
+          version: 1,
+          runtime: "pi",
+          provider: ProviderDriverKind.make("pi"),
+          instanceId: ProviderInstanceId.make("pi"),
+          threadId: ThreadId.make("thread-1"),
+          sessionId: "thread-1",
+          captureState: "captured",
+          opaque: { cursor: "target" },
+        },
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-revert-native-failure"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.lastError).toContain("checkpoint recovery blocked:");
+    expect(thread.latestTurn?.turnId).toBe("turn-native-failure");
+    expect(harness.provider.restoreNativeCheckpoint).toHaveBeenCalledTimes(2);
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+    expect(events.some((event) => event.type === "thread.reverted")).toBe(false);
   });
 
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {

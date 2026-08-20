@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -25,19 +25,27 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
           run-install: true
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           components: rustfmt
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
+      - name: Installer focused tests
+        run: vp test run scripts/install.test.ts
+
+      - name: Product identity contract tests
+        run: vp test run packages/contracts/src/productIdentity.test.ts
+
+      # No relative-import checker exists in the package scripts; do not invent
+      # a CI-only replacement that could drift from the supported Vite+ graph.
 
       - name: Check
         run: vp check
@@ -63,7 +71,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -71,14 +79,14 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
           run-install: true
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -88,6 +96,13 @@ jobs:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
         run: vp run test
+      - name: Pi and OMP protocol fixture tests
+        run: >-
+          vp test run
+          apps/server/src/provider/piFamily/ProtocolContract.test.ts
+          apps/server/src/provider/piFamily/NativeAdapter.test.ts
+          apps/server/src/provider/piFamily/OmpChunkAssembler.test.ts
+          apps/server/src/provider/piFamily/StrictJsonlDecoder.test.ts
 
       - name: Publish transfer budget report
         if: always()
@@ -100,7 +115,7 @@ jobs:
 
       - name: Upload thread transfer result
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: thread-transfer-results
           path: ${{ runner.temp }}/thread-transfer-result.json
@@ -116,7 +131,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -124,7 +139,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -144,7 +159,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: |
             /*
@@ -152,7 +167,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -161,4 +176,7 @@ jobs:
               - --filter=@t3tools/scripts...
 
       - name: Exercise release-only workflow steps
-        run: node scripts/release-smoke.ts
+        run: vp run release:smoke
+
+      - name: Release security invariants
+        run: node scripts/release-security-check.ts

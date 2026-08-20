@@ -10,6 +10,7 @@ import {
   CheckpointRef,
   IsoDateTime,
   MessageId,
+  NativeCheckpointDescriptor,
   NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointStatus,
@@ -32,6 +33,7 @@ export const ProjectionCheckpoint = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
+  nativeCheckpoint: Schema.NullOr(Schema.optional(NativeCheckpointDescriptor)),
 });
 export type ProjectionCheckpoint = typeof ProjectionCheckpoint.Type;
 

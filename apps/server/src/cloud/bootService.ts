@@ -3,6 +3,11 @@ import {
   HostProcessPlatform,
   HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
+import {
+  resolveProductIdentity,
+  type ProductIdentity,
+  type ProductProfile,
+} from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -18,6 +23,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
+  resolveRuntimeProductProfile,
   PinnedRuntimeInstallError,
 } from "./pinnedRuntime.ts";
 import {
@@ -29,12 +35,18 @@ import {
   type ServiceState,
 } from "./serviceProtocol.ts";
 
-const BOOT_SERVICE_NAME = "t3code";
-export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
-// `.service` suffix keeps the label distinct from the desktop app's bundle id
-// (com.t3tools.t3code), so launchd and TCC records never collide.
-export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
-export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
+/**
+ * Service unit/plist names are derived from the product identity so the fork
+ * (`t3-pi-omp`) never collides with the official product's systemd unit or
+ * launchd/TCC records. A `.service` suffix keeps each label distinct from the
+ * matching desktop app's bundle identifier.
+ */
+export const bootServiceUnitFile = (identity: ProductIdentity) =>
+  `${identity.linuxWmClass}.service`;
+export const bootServiceLaunchdLabel = (identity: ProductIdentity) =>
+  `${identity.bundleIdentifier}.service`;
+export const bootServicePlistFile = (identity: ProductIdentity) =>
+  `${bootServiceLaunchdLabel(identity)}.plist`;
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
@@ -55,14 +67,17 @@ export interface BootServicePlan {
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+  readonly productProfile: ProductProfile;
 }
 
 /** Pure renderer: service units cannot rely on the user's shell or PATH. */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
+  const identity = resolveProductIdentity(plan.productProfile);
+  const unitFile = bootServiceUnitFile(identity);
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
-    "Description=T3 Code server",
+    `Description=${identity.baseName} server`,
     "StartLimitIntervalSec=300",
     "StartLimitBurst=5",
     "",
@@ -70,7 +85,8 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
-    `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
+    `Environment=T3_PRODUCT_PROFILE=${identity.profile}`,
+    `Environment=${BOOT_SERVICE_UNIT_ENV}=${unitFile}`,
     `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.launcherPath)}`,
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
@@ -113,13 +129,14 @@ export function renderBootServicePlist(
   // process-group members only when the launcher itself exits — the analog of
   // KillMode=mixed's final cgroup kill — and not when the launcher restarts its
   // child, so agent children survive server updates.
+  const identity = resolveProductIdentity(plan.productProfile);
   return [
     `<?xml version="1.0" encoding="UTF-8"?>`,
     `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">`,
     `<plist version="1.0">`,
     `<dict>`,
     `  <key>Label</key>`,
-    `  <string>${BOOT_SERVICE_LAUNCHD_LABEL}</string>`,
+    `  <string>${bootServiceLaunchdLabel(identity)}</string>`,
     `  <key>ProgramArguments</key>`,
     `  <array>`,
     `    <string>${escapeXmlText(plan.nodePath)}</string>`,
@@ -129,8 +146,10 @@ export function renderBootServicePlist(
     `  <dict>`,
     `    <key>T3CODE_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
+    `    <key>T3_PRODUCT_PROFILE</key>`,
+    `    <string>${escapeXmlText(identity.profile)}</string>`,
     `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
-    `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
+    `    <string>${escapeXmlText(bootServicePlistFile(identity))}</string>`,
     `  </dict>`,
     `  <key>WorkingDirectory</key>`,
     `  <string>${escapeXmlText(options.homeDir)}</string>`,
@@ -200,14 +219,10 @@ export interface BootServiceManager {
 export function systemdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
+  readonly identity: ProductIdentity;
 }): BootServiceManager {
-  const unitPath = input.path.join(
-    input.homeDir,
-    ".config",
-    "systemd",
-    "user",
-    BOOT_SERVICE_UNIT_FILE,
-  );
+  const unitFile = bootServiceUnitFile(input.identity);
+  const unitPath = input.path.join(input.homeDir, ".config", "systemd", "user", unitFile);
   return {
     kind: "systemd",
     unitPath,
@@ -216,7 +231,7 @@ export function systemdManager(input: {
       {
         step: "stopping the installed service",
         command: "systemctl",
-        args: ["--user", "stop", BOOT_SERVICE_UNIT_FILE],
+        args: ["--user", "stop", unitFile],
         timeout: STOP_STEP_TIMEOUT,
       },
     ],
@@ -229,28 +244,28 @@ export function systemdManager(input: {
       {
         step: "enabling the service",
         command: "systemctl",
-        args: ["--user", "enable", BOOT_SERVICE_UNIT_FILE],
+        args: ["--user", "enable", unitFile],
       },
       { step: "enabling lingering for this user", command: "loginctl", args: ["enable-linger"] },
       // Start last. No administrative state write occurs after this succeeds.
       {
         step: "starting the service",
         command: "systemctl",
-        args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
+        args: ["--user", "restart", unitFile],
       },
     ],
     restart: [
       {
         step: "restarting the service after a failed update",
         command: "systemctl",
-        args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
+        args: ["--user", "restart", unitFile],
       },
     ],
     deactivate: [
       {
         step: "stopping the service",
         command: "systemctl",
-        args: ["--user", "disable", "--now", BOOT_SERVICE_UNIT_FILE],
+        args: ["--user", "disable", "--now", unitFile],
         timeout: STOP_STEP_TIMEOUT,
       },
     ],
@@ -268,15 +283,13 @@ export function launchdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
   readonly uid: number;
+  readonly identity: ProductIdentity;
 }): BootServiceManager {
-  const unitPath = input.path.join(
-    input.homeDir,
-    "Library",
-    "LaunchAgents",
-    BOOT_SERVICE_PLIST_FILE,
-  );
+  const launchdLabel = bootServiceLaunchdLabel(input.identity);
+  const plistFile = bootServicePlistFile(input.identity);
+  const unitPath = input.path.join(input.homeDir, "Library", "LaunchAgents", plistFile);
   const domainTarget = `gui/${input.uid}`;
-  const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
+  const serviceTarget = `${domainTarget}/${launchdLabel}`;
   // bootout/enable are optional: they fail on not-loaded states that are fine
   // to proceed from. The strict `bootstrap` runs last and is also the start:
   // loading a RunAtLoad/KeepAlive plist starts the job, so a separate
@@ -346,15 +359,21 @@ export function selectBootServiceManager(input: {
   readonly homeDir: string;
   readonly uid: number | undefined;
   readonly path: Path.Path;
+  readonly identity: ProductIdentity;
 }): BootServiceManager | undefined {
   if (input.homeDir === "") {
     return undefined;
   }
   if (input.platform === "linux") {
-    return systemdManager({ path: input.path, homeDir: input.homeDir });
+    return systemdManager({ path: input.path, homeDir: input.homeDir, identity: input.identity });
   }
   if (input.platform === "darwin" && input.uid !== undefined) {
-    return launchdManager({ path: input.path, homeDir: input.homeDir, uid: input.uid });
+    return launchdManager({
+      path: input.path,
+      homeDir: input.homeDir,
+      uid: input.uid,
+      identity: input.identity,
+    });
   }
   return undefined;
 }
@@ -446,7 +465,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
 
-  const detectedManager = selectBootServiceManager({ platform, homeDir, uid, path });
+  const runtimeProfile = resolveRuntimeProductProfile();
+  const runtimeIdentity = resolveProductIdentity(runtimeProfile);
+  const detectedManager = selectBootServiceManager({
+    platform,
+    homeDir,
+    uid,
+    path,
+    identity: runtimeIdentity,
+  });
   const unitPath = detectedManager?.unitPath ?? "";
   const logPath = path.join(input.logsDir, "boot-service.log");
   const launcherPath = path.join(input.baseDir, "runtime", SERVICE_LAUNCHER_FILE);
@@ -473,6 +500,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     baseDir: input.baseDir,
     logPath,
     unitPath,
+    productProfile: runtimeProfile,
   };
 
   const requireManager = Effect.suspend(() =>

@@ -97,6 +97,7 @@ const resolveDesktopSshCliRunner = (
       appVersion: environment.appVersion,
       updateChannel: settings.updateChannel,
       isDevelopment: environment.isDevelopment,
+      packageName: environment.cliPackageName,
     }),
     nodeEngineRange: serverPackageJson.engines.node,
   };

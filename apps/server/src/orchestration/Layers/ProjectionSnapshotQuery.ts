@@ -3,6 +3,7 @@ import {
   CheckpointRef,
   IsoDateTime,
   MessageId,
+  NativeCheckpointDescriptor,
   NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationProposedPlanId,
@@ -101,6 +102,9 @@ const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    nativeCheckpoint: Schema.optional(
+      Schema.fromJsonString(Schema.NullOr(NativeCheckpointDescriptor)),
+    ),
   }),
 );
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
@@ -666,6 +670,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           checkpoint_ref AS "checkpointRef",
           checkpoint_status AS "status",
           checkpoint_files_json AS "files",
+          native_checkpoint_json AS "nativeCheckpoint",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -1103,6 +1108,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           checkpoint_ref AS "checkpointRef",
           checkpoint_status AS "status",
           checkpoint_files_json AS "files",
+          native_checkpoint_json AS "nativeCheckpoint",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -1610,6 +1616,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   files: row.files,
                   assistantMessageId: row.assistantMessageId,
                   completedAt: row.completedAt,
+                  nativeCheckpoint: row.nativeCheckpoint,
                 });
                 checkpointsByThread.set(row.threadId, threadCheckpoints);
               }
@@ -2385,6 +2392,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             files: row.files,
             assistantMessageId: row.assistantMessageId,
             completedAt: row.completedAt,
+            nativeCheckpoint: row.nativeCheckpoint,
           }),
         ),
       });
@@ -2653,6 +2661,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           files: row.files,
           assistantMessageId: row.assistantMessageId,
           completedAt: row.completedAt,
+          nativeCheckpoint: row.nativeCheckpoint,
         })),
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
       };

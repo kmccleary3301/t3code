@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type {
@@ -23,6 +23,7 @@ export interface ProviderSettingsFieldModel {
   readonly description?: string | undefined;
   readonly placeholder?: string | undefined;
   readonly clearWhenEmpty: "omit" | "persist";
+  readonly valueFormat?: "json" | undefined;
   readonly defaultBooleanValue?: boolean | undefined;
 }
 
@@ -103,6 +104,9 @@ export function deriveProviderSettingsFields(
             ? { placeholder: formAnnotation.placeholder }
             : {}),
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
+          ...(formAnnotation.valueFormat !== undefined
+            ? { valueFormat: formAnnotation.valueFormat }
+            : {}),
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
@@ -111,10 +115,36 @@ export function deriveProviderSettingsFields(
     });
 }
 
-export function readProviderConfigString(config: unknown, key: string): string {
+export function readProviderConfigString(
+  config: unknown,
+  key: string,
+  valueFormat?: ProviderSettingsFieldModel["valueFormat"],
+): string {
   if (config === null || typeof config !== "object") return "";
   const value = (config as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : "";
+  if (typeof value === "string") return value;
+  if (valueFormat === "json" && value !== undefined) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+export function isProviderConfigFieldValueValid(
+  field: ProviderSettingsFieldModel,
+  value: string,
+): boolean {
+  if (field.valueFormat !== "json") return true;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return true;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return parsed !== null && typeof parsed === "object";
+  } catch {
+    return false;
+  }
 }
 
 export function readProviderConfigBoolean(
@@ -148,6 +178,23 @@ export function nextProviderConfigWithFieldValue(
   const trimmed = value.trim();
   if (field.clearWhenEmpty === "omit" && trimmed.length === 0) {
     delete base[field.key];
+  } else if (field.valueFormat === "json") {
+    if (trimmed.length === 0) {
+      delete base[field.key];
+    } else {
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (parsed === null || typeof parsed !== "object") {
+          return base;
+        }
+        base[field.key] = parsed;
+      } catch {
+        // Keep the last valid structured value while the user is editing an
+        // incomplete JSON draft. The field row keeps that draft locally until
+        // the next valid commit.
+        return base;
+      }
+    }
   } else {
     base[field.key] = value;
   }
@@ -188,6 +235,17 @@ function ProviderSettingsFieldRow({
   onChange,
 }: ProviderSettingsFieldRowProps) {
   const inputId = `${idPrefix}-${field.key}`;
+  const persistedStringValue = readProviderConfigString(value, field.key, field.valueFormat);
+  const [draftStringValue, setDraftStringValue] = useState<string | null>(null);
+  const stringValue = draftStringValue ?? persistedStringValue;
+  const commitStringValue = (next: string) => {
+    if (!isProviderConfigFieldValueValid(field, next)) {
+      setDraftStringValue(next);
+      return;
+    }
+    setDraftStringValue(null);
+    onChange(nextProviderConfigWithFieldValue(value, field, next));
+  };
   const descriptionClassName =
     variant === "card"
       ? "mt-1 block text-xs text-muted-foreground"
@@ -225,10 +283,8 @@ function ProviderSettingsFieldRow({
           <Textarea
             id={inputId}
             className={cn(variant === "card" && "mt-1.5")}
-            value={readProviderConfigString(value, field.key)}
-            onChange={(event) =>
-              onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
-            }
+            value={stringValue}
+            onChange={(event) => commitStringValue(event.target.value)}
             placeholder={field.placeholder}
             spellCheck={false}
           />
@@ -249,8 +305,8 @@ function ProviderSettingsFieldRow({
             className="mt-1.5"
             type={type}
             autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
-            onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+            value={stringValue}
+            onCommit={commitStringValue}
             placeholder={field.placeholder}
             spellCheck={false}
           />
@@ -260,10 +316,8 @@ function ProviderSettingsFieldRow({
             className="bg-background"
             type={type}
             autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
-            onChange={(event) =>
-              onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
-            }
+            value={stringValue}
+            onChange={(event) => commitStringValue(event.target.value)}
             placeholder={field.placeholder}
             spellCheck={false}
           />

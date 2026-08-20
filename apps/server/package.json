@@ -16,6 +16,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/bin.ts",
+    "build": "pnpm run build:bundle",
     "build:bundle": "vp pack && vp pack src/service-launcher.ts --out-dir dist --no-clean",
     "start": "node dist/bin.mjs",
     "typecheck": "tsgo --noEmit",

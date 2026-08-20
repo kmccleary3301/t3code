@@ -1,3 +1,4 @@
+import { parseProductProfile, resolveProductIdentity } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -50,11 +51,16 @@ function resolveEarlyDesktopSettingsPath(input: {
   readonly joinPath: JoinPath;
 }): string {
   const t3Home = Option.fromUndefinedOr(input.env.T3CODE_HOME);
-  const baseDir = resolveDesktopBaseDir({
+  const baseDirRoot = resolveDesktopBaseDir({
     homeDirectory: input.homeDirectory,
     joinPath: input.joinPath,
     t3Home,
   });
+  const identity = resolveProductIdentity(parseProductProfile(input.env.T3_PRODUCT_PROFILE));
+  const baseDir =
+    identity.profile === "upstream"
+      ? baseDirRoot
+      : input.joinPath(baseDirRoot, identity.stateDirectoryName);
   const stateDir = resolveDesktopStateDir({
     baseDir,
     isDevelopment: isDevelopmentEnvironment(input.env),
@@ -75,13 +81,15 @@ export function resolveEarlyLinuxPasswordStorePreference(
     return DEFAULT_LINUX_PASSWORD_STORE;
   }
 }
-
 export function resolveEarlyLinuxElectronOptions(
   input: EarlyLinuxElectronOptionsInput,
 ): EarlyLinuxElectronOptions {
   const preference = resolveEarlyLinuxPasswordStorePreference(input);
+  const identity = resolveProductIdentity(parseProductProfile(input.env.T3_PRODUCT_PROFILE));
   return {
-    linuxWmClass: isDevelopmentEnvironment(input.env) ? "t3code-dev" : "t3code",
+    linuxWmClass: isDevelopmentEnvironment(input.env)
+      ? `${identity.linuxWmClass}-dev`
+      : identity.linuxWmClass,
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,
       env: input.env,

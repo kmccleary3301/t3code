@@ -104,6 +104,23 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
+  /**
+   * Capture the opaque provider-native checkpoint leaf for a quiescent turn.
+   * Providers without native checkpoint support return `undefined`.
+   */
+  readonly captureNativeCheckpoint: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<unknown | undefined, ProviderServiceError>;
+
+  /**
+   * Restore an opaque provider-native checkpoint leaf into a quiescent
+   * provider session. A missing provider capability is an explicit failure
+   * when a checkpoint leaf is supplied.
+   */
+  readonly restoreNativeCheckpoint: (input: {
+    readonly threadId: ThreadId;
+    readonly checkpoint: unknown;
+  }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

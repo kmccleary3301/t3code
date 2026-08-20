@@ -1,3 +1,5 @@
+import type { ProductProfile } from "@t3tools/contracts";
+import { parseProductProfile, resolveProductIdentity } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,20 +10,34 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
+declare const __T3CODE_BUILD_PRODUCT_PROFILE__: string | undefined;
+
 export const DESKTOP_HOST = "app";
 export const DESKTOP_PRODUCTION_SCHEME = "t3code";
 export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
 
-export function getDesktopScheme(isDevelopment: boolean): string {
-  return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
+function resolveRuntimeProductProfile(): ProductProfile {
+  return parseProductProfile(
+    typeof __T3CODE_BUILD_PRODUCT_PROFILE__ === "string"
+      ? __T3CODE_BUILD_PRODUCT_PROFILE__
+      : process.env.T3_PRODUCT_PROFILE,
+  );
 }
 
-export function getDesktopOrigin(isDevelopment: boolean): string {
-  return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
+export function getDesktopScheme(
+  isDevelopment: boolean,
+  profile: ProductProfile = resolveRuntimeProductProfile(),
+): string {
+  const identity = resolveProductIdentity(profile);
+  return isDevelopment ? identity.developmentScheme : identity.productionScheme;
 }
 
-export function getDesktopUrl(isDevelopment: boolean): string {
-  return `${getDesktopOrigin(isDevelopment)}/`;
+export function getDesktopOrigin(isDevelopment: boolean, profile?: ProductProfile): string {
+  return `${getDesktopScheme(isDevelopment, profile)}://${DESKTOP_HOST}`;
+}
+
+export function getDesktopUrl(isDevelopment: boolean, profile?: ProductProfile): string {
+  return `${getDesktopOrigin(isDevelopment, profile)}/`;
 }
 
 export class ElectronProtocolRegistrationError extends Schema.TaggedErrorClass<ElectronProtocolRegistrationError>()(
@@ -94,7 +110,6 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "form-action 'self'",
   ].join("; ");
 }
-
 function withContentSecurityPolicy(response: Response, policy: string): Response {
   const headers = new Headers(response.headers);
   headers.set("Content-Security-Policy", policy);
@@ -108,27 +123,21 @@ function withContentSecurityPolicy(response: Response, policy: string): Response
 /**
  * Must run synchronously during process bootstrap, before Electron emits `ready`.
  */
-export function registerDesktopSchemePrivilegesSync(): void {
-  Electron.protocol.registerSchemesAsPrivileged([
-    {
-      scheme: DESKTOP_PRODUCTION_SCHEME,
+export function registerDesktopSchemePrivilegesSync(
+  profile: ProductProfile = resolveRuntimeProductProfile(),
+): void {
+  const identity = resolveProductIdentity(profile);
+  Electron.protocol.registerSchemesAsPrivileged(
+    [identity.productionScheme, identity.developmentScheme].map((scheme) => ({
+      scheme,
       privileges: {
         standard: true,
         secure: true,
         supportFetchAPI: true,
         corsEnabled: true,
       },
-    },
-    {
-      scheme: DESKTOP_DEVELOPMENT_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-      },
-    },
-  ]);
+    })),
+  );
 }
 
 const registerDesktopSchemePrivileges = Effect.sync(registerDesktopSchemePrivilegesSync).pipe(

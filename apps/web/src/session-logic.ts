@@ -52,8 +52,9 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  { value: ProviderDriverKind.make("pi"), label: "Pi", available: true },
+  { value: ProviderDriverKind.make("omp"), label: "Oh My Pi", available: true },
 ];
-
 export type WorkLogToolLifecycleStatus =
   | "inProgress"
   | "completed"

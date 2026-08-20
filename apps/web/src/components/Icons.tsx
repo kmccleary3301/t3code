@@ -696,3 +696,31 @@ export const PiAgentIcon: Icon = ({ className, ...props }) => (
     <path fill="#fff" d="M517.36 400H634.72V634.72H517.36Z" />
   </svg>
 );
+
+export const PiIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 800 800" className={cn("fill-black dark:fill-white", className)}>
+    <path
+      fillRule="evenodd"
+      d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
+    />
+    <path d="M517.36 400H634.72V634.72H517.36Z" />
+  </svg>
+);
+
+export const OmpIcon: Icon = (props) => {
+  const gradientId = `${useId().replaceAll(":", "")}-omp-gradient`;
+
+  return (
+    <svg {...props} viewBox="0 0 64 64">
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ed4abf" />
+          <stop offset=".5" stopColor="#9b4dff" />
+          <stop offset="1" stopColor="#5ad8e6" />
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="12" fill="#0f0a14" />
+      <path fill={`url(#${gradientId})`} d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" />
+    </svg>
+  );
+};

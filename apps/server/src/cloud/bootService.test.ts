@@ -30,6 +30,7 @@ it("keeps systemd pinned to the stable launcher rather than a versioned server",
     baseDir: "/home/theo/.t3",
     logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
     unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    productProfile: "upstream",
   });
 
   expect(unit).toContain("ExecStart=/usr/bin/node /home/theo/.t3/runtime/service-launcher.mjs");
@@ -44,6 +45,7 @@ it("survives the kernel OOM-killing a greedy agent child", () => {
     baseDir: "/home/theo/.t3",
     logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
     unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    productProfile: "upstream",
   });
 
   expect(unit).toContain("OOMPolicy=continue");
@@ -55,6 +57,7 @@ const macPlan = {
   baseDir: "/Users/theo/.t3",
   logPath: "/Users/theo/.t3/userdata/logs/boot-service.log",
   unitPath: "/Users/theo/Library/LaunchAgents/com.t3tools.t3code.service.plist",
+  productProfile: "upstream",
 };
 
 it("keeps launchd pinned to the stable launcher rather than a versioned server", () => {

@@ -11,6 +11,7 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
+import { resolveProductIdentity } from "@t3tools/contracts";
 // Linux ships as an AppImage, so the .desktop entry users end up with is
 // created by whatever integration tool they use (AppImageLauncher names it
 // appimagekit_<hash>-….desktop) and its filename is not under our control.
@@ -19,8 +20,8 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // prompting "Choose an application" for every OAuth callback. Instead, write
 // our own handler entry pointing at the current AppImage and claim the
 // scheme default via xdg-mime, exactly what the file manager's "set as
-// default" checkbox would record in mimeapps.list.
-export const URL_HANDLER_DESKTOP_ENTRY_NAME = "t3code-url-handler.desktop";
+export const URL_HANDLER_DESKTOP_ENTRY_NAME =
+  resolveProductIdentity("upstream").linuxUrlHandlerDesktopEntryName;
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 
@@ -97,10 +98,15 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const scheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
+  const scheme = ElectronProtocol.getDesktopScheme(
+    environment.isDevelopment,
+    environment.productProfile,
+  );
+  const urlHandlerDesktopEntryName =
+    environment.productIdentity?.linuxUrlHandlerDesktopEntryName ?? URL_HANDLER_DESKTOP_ENTRY_NAME;
   const desktopEntryPath = environment.path.join(
     environment.linuxApplicationsDir,
-    URL_HANDLER_DESKTOP_ENTRY_NAME,
+    urlHandlerDesktopEntryName,
   );
 
   const writeDesktopEntry = Effect.gen(function* () {
@@ -132,7 +138,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const command = ChildProcess.make(
         "xdg-mime",
-        ["default", URL_HANDLER_DESKTOP_ENTRY_NAME, `x-scheme-handler/${scheme}`],
+        ["default", urlHandlerDesktopEntryName, `x-scheme-handler/${scheme}`],
         {
           stdin: "ignore",
           stdout: "ignore",

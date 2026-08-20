@@ -1,3 +1,4 @@
+import type { ProductProfile } from "@t3tools/contracts";
 import { createClerkBridge } from "@clerk/electron";
 import { storage } from "@clerk/electron/storage";
 import * as Context from "effect/Context";
@@ -72,12 +73,16 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
-export function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
+export function createDesktopClerkBridge(
+  stateDir: string,
+  isDevelopment: boolean,
+  productProfile?: ProductProfile,
+) {
   return createClerkBridge({
     storage: storage({ path: stateDir }),
     passkeys: true,
     renderer: {
-      scheme: ElectronProtocol.getDesktopScheme(isDevelopment),
+      scheme: ElectronProtocol.getDesktopScheme(isDevelopment, productProfile),
       host: ElectronProtocol.DESKTOP_HOST,
     },
   });
@@ -98,7 +103,12 @@ export const make = Effect.gen(function* () {
 
   const bridge = yield* Effect.acquireRelease(
     Effect.try({
-      try: () => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment),
+      try: () =>
+        createDesktopClerkBridge(
+          environment.stateDir,
+          environment.isDevelopment,
+          environment.productProfile,
+        ),
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,

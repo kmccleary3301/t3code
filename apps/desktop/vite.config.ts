@@ -8,6 +8,9 @@ const publicConfigDefine = {
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
     repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),
+  __T3CODE_BUILD_PRODUCT_PROFILE__: JSON.stringify(
+    process.env.T3_PRODUCT_PROFILE?.trim() || "upstream",
+  ),
 };
 
 export default defineConfig({

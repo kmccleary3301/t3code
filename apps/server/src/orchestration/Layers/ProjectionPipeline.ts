@@ -1288,6 +1288,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               checkpointRef: null,
               checkpointStatus: null,
               checkpointFiles: [],
+              nativeCheckpoint: null,
             });
           }
 
@@ -1351,6 +1352,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointTurnCount: null,
             checkpointRef: null,
             checkpointStatus: null,
+            nativeCheckpoint: null,
             checkpointFiles: [],
           });
           return;
@@ -1388,6 +1390,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointTurnCount: null,
             checkpointRef: null,
             checkpointStatus: null,
+            nativeCheckpoint: null,
             checkpointFiles: [],
           });
           return;
@@ -1423,6 +1426,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               checkpointRef: event.payload.checkpointRef,
               checkpointStatus: event.payload.status,
               checkpointFiles: event.payload.files,
+              nativeCheckpoint: event.payload.nativeCheckpoint,
               startedAt: existingTurn.value.startedAt ?? event.payload.completedAt,
               requestedAt: existingTurn.value.requestedAt ?? event.payload.completedAt,
               completedAt: event.payload.completedAt,
@@ -1444,6 +1448,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointRef: event.payload.checkpointRef,
             checkpointStatus: event.payload.status,
             checkpointFiles: event.payload.files,
+            nativeCheckpoint: event.payload.nativeCheckpoint,
           });
           return;
         }
