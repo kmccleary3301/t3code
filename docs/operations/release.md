@@ -58,17 +58,24 @@ build provenance attestations. Fork npm publication is an explicit opt-in.
 
 ### Published private release
 
-The first owner-controlled release is
-[`fork-v0.0.33`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.33), built from
-`c4b928f2ed7ce29ce4576fa697c9dec229c1614c`. Its installer SHA-256 is
-`452ff311eaff06ce1794be9950a2b0327e8000bb332a65e2641f1a7373069f93`. The release contains the
-verified `t3-pi-omp` CLI/web package and macOS arm64 DMG/ZIP, but no optional Pi/OMP runtime bundles.
+The current owner-controlled stable release is
+[`fork-v0.0.35`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.35), built from
+`4919a487fcd7311328c00d3cdcab4a7545b06d46`. Its installer SHA-256 is
+`452ff311eaff06ce1794be9950a2b0327e8000bb332a65e2641f1a7373069f93`, its release-manifest
+SHA-256 is `9eb2d2a6a76f01ecf5de87a35b4ef01c1e23349af61ebfbbe4d3a0b8f74ceb3d`, and its
+`t3-pi-omp-0.0.35.tgz` SHA-256 is
+`dffc95656e4f1fd389c26a610e0621d15dbcb9894d75b36275d046360a4c5b79`.
 
-This inaugural release was uploaded manually after local manifest, checksum, DMG, install, and
-uninstall verification. Its macOS artifacts are unsigned and unnotarized, and it has neither npm
-OIDC provenance nor GitHub build attestations. The startup defect discovered in the tag-triggered
-workflow was corrected on `main` by `5342659ef`; configure signing, npm trusted publishing, and
-release credentials before relying on the automated publication path.
+Release workflow run
+[`32340861002`](https://github.com/kmccleary3301/t3code/actions/runs/32340861002) passed preflight,
+all five desktop builds, local fork CLI packaging, provenance attestation, and GitHub publication.
+The release contains macOS arm64/x64 DMG and ZIP artifacts, Linux arm64/x64 AppImages, a Windows
+x64 NSIS installer, the CLI tarball, updater metadata, the installer, manifest, and checksums. No
+optional Pi/OMP runtime bundles were configured.
+
+GitHub attests the published release assets, but platform signing credentials were not configured.
+The desktop artifacts are therefore unsigned and the macOS artifacts are unnotarized. Fork npm
+publication remains disabled; the checksummed GitHub tarball is the authoritative CLI package.
 
 ### Optional Pi/OMP runtime bundles
 
