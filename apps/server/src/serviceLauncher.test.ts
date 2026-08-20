@@ -4,7 +4,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  Launcher,
+  readServiceState,
+  runtimePaths,
+  resolveLauncherRuntimePackageName,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -20,6 +26,16 @@ it("accepts only exact semantic versions", () => {
   for (const version of ["latest", "01.2.3", "1.2.3-01", "1.2.3-alpha..1", "1.2.3+."]) {
     assert.isFalse(isExactServiceVersion(version), version);
   }
+});
+
+it("selects an isolated pinned runtime package for the fork service", () => {
+  assert.equal(resolveLauncherRuntimePackageName({ T3_PRODUCT_PROFILE: "upstream" }), "t3");
+  assert.equal(resolveLauncherRuntimePackageName({ T3_PRODUCT_PROFILE: "pi-omp" }), "t3-pi-omp");
+  assert.equal(resolveLauncherRuntimePackageName({}), "t3");
+  assert.include(
+    runtimePaths("/runtime", "1.2.3", { T3_PRODUCT_PROFILE: "pi-omp" }).entryPath,
+    "/node_modules/t3-pi-omp/dist/bin.mjs",
+  );
 });
 
 it("orders exact semantic versions without treating build metadata as precedence", () => {
@@ -89,6 +105,43 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
 
       yield* Effect.promise(() => writeServiceState(statePath, state));
       assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), state);
+    }),
+  );
+
+  it.effect("starts the fork service from its isolated pinned package path", () =>
+    Effect.gen(function* () {
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const previous = process.env.T3_PRODUCT_PROFILE;
+          process.env.T3_PRODUCT_PROFILE = "pi-omp";
+          return previous;
+        }),
+        (previous) =>
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env.T3_PRODUCT_PROFILE;
+            else process.env.T3_PRODUCT_PROFILE = previous;
+          }),
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-fork-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const version = "1.0.0";
+      const paths = runtimePaths(root, version, { T3_PRODUCT_PROFILE: "pi-omp" });
+      yield* fs.makeDirectory(path.dirname(paths.entryPath), { recursive: true });
+      yield* fs.writeFileString(paths.entryPath, 'process.on("message", () => {});\n');
+      yield* fs.writeFileString(paths.sentinelPath, `${version}\n`);
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: version,
+        }),
+      );
+
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const running = launcher.run();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
     }),
   );
 

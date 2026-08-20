@@ -41,11 +41,25 @@ interface ManagedChild {
   readonly process: NodeChildProcess.ChildProcess;
 }
 
-const runtimePaths = (baseDir: string, version: string) => {
+export const resolveLauncherRuntimePackageName = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): "t3" | "t3-pi-omp" => (env.T3_PRODUCT_PROFILE === "pi-omp" ? "t3-pi-omp" : "t3");
+
+export const runtimePaths = (
+  baseDir: string,
+  version: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
   return {
     versionDir,
-    entryPath: NodePath.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+    entryPath: NodePath.join(
+      versionDir,
+      "node_modules",
+      resolveLauncherRuntimePackageName(env),
+      "dist",
+      "bin.mjs",
+    ),
     sentinelPath: NodePath.join(versionDir, ".install-complete"),
   };
 };
@@ -392,7 +406,9 @@ export class Launcher {
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
     if (this.#stopping) return;
     if (!(await runtimeExists(this.#baseDir, version))) {
-      throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
+      throw new Error(
+        `Selected ${resolveLauncherRuntimePackageName()}@${version} runtime is missing or incomplete.`,
+      );
     }
     if (this.#stopping) return;
     const paths = runtimePaths(this.#baseDir, version);
