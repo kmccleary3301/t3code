@@ -522,11 +522,11 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
           // The existing WSLENV is preserved byte-for-byte (note the empty
           // "::" segment survives — WSL ignores it, so we don't normalize
-          // it away) and ANTHROPIC_API_KEY is appended. OPENAI_API_KEY is
-          // already declared, so it isn't forwarded twice.
+          // it away). ANTHROPIC_API_KEY and the explicit product profile are
+          // appended; OPENAI_API_KEY is already declared, so it isn't forwarded twice.
           assert.equal(
             config.env.WSLENV,
-            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY",
+            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY:T3_PRODUCT_PROFILE",
           );
         }).pipe(
           Effect.provide(
