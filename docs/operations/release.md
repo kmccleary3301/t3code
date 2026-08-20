@@ -45,9 +45,23 @@ Fork releases use the same workflow with an isolated product profile:
 The upstream and fork products must never share package names, desktop schemes, bundle IDs, state
 directories, or release tags.
 
-Every release also publishes `install.sh` and `SHA256SUMS`. Desktop assets are signed when the
-platform credentials are configured; the CLI is published with npm OIDC provenance; GitHub release
-assets receive build provenance attestations.
+The automated workflow also publishes `install.sh` and `SHA256SUMS`. Desktop assets are signed when
+the platform credentials are configured; the CLI is published with npm OIDC provenance; GitHub
+release assets receive build provenance attestations.
+
+### Published private release
+
+The first owner-controlled release is
+[`fork-v0.0.33`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.33), built from
+`c4b928f2ed7ce29ce4576fa697c9dec229c1614c`. Its installer SHA-256 is
+`452ff311eaff06ce1794be9950a2b0327e8000bb332a65e2641f1a7373069f93`. The release contains the
+verified `t3-pi-omp` CLI/web package and macOS arm64 DMG/ZIP, but no optional Pi/OMP runtime bundles.
+
+This inaugural release was uploaded manually after local manifest, checksum, DMG, install, and
+uninstall verification. Its macOS artifacts are unsigned and unnotarized, and it has neither npm
+OIDC provenance nor GitHub build attestations. The startup defect discovered in the tag-triggered
+workflow was corrected on `main` by `5342659ef`; configure signing, npm trusted publishing, and
+release credentials before relying on the automated publication path.
 
 ### Optional Pi/OMP runtime bundles
 

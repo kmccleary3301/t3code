@@ -28,25 +28,32 @@ curl -fsSL https://github.com/pingdotgg/t3code/releases/latest/download/install.
   sh -s -- --profile upstream
 ```
 
-For the private Pi + OMP product, use the owner-controlled fork repository and its separate
-release channel:
+For the private Pi + OMP product, use the owner-controlled
+[`kmccleary3301/t3code`](https://github.com/kmccleary3301/t3code) release channel:
 
 ```sh
-curl -fsSL https://github.com/OWNER/REPOSITORY/releases/latest/download/install.sh |
-  sh -s -- --profile pi-omp --repository OWNER/REPOSITORY
+curl -fsSL https://github.com/kmccleary3301/t3code/releases/latest/download/install.sh |
+  sh -s -- --profile pi-omp --repository kmccleary3301/t3code
 ```
 
-Replace `OWNER/REPOSITORY` with the configured `T3_PI_OMP_RELEASE_REPOSITORY`; do not point
-the private installer at the official T3 release repository. For a pinned, auditable install,
-download `install.sh`, `RELEASE-MANIFEST.json`, and `SHA256SUMS` from the exact `fork-vX.Y.Z`
-release, verify the installer with the checksum file, then run it locally:
+Do not point the private installer at the official T3 release repository. For a pinned,
+auditable install of the published `fork-v0.0.33` release, download the verification files
+from that exact release, verify the installer, then run it locally:
 
 ```sh
+base=https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.33
+curl -fsSLO "$base/install.sh"
+curl -fsSLO "$base/RELEASE-MANIFEST.json"
+curl -fsSLO "$base/SHA256SUMS"
 expected=$(awk '$2 == "install.sh" { print $1 }' SHA256SUMS)
 actual=$(shasum -a 256 install.sh | awk '{ print $1 }') # use sha256sum on Linux
 test "$actual" = "$expected"
-sh install.sh --profile pi-omp --repository OWNER/REPOSITORY --version X.Y.Z
+sh install.sh --profile pi-omp --repository kmccleary3301/t3code --version 0.0.33
 ```
+
+The recorded `fork-v0.0.33` installer SHA-256 is
+`452ff311eaff06ce1794be9950a2b0327e8000bb332a65e2641f1a7373069f93`; treat the release's
+`SHA256SUMS` as authoritative if this documentation and the release ever disagree.
 
 Use `--channel nightly` for the newest matching nightly, `--version X.Y.Z` for an exact
 release, `--prefix "$HOME/.local/share/t3code/pi-omp"` for an isolated prefix, and `--dry-run`
@@ -68,6 +75,11 @@ It does not install Node.js or the native provider runtimes.
 Download the latest release from
 [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
 registry.
+
+The private Pi + OMP `fork-v0.0.33` release currently provides an unsigned,
+unnotarized [macOS arm64 DMG](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.33/T3-Code-Pi-OMP-0.0.33-arm64.dmg).
+Verify it against the release `SHA256SUMS` before use. It installs side by side with the upstream
+desktop app under a distinct bundle ID and URL scheme.
 
 Windows:
 
