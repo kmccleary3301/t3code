@@ -5,8 +5,8 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { pipeline } from "node:stream/promises";
-import { Readable, Transform } from "node:stream";
+import * as NodeStream from "node:stream";
+import * as NodeStreamPromises from "node:stream/promises";
 
 export type RuntimeBundleProvider = "pi" | "omp";
 export type RuntimeBundlePlatform = "darwin" | "linux";
@@ -142,7 +142,7 @@ async function downloadBundle(spec: RuntimeBundleSpec, destination: string): Pro
   const temporary = `${destination}.partial`;
   const digest = NodeCrypto.createHash("sha256");
   let bytes = 0;
-  const meter = new Transform({
+  const meter = new NodeStream.Transform({
     transform(chunk: Buffer, _encoding, callback) {
       bytes += chunk.byteLength;
       if (bytes > MAX_BUNDLE_BYTES) {
@@ -154,8 +154,8 @@ async function downloadBundle(spec: RuntimeBundleSpec, destination: string): Pro
     },
   });
   try {
-    await pipeline(
-      Readable.fromWeb(body),
+    await NodeStreamPromises.pipeline(
+      NodeStream.Readable.fromWeb(body),
       meter,
       NodeFS.createWriteStream(temporary, { mode: 0o600 }),
     );

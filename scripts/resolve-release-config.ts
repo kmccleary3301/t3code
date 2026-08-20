@@ -131,7 +131,7 @@ if (import.meta.main) {
       updaterRepository: readFlag(args, "--updater-repository"),
     });
     appendGithubOutput(config);
-    if (!process.env.GITHUB_OUTPUT) process.stdout.write(`${JSON.stringify(config)}\n`);
+    process.stdout.write(`${JSON.stringify(config)}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
