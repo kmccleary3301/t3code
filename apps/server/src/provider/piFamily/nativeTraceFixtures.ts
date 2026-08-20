@@ -8,9 +8,10 @@ import type { JsonRecord } from "./protocol.ts";
 export const nativeTraceProvenance = {
   pi: {
     runtimeRevision: "efe4d005317e69b3f822694d97f10453903a5069",
-    capturedAt: "2026-08-20T21:16:35Z",
-    sourceSha256: "b653edca8d7d8085c61b9a04b22959c73ee9526ccb365bdaedbe7cea4d6f3eb9",
-    redaction: "Removed user/model/signature/usage data; replaced IDs and assistant text.",
+    capturedAt: "2026-08-20T22:12:16Z",
+    sourceSha256: "2c804c30490549d11367f47c43895c2a231aa0c94020e68850bc3e4140905de2",
+    redaction:
+      "Removed the response frame, user/model/signature/usage/timestamp data, and encrypted reasoning; replaced text while preserving all native event types, ordering, and envelope shapes.",
   },
   omp: {
     runtimeRevision: "f5493537f8620de6748876ab8a61706c1dbc1d38",
@@ -33,35 +34,85 @@ export const piRecordedNativeTrace: readonly JsonRecord[] = [
     outcome: "started",
   },
   { type: "agent_start" },
+  { type: "turn_start" },
   {
-    type: "message_update",
-    assistantMessageEvent: { type: "text_start", contentIndex: 1 },
-  },
-  {
-    type: "message_update",
-    assistantMessageEvent: {
-      type: "text_end",
-      contentIndex: 1,
-      content: "[assistant text]",
+    type: "message_start",
+    message: {
+      role: "user",
+      content: [{ type: "text", text: "[user text]" }],
+      timestamp: 0,
     },
   },
   {
     type: "message_end",
     message: {
+      role: "user",
+      content: [{ type: "text", text: "[user text]" }],
+      timestamp: 0,
+    },
+  },
+  {
+    type: "message_start",
+    message: {
       role: "assistant",
-      content: [{ type: "text", text: "[assistant text]" }],
+      content: [],
+      stopReason: "pending",
+      timestamp: 0,
+    },
+  },
+  {
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+  },
+  {
+    type: "message_update",
+    assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: "" },
+  },
+  {
+    type: "message_update",
+    assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+  },
+  ...["[", "r", "e", "d", "a", "c", "t", "e", "d"].map((delta) => ({
+    type: "message_update",
+    assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta },
+  })),
+  {
+    type: "message_update",
+    assistantMessageEvent: { type: "text_end", contentIndex: 1, content: "[redacted]" },
+  },
+  {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "[redacted]" }],
       stopReason: "stop",
+      timestamp: 0,
     },
   },
   {
     type: "turn_end",
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "[assistant text]" }],
+      content: [{ type: "text", text: "[redacted]" }],
       stopReason: "stop",
+      timestamp: 0,
     },
     toolResults: [],
   },
+  {
+    type: "agent_end",
+    messages: [
+      { role: "user", content: [{ type: "text", text: "[user text]" }], timestamp: 0 },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "[redacted]" }],
+        stopReason: "stop",
+        timestamp: 0,
+      },
+    ],
+    willRetry: false,
+  },
+  { type: "agent_settled" },
 ];
 
 export const ompRecordedNativeTrace: readonly JsonRecord[] = [
@@ -229,11 +280,16 @@ export const piNativeTrace: readonly JsonRecord[] = [
     },
   },
   {
+    type: "turn_end",
+    eventId: "pi-turn-end",
+    requestId: "pi-request",
+  },
+  {
     type: "agent_end",
     eventId: "pi-agent-end",
-    requestId: "pi-request",
-    isTerminal: true,
+    willRetry: false,
   },
+  { type: "agent_settled", eventId: "pi-agent-settled" },
 ];
 
 export const ompNativeTrace: readonly JsonRecord[] = [

@@ -101,6 +101,7 @@ interface NativeSession {
   nativeSessionId?: string;
   capabilities: RuntimeCapabilities;
   stderrText: string;
+  readonly eventOccurrenceBuckets: Float64Array;
 }
 
 type Pending = Deferred.Deferred<RpcResponse, ProviderAdapterRequestError>;
@@ -123,6 +124,16 @@ const randomId = (): string =>
 const nowIso = (): string => DateTime.formatIso(DateTime.nowUnsafe());
 const NATIVE_INPUT_QUEUE_CAPACITY = 256;
 const NATIVE_EVENT_QUEUE_CAPACITY = 4096;
+const EVENT_OCCURRENCE_BUCKET_COUNT = 4_096;
+
+function nextEventOccurrence(buckets: Float64Array, identity: string): number {
+  let hash = 2_166_261;
+  for (const character of identity) hash = Math.imul(hash ^ character.charCodeAt(0), 16_777_619);
+  const bucket = (hash >>> 0) % buckets.length;
+  const occurrence = buckets[bucket]!;
+  buckets[bucket] = occurrence + 1;
+  return occurrence;
+}
 
 const nativeError = (
   provider: ProviderDriverKind,
@@ -235,14 +246,22 @@ function redactNativeEventValue(value: unknown, key: string, depth: number): unk
 }
 
 function persistedNativeEnvelope(event: RpcEnvelope): JsonRecord {
-  const sanitized = asRecord(redactNativeEventValue(event, "", 0)) ?? { type: event.type };
+  const sanitized = asRecord(redactNativeEventValue(event, "", 0)) ?? {
+    type: event.type.slice(0, MAX_PERSISTED_NATIVE_EVENT_STRING),
+  };
   const byteLength = new TextEncoder().encode(JSON.stringify(sanitized)).byteLength;
   if (byteLength <= MAX_PERSISTED_NATIVE_EVENT_BYTES) return sanitized;
+  const boundedMetadata = (value: unknown): string | undefined =>
+    asString(value)?.slice(0, MAX_PERSISTED_NATIVE_EVENT_STRING);
+  const type = boundedMetadata(event.type) ?? "unknown";
+  const id = boundedMetadata(event.id);
+  const requestId = boundedMetadata(event.requestId);
+  const taskId = boundedMetadata(event.taskId);
   return {
-    type: event.type,
-    ...(asString(event.id) === undefined ? {} : { id: asString(event.id) }),
-    ...(asString(event.requestId) === undefined ? {} : { requestId: asString(event.requestId) }),
-    ...(asString(event.taskId) === undefined ? {} : { taskId: asString(event.taskId) }),
+    type,
+    ...(id === undefined ? {} : { id }),
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(taskId === undefined ? {} : { taskId }),
     truncated: true,
     originalByteLength: byteLength,
   };
@@ -347,34 +366,49 @@ function makeBase(
   config: PiFamilyNativeConfig,
   threadId: ThreadId,
   event: unknown,
-  discriminator?: string,
+  discriminator: string | undefined,
+  eventOccurrence: number,
+  persistRaw = true,
 ): ProviderRuntimeEventBase {
   const record = asRecord(event);
-  const eventId =
-    record && typeof record.type === "string"
-      ? `${nativeEventId(config.runtime, record as RpcEnvelope)}${discriminator ? `:${discriminator}` : ""}`
-      : randomId();
+  const isNativeEnvelope = record !== undefined && typeof record.type === "string";
+  const eventId = isNativeEnvelope
+    ? `${config.instanceId}:${threadId}:${nativeEventId(config.runtime, record as RpcEnvelope, eventOccurrence)}${discriminator ? `:${discriminator}` : ""}`
+    : randomId();
   return {
     eventId: EventId.make(eventId),
     provider: config.provider,
     providerInstanceId: config.instanceId,
     threadId,
     createdAt: nowIso(),
-    raw: rawEvent(config.runtime, event),
+    ...(event === undefined || !persistRaw
+      ? {}
+      : {
+          raw: rawEvent(
+            config.runtime,
+            isNativeEnvelope ? persistedNativeEnvelope(record as RpcEnvelope) : event,
+          ),
+        }),
   };
+}
+function projectionIdentityEvent(projected: PiFamilyProjectedEvent): RpcEnvelope | undefined {
+  if (projected.kind === "runtime.raw") return projected.event;
+  if (projected.kind === "runtime.ready") return projected.ready;
+  if (projected.kind === "runtime.error") {
+    const raw = asRecord(projected.raw);
+    return raw !== undefined && typeof raw.type === "string" ? (raw as RpcEnvelope) : undefined;
+  }
+  if ("raw" in projected) return projected.raw;
+  return undefined;
 }
 
 function eventForProjection(
   config: PiFamilyNativeConfig,
   threadId: ThreadId,
   projected: PiFamilyProjectedEvent,
+  eventOccurrence: number,
 ): ProviderRuntimeEvent {
-  const raw =
-    "raw" in projected
-      ? projected.raw
-      : projected.kind === "runtime.ready"
-        ? projected.ready
-        : undefined;
+  const raw = projectionIdentityEvent(projected);
   const discriminator =
     projected.kind === "task.started" ||
     projected.kind === "task.progress" ||
@@ -387,7 +421,14 @@ function eventForProjection(
         : projected.kind === "ui.request"
           ? `ui:${projected.request.requestId ?? "anonymous"}`
           : projected.kind;
-  const base = makeBase(config, threadId, raw, discriminator);
+  const base = makeBase(
+    config,
+    threadId,
+    raw,
+    discriminator,
+    eventOccurrence,
+    projected.kind !== "runtime.raw",
+  );
   switch (projected.kind) {
     case "runtime.ready":
       return {
@@ -415,15 +456,17 @@ function eventForProjection(
           ...(projected.raw === undefined ? {} : { detail: projected.raw }),
         },
       };
-    case "runtime.raw":
+    case "runtime.raw": {
+      const detail = persistedNativeEnvelope(projected.event);
       return {
         ...base,
         type: "runtime.warning",
         payload: {
-          message: `Native ${config.runtime} event: ${projected.event.type}`,
-          detail: persistedNativeEnvelope(projected.event),
+          message: `Native ${config.runtime} event: ${asString(detail.type) ?? "unknown"}`,
+          detail,
         },
       };
+    }
     case "turn.started":
       return {
         ...base,
@@ -502,7 +545,7 @@ function eventForProjection(
           status: "completed",
           title: "Assistant message",
           ...(message.detail === undefined ? {} : { detail: message.detail }),
-          data: projected.raw,
+          data: persistedNativeEnvelope(projected.raw),
         },
       };
     }
@@ -766,9 +809,18 @@ export const makePiFamilyAdapter = (
         ),
       );
     const offerProjection = (
-      threadId: ThreadId,
+      session: NativeSession,
       projection: PiFamilyProjectedEvent,
-    ): Effect.Effect<void> => offer(eventForProjection(config, threadId, projection));
+    ): Effect.Effect<void> => {
+      const identityEvent = projectionIdentityEvent(projection);
+      const nativeIdentity =
+        identityEvent === undefined
+          ? projection.kind
+          : nativeEventId(config.runtime, identityEvent);
+      const identityKey = `${nativeIdentity}:${projection.kind}`;
+      const eventOccurrence = nextEventOccurrence(session.eventOccurrenceBuckets, identityKey);
+      return offer(eventForProjection(config, session.threadId, projection, eventOccurrence));
+    };
     const failPending = (
       session: NativeSession,
       error: ProviderAdapterRequestError,
@@ -912,7 +964,7 @@ export const makePiFamilyAdapter = (
                   session.activeTurns.delete(id);
                   return Deferred.succeed(pending, frame).pipe(
                     Effect.andThen(
-                      offerProjection(session.threadId, {
+                      offerProjection(session, {
                         kind: "turn.settled",
                         requestId: id,
                         raw: frame,
@@ -935,7 +987,7 @@ export const makePiFamilyAdapter = (
               session.acceptedPromptIds.delete(id)
             ) {
               session.activeTurns.delete(id);
-              return offerProjection(session.threadId, {
+              return offerProjection(session, {
                 kind: "turn.settled",
                 requestId: id,
                 raw: frame,
@@ -1007,13 +1059,13 @@ export const makePiFamilyAdapter = (
                   session.uiRequestKinds.set(identifiedProjection.request.requestId, requestKind);
                 }
               }
-              return offerProjection(session.threadId, identifiedProjection);
+              return offerProjection(session, identifiedProjection);
             },
             { discard: true },
           );
         }),
         Effect.catch((cause) =>
-          offerProjection(session.threadId, {
+          offerProjection(session, {
             kind: "runtime.error",
             error: cause instanceof Error ? cause : new Error(String(cause)),
           }),
@@ -1101,6 +1153,7 @@ export const makePiFamilyAdapter = (
           stopped: false,
           capabilities: absentRuntimeCapabilities(config.runtime),
           stderrText: "",
+          eventOccurrenceBuckets: new Float64Array(EVENT_OCCURRENCE_BUCKET_COUNT),
         };
         sessions.set(input.threadId, session);
 
@@ -1113,7 +1166,7 @@ export const makePiFamilyAdapter = (
         const decoder = new StrictJsonlDecoder(config.maxLineBytes);
         const chunks = new OmpChunkAssembler(config.maxMessageBytes);
         const reportDecodeError = (cause: unknown): Effect.Effect<void> =>
-          offerProjection(input.threadId, {
+          offerProjection(session, {
             kind: "runtime.error",
             error: cause instanceof Error ? cause : new Error(String(cause)),
           });
@@ -1165,7 +1218,7 @@ export const makePiFamilyAdapter = (
                 session,
                 nativeError(config.provider, "process", `Native process exited with code ${code}`),
               );
-              yield* offerProjection(input.threadId, {
+              yield* offerProjection(session, {
                 kind: "runtime.exit",
                 code,
                 signal: null,
@@ -1274,7 +1327,13 @@ export const makePiFamilyAdapter = (
           }
         }
         yield* offer({
-          ...makeBase(config, input.threadId, { type: "session.started", id: input.threadId }),
+          ...makeBase(
+            config,
+            input.threadId,
+            { type: "session.started", id: input.threadId },
+            undefined,
+            0,
+          ),
           type: "session.started",
           payload: { message: `Started native ${config.runtime} session` },
         });

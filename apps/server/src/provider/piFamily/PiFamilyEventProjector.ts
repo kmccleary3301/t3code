@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import {
   asBoolean,
   asNumber,
@@ -20,6 +22,13 @@ const TERMINAL_STATUSES = new Set<CanonicalTaskStatus>([
 ]);
 const DEFAULT_MAX_UNKNOWN_EVENTS = 128;
 const DEFAULT_MAX_TASK_SNAPSHOTS = 512;
+const MAX_NATIVE_IDENTITY_PART_LENGTH = 128;
+
+function boundedNativeIdentityPart(value: string): string {
+  if (value.length <= MAX_NATIVE_IDENTITY_PART_LENGTH) return value;
+  const digest = NodeCrypto.createHash("sha256").update(value).digest("hex");
+  return `${value.slice(0, 32)}~${digest}`;
+}
 
 export interface PiFamilyEventProjectorOptions {
   /**
@@ -117,20 +126,29 @@ function stableJson(value: unknown): string {
 
 /**
  * Returns a restart-stable identity for a native event. Explicit native
- * sequence/event ids win; the canonicalized frame is the deterministic
- * fallback for runtimes that omit them.
+ * sequence/event ids win. Otherwise the canonical frame is the deterministic
+ * identity and a per-identical-frame occurrence disambiguates repeated chunks
+ * without coupling unique frames to unrelated prior traffic.
  */
-export function nativeEventId(runtime: PiFamilyRuntimeKind, event: RpcEnvelope): string {
+export function nativeEventId(
+  runtime: PiFamilyRuntimeKind,
+  event: RpcEnvelope,
+  occurrence?: number,
+): string {
+  const eventType = boundedNativeIdentityPart(event.type);
   const explicit =
     asString(event.eventId) ??
     asString(event.event_id) ??
     (asNumber(event.sequence) ?? asNumber(event.seq))?.toString() ??
     asString(event.id);
-  if (explicit !== undefined) return `${runtime}:${event.type}:${explicit}`;
+  if (explicit !== undefined) {
+    return `${runtime}:${eventType}:${boundedNativeIdentityPart(explicit)}`;
+  }
   let hash = 2_166_261;
   for (const character of stableJson(event))
     hash = Math.imul(hash ^ character.charCodeAt(0), 16_777_619);
-  return `${runtime}:${event.type}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  const fallback = `${runtime}:${eventType}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  return occurrence === undefined ? fallback : `${fallback}:seq:${occurrence}`;
 }
 
 export class PiFamilyEventProjector {
@@ -144,7 +162,7 @@ export class PiFamilyEventProjector {
   private readonly maxUnknownEvents: number;
   private readonly maxTaskSnapshots: number;
   private droppedUnknownEvents = 0;
-  private activeOmpTurnRequestId: string | undefined;
+  private activeTurnRequestId: string | undefined;
   private ompTurnSettledByMessage = false;
 
   public constructor(runtime: PiFamilyRuntimeKind, options: PiFamilyEventProjectorOptions = {}) {
@@ -167,42 +185,46 @@ export class PiFamilyEventProjector {
 
     if (event.type === "agent_start" || event.type === "turn_start") {
       if (this.runtime === "omp" && event.type === "turn_start") return [];
-      const requestId = this.eventRequestId(event);
-      if (this.runtime === "omp") {
-        this.activeOmpTurnRequestId = requestId;
-        this.ompTurnSettledByMessage = false;
-      }
+      const requestId = this.eventRequestId(event) ?? this.activeTurnRequestId;
+      this.activeTurnRequestId = requestId;
+      if (this.runtime === "omp") this.ompTurnSettledByMessage = false;
       return [{ kind: "turn.started", ...(requestId ? { requestId } : {}), raw: event }];
     }
-    if (event.type === "agent_settled" || event.type === "turn_end") {
-      if (this.runtime === "omp" && event.type === "turn_end") return [];
-      const requestId = this.eventRequestId(event);
-      this.activeOmpTurnRequestId = undefined;
+    // Pi's turn_end and agent_end precede agent_settled. Neither is proof that
+    // retries, compaction, and extension work have quiesced.
+    if (event.type === "turn_end" || (this.runtime === "pi" && event.type === "agent_end")) {
+      return [];
+    }
+    if (event.type === "agent_settled") {
+      const requestId = this.eventRequestId(event) ?? this.activeTurnRequestId;
+      this.activeTurnRequestId = undefined;
       this.ompTurnSettledByMessage = false;
       return [{ kind: "turn.settled", ...(requestId ? { requestId } : {}), raw: event }];
     }
     if (event.type === "agent_end") {
-      // Pi's agent_end is authoritative. OMP emits the same frame for
-      // scheduled retries, so its explicit terminal marker is required.
-      if (this.runtime === "omp" && !this.isTerminalAgentEnd(event)) {
+      if (!this.isTerminalAgentEnd(event)) {
         this.retainUnknown(event, "OMP agent_end is a non-terminal retry/pause");
         return [{ kind: "runtime.raw", event }];
       }
-      if (this.runtime === "omp" && this.ompTurnSettledByMessage) {
-        this.activeOmpTurnRequestId = undefined;
+      if (this.ompTurnSettledByMessage) {
+        this.activeTurnRequestId = undefined;
         this.ompTurnSettledByMessage = false;
         return [];
       }
-      const requestId = this.eventRequestId(event);
-      this.activeOmpTurnRequestId = undefined;
+      const requestId = this.eventRequestId(event) ?? this.activeTurnRequestId;
+      this.activeTurnRequestId = undefined;
       return [{ kind: "turn.settled", ...(requestId ? { requestId } : {}), raw: event }];
     }
     if (event.type === "prompt_result") {
       const source = asRecord(event);
       const outcome = asString(source?.outcome);
-      if (outcome === "handled") {
-        const requestId = this.eventRequestId(event);
+      const requestId = this.eventRequestId(event);
+      if (outcome === "handled" || source?.agentInvoked === false) {
+        this.activeTurnRequestId = undefined;
         return [{ kind: "turn.settled", ...(requestId ? { requestId } : {}), raw: event }];
+      }
+      if (source?.agentInvoked === true || outcome === "started" || outcome === "queued") {
+        this.activeTurnRequestId = requestId;
       }
       this.retainUnknown(event, "prompt was accepted but agent execution remains pending");
       return [{ kind: "runtime.raw", event }];
@@ -229,7 +251,7 @@ export class PiFamilyEventProjector {
       }
       const completed: PiFamilyProjectedEvent = { kind: "message.completed", raw: event };
       if (this.runtime !== "omp") return [completed];
-      const requestId = this.eventRequestId(event) ?? this.activeOmpTurnRequestId;
+      const requestId = this.eventRequestId(event) ?? this.activeTurnRequestId;
       this.ompTurnSettledByMessage = true;
       return [completed, { kind: "turn.settled", ...(requestId ? { requestId } : {}), raw: event }];
     }

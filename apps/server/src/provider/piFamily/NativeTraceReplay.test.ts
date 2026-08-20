@@ -36,10 +36,14 @@ function replayTrace(trace: string, runtime: PiFamilyRuntimeKind, chunked: boole
   const projected: PiFamilyProjectedEvent[] = [];
   const identities: string[] = [];
   const projector = new PiFamilyEventProjector(runtime);
+  const identityOccurrences = new Map<string, number>();
 
   const project = (event: RpcEnvelope): void => {
     events.push(event);
-    identities.push(nativeEventId(runtime, event));
+    const baseIdentity = nativeEventId(runtime, event);
+    const occurrence = identityOccurrences.get(baseIdentity) ?? 0;
+    identityOccurrences.set(baseIdentity, occurrence + 1);
+    identities.push(nativeEventId(runtime, event, occurrence));
     projected.push(...projector.project(event));
   };
   const consumeLine = (line: string): void => {
@@ -162,6 +166,9 @@ describe("Pi/OMP native trace replay", () => {
     assert.include(kinds, "turn.started");
     assert.include(kinds, "message.completed");
     assert.include(kinds, "turn.settled");
+    const settled = replay.projected.filter((event) => event.kind === "turn.settled");
+    assert.equal(settled.length, 1);
+    assert.equal(settled[0]?.raw.type, "agent_settled");
     assert.match(nativeTraceProvenance.pi.runtimeRevision, /^[0-9a-f]{40}$/);
     assert.match(nativeTraceProvenance.pi.sourceSha256, /^[0-9a-f]{64}$/);
   });

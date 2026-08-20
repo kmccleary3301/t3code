@@ -3,14 +3,39 @@ import { assert, describe, it } from "vite-plus/test";
 import { PiFamilyEventProjector, nativeEventId } from "./PiFamilyEventProjector.ts";
 
 describe("Pi/OMP native event projection", () => {
-  it("maps both agent-end dialects to a settled turn and keeps IDs restart-stable", () => {
+  it("settles Pi only after agent_settled and keeps IDs restart-stable", () => {
     const pi = new PiFamilyEventProjector("pi");
-    const event = { type: "agent_end", id: "turn-1", result: { ok: true } };
+    pi.project({
+      type: "prompt_result",
+      id: "turn-1",
+      accepted: true,
+      agentInvoked: true,
+      outcome: "started",
+    });
+    assert.deepEqual(pi.project({ type: "agent_start" }), [
+      { kind: "turn.started", requestId: "turn-1", raw: { type: "agent_start" } },
+    ]);
+    assert.deepEqual(pi.project({ type: "turn_end" }), []);
+    assert.deepEqual(pi.project({ type: "agent_end", willRetry: false }), []);
+    const event = { type: "agent_settled" };
     assert.deepEqual(pi.project(event), [
       { kind: "turn.settled", requestId: "turn-1", raw: event },
     ]);
     assert.equal(nativeEventId("pi", event), nativeEventId("pi", structuredClone(event)));
     assert.notEqual(nativeEventId("pi", event), nativeEventId("omp", event));
+    const repeated = { type: "message_update", delta: { text: "same" } };
+    assert.equal(
+      nativeEventId("pi", repeated, 0),
+      nativeEventId("pi", structuredClone(repeated), 0),
+    );
+    assert.notEqual(nativeEventId("pi", repeated, 0), nativeEventId("pi", repeated, 1));
+    const oversized = {
+      type: `future_${"t".repeat(20_000)}`,
+      id: "i".repeat(20_000),
+    };
+    const oversizedIdentity = nativeEventId("pi", oversized);
+    assert.isAtMost(oversizedIdentity.length, 256);
+    assert.equal(oversizedIdentity, nativeEventId("pi", structuredClone(oversized)));
   });
   it("settles OMP turns on terminal assistant messages and suppresses a later duplicate end", () => {
     const projector = new PiFamilyEventProjector("omp");
@@ -101,6 +126,20 @@ describe("Pi/OMP native event projection", () => {
       { kind: "turn.settled", requestId: "turn-handled", raw: handled },
     ]);
   });
+  for (const runtime of ["pi", "omp"] as const) {
+    it(`settles delayed ${runtime} local-only prompt results without an outcome`, () => {
+      const projector = new PiFamilyEventProjector(runtime);
+      const localOnly = {
+        type: "prompt_result",
+        id: `${runtime}-local-only`,
+        accepted: true,
+        agentInvoked: false,
+      };
+      assert.deepEqual(projector.project(localOnly), [
+        { kind: "turn.settled", requestId: `${runtime}-local-only`, raw: localOnly },
+      ]);
+    });
+  }
   it("projects Pi extension UI requests through the portable request contract", () => {
     const projector = new PiFamilyEventProjector("pi");
     assert.deepEqual(

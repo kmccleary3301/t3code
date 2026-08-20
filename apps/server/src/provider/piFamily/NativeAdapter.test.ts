@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   ApprovalRequestId,
@@ -14,6 +15,7 @@ import {
 import { makePiFamilyAdapter } from "./NativeAdapter.ts";
 
 type Runtime = "pi" | "omp";
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const capabilities = (runtime: Runtime, modelSwitch = true) => ({
   runtime,
@@ -103,10 +105,14 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     '    out({ id: command.id, type: "response", command: "prompt", success: true });',
     '    if (command.message === "unknown-events") {',
     '      out({ type: "future_native_event", requestId: "corr-1", token: "secret-token", content: "secret body", status: "pending" });',
-    '      out({ type: "future_native_large", requestId: "corr-2", items: Array.from({ length: 64 }, () => "x".repeat(600)) });',
+    '      out({ type: "future_native_large_" + "t".repeat(20_000), id: "i".repeat(20_000), requestId: "r".repeat(20_000), taskId: "k".repeat(20_000), items: Array.from({ length: 64 }, () => "x".repeat(600)) });',
     ...(runtime === "omp"
       ? ['      out({ type: "agent_end", isTerminal: true });']
-      : ['      out({ type: "turn_end", id: command.id });']),
+      : [
+          '      out({ type: "turn_end", id: command.id });',
+          '      out({ type: "agent_end", willRetry: false });',
+          '      out({ type: "agent_settled" });',
+        ]),
     "      return;",
     "    }",
     '    if (command.message === "portable-ui") {',
@@ -119,7 +125,11 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     '      out({ type: "extension_ui_request", id: "ui-editor", method: "editor", title: "Edit", prefill: "before" });',
     ...(runtime === "omp"
       ? ['      out({ type: "agent_end", isTerminal: true });']
-      : ['      out({ type: "turn_end", id: command.id });']),
+      : [
+          '      out({ type: "turn_end", id: command.id });',
+          '      out({ type: "agent_end", willRetry: false });',
+          '      out({ type: "agent_settled" });',
+        ]),
     "      return;",
     "    }",
     '    if (command.message === "anonymous-pi-lifecycle") {',
@@ -143,7 +153,11 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
           '      out({ type: "message_update", delta: { text: "after malformed" } });',
           ...(runtime === "omp"
             ? ['      out({ type: "agent_end", isTerminal: true });']
-            : ['      out({ type: "turn_end", id: command.id });']),
+            : [
+                '      out({ type: "turn_end", id: command.id });',
+                '      out({ type: "agent_end", willRetry: false });',
+                '      out({ type: "agent_settled" });',
+              ]),
           "      return;",
           "    }",
         ]
@@ -158,7 +172,13 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
       : ['    out({ type: "turn_start", id: command.id });']),
     '    out({ type: "message_update", delta: { text: "hello from native" } });',
     '    out({ type: "message_end", message: { id: "assistant-1", role: "assistant", content: [{ type: "text", text: "hello from native" }], stopReason: "stop" } });',
-    ...(runtime === "omp" ? [] : ['    out({ type: "turn_end", id: command.id });']),
+    ...(runtime === "omp"
+      ? []
+      : [
+          '    out({ type: "turn_end", id: command.id });',
+          '    out({ type: "agent_end", willRetry: false });',
+          '    out({ type: "agent_settled" });',
+        ]),
     "  }",
     '  if (command.type === "abort") out({ id: command.id, type: "response", command: "abort", success: true });',
     "});",
@@ -365,8 +385,16 @@ describe("Pi-family native adapter", () => {
       assert.equal(redactedDetail?.token, "[redacted]");
       assert.equal(redactedDetail?.content, "[redacted]");
       assert.equal(redactedDetail?.status, "pending");
+      assert.equal(redacted?.raw, undefined);
       assert.equal(boundedDetail?.truncated, true);
       assert.equal("items" in (boundedDetail ?? {}), false);
+      assert.equal(bounded?.raw, undefined);
+      assert.isAtMost(String(bounded?.eventId ?? "").length, 512);
+      for (const key of ["type", "id", "requestId", "taskId"]) {
+        assert.isAtMost(String(boundedDetail?.[key] ?? "").length, 512);
+      }
+      const boundedJson = encodeUnknownJson(boundedDetail);
+      assert.isAtMost(new TextEncoder().encode(boundedJson).byteLength, 8 * 1024);
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
