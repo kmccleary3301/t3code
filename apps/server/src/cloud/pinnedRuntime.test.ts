@@ -28,6 +28,20 @@ it("resolves the fork runtime package from explicit identity", () => {
     }),
     "pi-omp",
   );
+  assert.equal(
+    resolveRuntimeProductProfile({
+      env: {},
+      argv: ["/usr/bin/node", "/opt/t3-pi-omp/bin/t3-pi-omp"],
+    }),
+    "pi-omp",
+  );
+  assert.equal(
+    resolveRuntimeProductProfile({
+      env: {},
+      argv: ["C:/Program Files/nodejs/node.exe", "C:/t3-pi-omp/t3-pi-omp.cmd"],
+    }),
+    "pi-omp",
+  );
 });
 
 const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>

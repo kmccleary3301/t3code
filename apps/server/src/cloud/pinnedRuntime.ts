@@ -35,6 +35,10 @@ export function resolveRuntimePackageName(input: RuntimeIdentityInput = {}): str
   }
 
   const entryPath = (input.argv ?? process.argv)[1]?.replaceAll("\\", "/");
+  const entryName = entryPath?.slice(entryPath.lastIndexOf("/") + 1).replace(/\.cmd$/iu, "");
+  const forkIdentity = resolveProductIdentity("pi-omp");
+  if (entryName === forkIdentity.cliBinaryName) return forkIdentity.packageName;
+
   const packageMatch = entryPath?.match(/\/node_modules\/((?:@[^/]+\/)?[^/]+)\/dist\/bin\.mjs$/u);
   if (packageMatch?.[1] !== undefined && SAFE_PACKAGE_NAME.test(packageMatch[1])) {
     return packageMatch[1];
