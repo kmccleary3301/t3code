@@ -77,9 +77,7 @@ function packageVersion(root: string, relativePath: string): string {
   return value;
 }
 
-function runtimeDetails(
-  name: string,
-):
+function runtimeDetails(name: string):
   | {
       readonly runtime: "pi" | "omp";
       readonly platform: "darwin" | "linux";
