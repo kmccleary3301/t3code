@@ -96,8 +96,19 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     '  if (command.type === "extension_ui_response" && command.id === "approval-1" && command.confirmed === true) out({ type: "message_update", delta: { text: "confirmed" } });',
     '  if (command.type === "extension_ui_response" && command.id.startsWith("ui-")) out({ type: "message_update", delta: { text: command.id + ":" + String(command.confirmed ?? command.value) } });',
     '  if (command.type === "prompt") {',
+    '    if (command.message === "local-command") {',
+    '      out({ id: command.id, type: "response", command: "prompt", success: true, data: { agentInvoked: false } });',
+    "      return;",
+    "    }",
     '    out({ id: command.id, type: "response", command: "prompt", success: true });',
-    '    if (command.message === "arm-hang") process.on("SIGTERM", () => {});',
+    '    if (command.message === "unknown-events") {',
+    '      out({ type: "future_native_event", requestId: "corr-1", token: "secret-token", content: "secret body", status: "pending" });',
+    '      out({ type: "future_native_large", requestId: "corr-2", items: Array.from({ length: 64 }, () => "x".repeat(600)) });',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_end", isTerminal: true });']
+      : ['      out({ type: "turn_end", id: command.id });']),
+    "      return;",
+    "    }",
     '    if (command.message === "portable-ui") {',
     ...(runtime === "omp"
       ? ['      out({ type: "agent_start" });']
@@ -277,6 +288,89 @@ describe("Pi-family native adapter", () => {
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+  it.effect("settles an OMP local command that does not invoke an agent", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-local-command-thread");
+      const instanceId = ProviderInstanceId.make("omp-local-command-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextEvent(adapter.streamEvents);
+
+      const turn = yield* adapter.sendTurn({ threadId, input: "local-command" });
+      const completed = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      assert.equal(completed?.type, "turn.completed");
+      assert.equal(completed?.turnId, turn.turnId);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.effect("redacts and bounds unknown native event details before persistence", () =>
+    Effect.gen(function* () {
+      const runtime = "pi" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("pi-unknown-event-thread");
+      const instanceId = ProviderInstanceId.make("pi-unknown-event-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextEvent(adapter.streamEvents);
+      yield* adapter.sendTurn({ threadId, input: "unknown-events" });
+
+      const redacted = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      const bounded = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      assert.equal(redacted?.type, "runtime.warning");
+      assert.equal(bounded?.type, "runtime.warning");
+      const redactedDetail =
+        redacted?.type === "runtime.warning" && typeof redacted.payload.detail === "object"
+          ? (redacted.payload.detail as Record<string, unknown>)
+          : undefined;
+      const boundedDetail =
+        bounded?.type === "runtime.warning" && typeof bounded.payload.detail === "object"
+          ? (bounded.payload.detail as Record<string, unknown>)
+          : undefined;
+      assert.equal(redactedDetail?.token, "[redacted]");
+      assert.equal(redactedDetail?.content, "[redacted]");
+      assert.equal(redactedDetail?.status, "pending");
+      assert.equal(boundedDetail?.truncated, true);
+      assert.equal("items" in (boundedDetail ?? {}), false);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("round-trips every interactive portable UI response over the native wire", () =>
     Effect.gen(function* () {
       const runtime = "omp" as const;

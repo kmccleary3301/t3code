@@ -166,34 +166,86 @@ function canonicalToolItemType(raw: RpcEnvelope): CanonicalItemType {
 function nativePromptImages(
   input: ProviderSendTurnInput,
   attachmentsDir?: string,
-): {
+): Effect.Effect<{
   readonly images: ReadonlyArray<JsonRecord>;
   readonly unavailable: ReadonlyArray<string>;
-} {
-  const images: JsonRecord[] = [];
-  const unavailable: string[] = [];
-  for (const attachment of input.attachments ?? []) {
-    const record = asRecord(attachment);
-    if (!record || record.type !== "image") continue;
-    const mimeType = asString(record.mimeType);
-    const dataUrl = asString(record.dataUrl);
-    const rawData = asString(record.data);
-    let data = rawData ?? dataUrl?.match(/^data:[^;]+;base64,(.+)$/i)?.[1];
-    if (!data && attachmentsDir && mimeType) {
-      try {
-        const path = resolveAttachmentPath({
-          attachmentsDir,
-          attachment: record as never,
-        });
-        if (path) data = NodeFS.readFileSync(path).toString("base64");
-      } catch {
-        // Report a precise unsupported result below; never send metadata only.
+}> {
+  return Effect.promise(async () => {
+    const images: JsonRecord[] = [];
+    const unavailable: string[] = [];
+    for (const attachment of input.attachments ?? []) {
+      const record = asRecord(attachment);
+      if (!record || record.type !== "image") continue;
+      const mimeType = asString(record.mimeType);
+      const dataUrl = asString(record.dataUrl);
+      const rawData = asString(record.data);
+      let data = rawData ?? dataUrl?.match(/^data:[^;]+;base64,(.+)$/i)?.[1];
+      if (!data && attachmentsDir && mimeType) {
+        try {
+          const path = resolveAttachmentPath({
+            attachmentsDir,
+            attachment: record as never,
+          });
+          if (path) data = (await NodeFS.promises.readFile(path)).toString("base64");
+        } catch {
+          // Report a precise unsupported result below; never send metadata only.
+        }
       }
+      if (!data || !mimeType) unavailable.push(asString(record.name) ?? "unnamed image");
+      else images.push({ type: "image", data, mimeType });
     }
-    if (!data || !mimeType) unavailable.push(asString(record.name) ?? "unnamed image");
-    else images.push({ type: "image", data, mimeType });
+    return { images, unavailable };
+  });
+}
+
+const MAX_PERSISTED_NATIVE_EVENT_BYTES = 8 * 1024;
+const MAX_PERSISTED_NATIVE_EVENT_DEPTH = 5;
+const MAX_PERSISTED_NATIVE_EVENT_ENTRIES = 64;
+const MAX_PERSISTED_NATIVE_EVENT_STRING = 512;
+const REDACTED_NATIVE_EVENT_KEY =
+  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|content|text|message|delta|args|result|data|payload/i;
+
+function redactNativeEventValue(value: unknown, key: string, depth: number): unknown {
+  if (REDACTED_NATIVE_EVENT_KEY.test(key)) return "[redacted]";
+  if (typeof value === "string") return value.slice(0, MAX_PERSISTED_NATIVE_EVENT_STRING);
+  if (
+    value === null ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "undefined"
+  ) {
+    return value;
   }
-  return { images, unavailable };
+  if (depth >= MAX_PERSISTED_NATIVE_EVENT_DEPTH) return "[truncated]";
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, MAX_PERSISTED_NATIVE_EVENT_ENTRIES)
+      .map((entry) => redactNativeEventValue(entry, "", depth + 1));
+  }
+  const record = asRecord(value);
+  if (!record) return String(value);
+  return Object.fromEntries(
+    Object.entries(record)
+      .slice(0, MAX_PERSISTED_NATIVE_EVENT_ENTRIES)
+      .map(([childKey, childValue]) => [
+        childKey,
+        redactNativeEventValue(childValue, childKey, depth + 1),
+      ]),
+  );
+}
+
+function persistedNativeEnvelope(event: RpcEnvelope): JsonRecord {
+  const sanitized = asRecord(redactNativeEventValue(event, "", 0)) ?? { type: event.type };
+  const byteLength = new TextEncoder().encode(JSON.stringify(sanitized)).byteLength;
+  if (byteLength <= MAX_PERSISTED_NATIVE_EVENT_BYTES) return sanitized;
+  return {
+    type: event.type,
+    ...(asString(event.id) === undefined ? {} : { id: asString(event.id) }),
+    ...(asString(event.requestId) === undefined ? {} : { requestId: asString(event.requestId) }),
+    ...(asString(event.taskId) === undefined ? {} : { taskId: asString(event.taskId) }),
+    truncated: true,
+    originalByteLength: byteLength,
+  };
 }
 
 function checkpointDescriptor(
@@ -369,7 +421,7 @@ function eventForProjection(
         type: "runtime.warning",
         payload: {
           message: `Native ${config.runtime} event: ${projected.event.type}`,
-          detail: projected.event,
+          detail: persistedNativeEnvelope(projected.event),
         },
       };
     case "turn.started":
@@ -699,11 +751,14 @@ export const makePiFamilyAdapter = (
     };
 
     const offer = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
+      // Queue.bounded uses the suspending strategy: a full queue backpressures
+      // the native reader. `false` means the queue is already closing, not that
+      // a live-session event was dropped at capacity.
       Queue.offer(events, event).pipe(
         Effect.flatMap((accepted) =>
           accepted
             ? Effect.void
-            : Effect.logWarning("provider.pi-family.event-queue-full", {
+            : Effect.logWarning("provider.pi-family.event-queue-closed", {
                 provider: config.provider,
                 threadId: event.threadId,
                 eventType: event.type,
@@ -851,7 +906,22 @@ export const makePiFamilyAdapter = (
             const pending = session.pending.get(id);
             if (pending) {
               session.pending.delete(id);
-              if (frame.success && frame.command === "prompt") session.acceptedPromptIds.add(id);
+              if (frame.success && frame.command === "prompt") {
+                if (asRecord(frame.data)?.agentInvoked === false) {
+                  session.acceptedPromptIds.delete(id);
+                  session.activeTurns.delete(id);
+                  return Deferred.succeed(pending, frame).pipe(
+                    Effect.andThen(
+                      offerProjection(session.threadId, {
+                        kind: "turn.settled",
+                        requestId: id,
+                        raw: frame,
+                      }),
+                    ),
+                  );
+                }
+                session.acceptedPromptIds.add(id);
+              }
               return frame.success
                 ? Deferred.succeed(pending, frame).pipe(Effect.ignore)
                 : Deferred.fail(
@@ -1218,7 +1288,7 @@ export const makePiFamilyAdapter = (
       Effect.gen(function* () {
         const session = yield* requireSession(input.threadId);
         const turnId = TurnId.make(randomId());
-        const imageResult = nativePromptImages(input, config.attachmentsDir);
+        const imageResult = yield* nativePromptImages(input, config.attachmentsDir);
         if (imageResult.unavailable.length > 0) {
           return yield* new ProviderAdapterRequestError({
             provider: config.provider,

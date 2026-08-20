@@ -1,6 +1,133 @@
 import type { JsonRecord } from "./protocol.ts";
+/**
+ * Structurally scrubbed native captures. Source logs are intentionally not
+ * committed because they contain user text, signatures, model metadata, and
+ * native session paths. Their hashes bind these public records to the reviewed
+ * local captures; IDs and free text below are deterministic replacements.
+ */
+export const nativeTraceProvenance = {
+  pi: {
+    runtimeRevision: "efe4d005317e69b3f822694d97f10453903a5069",
+    capturedAt: "2026-08-20T21:16:35Z",
+    sourceSha256: "b653edca8d7d8085c61b9a04b22959c73ee9526ccb365bdaedbe7cea4d6f3eb9",
+    redaction: "Removed user/model/signature/usage data; replaced IDs and assistant text.",
+  },
+  omp: {
+    runtimeRevision: "f5493537f8620de6748876ab8a61706c1dbc1d38",
+    capturedAt: "2026-08-20T21:11:31Z/2026-08-20T21:41:57Z",
+    sourceSha256: [
+      "f93b26052150867476763dd8a8f703764d786458425dff14ce2690da0afc8e77",
+      "8c04b732edceaba784612aa7a4c7410ff1a083c086b10e537e4ee993337450b8",
+    ],
+    redaction:
+      "Combined root-turn and task captures; removed prompts, results, paths, signatures, usage, and model metadata; replaced IDs.",
+  },
+} as const;
 
-/** Small synthetic protocol-shaped records for replay coverage; not a private trace capture. */
+export const piRecordedNativeTrace: readonly JsonRecord[] = [
+  {
+    type: "prompt_result",
+    id: "pi-recorded-request",
+    accepted: true,
+    agentInvoked: true,
+    outcome: "started",
+  },
+  { type: "agent_start" },
+  {
+    type: "message_update",
+    assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+  },
+  {
+    type: "message_update",
+    assistantMessageEvent: {
+      type: "text_end",
+      contentIndex: 1,
+      content: "[assistant text]",
+    },
+  },
+  {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "[assistant text]" }],
+      stopReason: "stop",
+    },
+  },
+  {
+    type: "turn_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "[assistant text]" }],
+      stopReason: "stop",
+    },
+    toolResults: [],
+  },
+];
+
+export const ompRecordedNativeTrace: readonly JsonRecord[] = [
+  {
+    type: "extension_ui_request",
+    id: "omp-recorded-widget",
+    method: "setWidget",
+    widgetKey: "autoresearch",
+  },
+  { type: "agent_start" },
+  {
+    type: "tool_execution_start",
+    toolCallId: "omp-recorded-task-call",
+    toolName: "task",
+    args: { context: "[redacted]", tasks: "[redacted]" },
+    intent: "Run one child task",
+  },
+  {
+    type: "subagent_lifecycle",
+    payload: {
+      id: "RecordedChild",
+      agent: "sonic",
+      runId: "RecordedChild:run-1",
+      parentToolCallId: "omp-recorded-task-call",
+      detached: true,
+      agentSource: "bundled",
+      description: "Recorded child task",
+      status: "started",
+      index: 0,
+      parentId: "Main",
+    },
+  },
+  {
+    type: "tool_execution_end",
+    toolCallId: "omp-recorded-task-call",
+    toolName: "task",
+    result: { content: "[redacted]", details: "[redacted]" },
+    isError: false,
+  },
+  {
+    type: "subagent_lifecycle",
+    payload: {
+      id: "RecordedChild",
+      agent: "sonic",
+      runId: "RecordedChild:run-1",
+      parentToolCallId: "omp-recorded-task-call",
+      detached: true,
+      agentSource: "bundled",
+      description: "Recorded child task",
+      status: "completed",
+      index: 0,
+      parentId: "Main",
+    },
+  },
+  {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "[assistant text]" }],
+      stopReason: "stop",
+    },
+  },
+  { type: "agent_end", isTerminal: true },
+];
+
+/** Deterministic edge-case matrix supplement; parity evidence uses the recorded traces above. */
 export const piNativeTrace: readonly JsonRecord[] = [
   {
     type: "turn_start",
@@ -235,4 +362,9 @@ function chunkRecord(record: JsonRecord, index: number): JsonRecord[] {
 export const piNativeTraceJsonl = toJsonl(piNativeTrace);
 export const ompNativeChunkedTraceJsonl = toJsonl(
   ompNativeTrace.flatMap((record, index) => chunkRecord(record, index)),
+);
+
+export const piRecordedNativeTraceJsonl = toJsonl(piRecordedNativeTrace);
+export const ompRecordedNativeChunkedTraceJsonl = toJsonl(
+  ompRecordedNativeTrace.flatMap((record, index) => chunkRecord(record, index)),
 );

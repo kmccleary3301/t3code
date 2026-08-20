@@ -556,6 +556,78 @@ describe("CheckpointReactor", () => {
       ),
     ).toBe("v2\n");
   });
+  it("persists the native runtime session identity returned by checkpoint capture", async () => {
+    const nativeLeaf = {
+      runtime: "pi",
+      runtimeVersion: "0.84.2",
+      sessionId: "native-session-1",
+      leafEntryId: "native-leaf-1",
+      opaque: { cursor: "captured" },
+    };
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      providerName: ProviderDriverKind.make("pi"),
+      nativeCurrentCheckpoint: nativeLeaf,
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await dispatchCommand(harness, {
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-set-native-capture"),
+      threadId: ThreadId.make("thread-1"),
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "ready",
+        providerName: "pi",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-native-capture-started"),
+      provider: ProviderDriverKind.make("pi"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-native-capture"),
+    });
+    await waitForGitRefExists(
+      harness.cwd,
+      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    );
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-native-capture-completed"),
+      provider: ProviderDriverKind.make("pi"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-native-capture"),
+      payload: { state: "completed" },
+    });
+
+    const events = await waitForEvent(
+      harness.engine,
+      (event) => event.type === "thread.turn-diff-completed",
+    );
+    const completed = events.find((event) => event.type === "thread.turn-diff-completed");
+    expect(completed?.type).toBe("thread.turn-diff-completed");
+    if (completed?.type !== "thread.turn-diff-completed") {
+      throw new Error("Missing native checkpoint completion event.");
+    }
+    expect(completed.payload.nativeCheckpoint).toEqual({
+      version: 1,
+      runtime: "pi",
+      provider: ProviderDriverKind.make("pi"),
+      instanceId: ProviderInstanceId.make("pi"),
+      threadId: ThreadId.make("thread-1"),
+      sessionId: "native-session-1",
+      captureState: "captured",
+      opaque: nativeLeaf,
+    });
+  });
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {
     const gitStatusRefreshCalls: string[] = [];
@@ -1104,7 +1176,12 @@ describe("CheckpointReactor", () => {
     });
     const harness = await createHarness({
       providerName: ProviderDriverKind.make("pi"),
-      nativeCurrentCheckpoint: { cursor: "current" },
+      nativeCurrentCheckpoint: {
+        runtime: "pi",
+        sessionId: "native-session-current",
+        leafEntryId: "native-leaf-current",
+        opaque: { cursor: "current" },
+      },
       nativeRestore,
     });
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -1140,9 +1217,14 @@ describe("CheckpointReactor", () => {
         provider: ProviderDriverKind.make("pi"),
         instanceId: ProviderInstanceId.make("pi"),
         threadId: ThreadId.make("thread-1"),
-        sessionId: "thread-1",
+        sessionId: "native-session-target",
         captureState: "captured",
-        opaque: { cursor: "target" },
+        opaque: {
+          runtime: "pi",
+          sessionId: "native-session-target",
+          leafEntryId: "native-leaf-target",
+          opaque: { cursor: "target" },
+        },
       },
       createdAt,
     });

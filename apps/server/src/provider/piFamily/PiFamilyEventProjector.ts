@@ -58,6 +58,7 @@ const PI_EVENT_TYPES: Readonly<Record<string, true>> = {
   host_task_failed: true,
   host_task_cancelled: true,
   queue_update: true,
+  extension_ui_request: true,
   compaction_start: true,
   compaction_end: true,
   retry_start: true,

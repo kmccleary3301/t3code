@@ -72,6 +72,15 @@ function sameId(left: string | null | undefined, right: string | null | undefine
 function failureDetail(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
 }
+function nativeCheckpointIdentity(
+  value: unknown,
+): { readonly runtime: string; readonly sessionId: string } | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const runtime = typeof record.runtime === "string" ? record.runtime.trim() : "";
+  const sessionId = typeof record.sessionId === "string" ? record.sessionId.trim() : "";
+  return runtime.length > 0 && sessionId.length > 0 ? { runtime, sessionId } : undefined;
+}
 
 function checkpointStatusFromRuntime(status: string | undefined): "ready" | "missing" | "error" {
   switch (status) {
@@ -295,10 +304,23 @@ const make = Effect.gen(function* () {
     const nativeLeaf = yield* providerService.captureNativeCheckpoint({
       threadId: input.threadId,
     });
-    if (nativeLeaf !== undefined && nativeSession === undefined) {
+    const nativeIdentity =
+      nativeLeaf === undefined ? undefined : nativeCheckpointIdentity(nativeLeaf);
+    if (nativeLeaf !== undefined && (nativeSession === undefined || nativeIdentity === undefined)) {
       return yield* Effect.die(
         new Error(
-          `Native checkpoint capture returned a leaf without an active provider session for thread '${input.threadId}'.`,
+          `Native checkpoint capture returned a leaf without active provider and native session identity for thread '${input.threadId}'.`,
+        ),
+      );
+    }
+    if (
+      nativeIdentity !== undefined &&
+      nativeSession !== undefined &&
+      nativeIdentity.runtime !== String(nativeSession.provider)
+    ) {
+      return yield* Effect.die(
+        new Error(
+          `Native checkpoint runtime '${nativeIdentity.runtime}' does not match provider '${nativeSession.provider}'.`,
         ),
       );
     }
@@ -307,13 +329,13 @@ const make = Effect.gen(function* () {
         ? undefined
         : {
             version: 1,
-            runtime: String(nativeSession!.provider) as NativeCheckpointDescriptor["runtime"],
+            runtime: nativeIdentity!.runtime,
             provider: nativeSession!.provider,
             instanceId:
               nativeSession!.providerInstanceId ??
               ProviderInstanceId.make(String(nativeSession!.provider)),
             threadId: input.threadId,
-            sessionId: String(nativeSession!.threadId) as NativeCheckpointDescriptor["sessionId"],
+            sessionId: nativeIdentity!.sessionId,
             captureState: "captured",
             opaque: nativeLeaf,
           };
@@ -851,6 +873,8 @@ const make = Effect.gen(function* () {
         ? nativeTarget
         : undefined;
     const nativeLeaf = nativeDescriptor === undefined ? nativeTarget : nativeDescriptor.opaque;
+    const nativeIdentity =
+      nativeDescriptor === undefined ? undefined : nativeCheckpointIdentity(nativeLeaf);
     const compensationRef = checkpointRefForRestoreCompensation(
       event.payload.threadId,
       yield* randomUUID,
@@ -885,8 +909,10 @@ const make = Effect.gen(function* () {
           currentSession.threadId !== nativeDescriptor.threadId ||
           currentSession.provider !== nativeDescriptor.provider ||
           currentSession.providerInstanceId !== nativeDescriptor.instanceId ||
-          String(currentSession.threadId) !== nativeDescriptor.sessionId ||
-          String(currentSession.provider) !== nativeDescriptor.runtime
+          String(currentSession.provider) !== nativeDescriptor.runtime ||
+          nativeIdentity === undefined ||
+          nativeIdentity.runtime !== nativeDescriptor.runtime ||
+          nativeIdentity.sessionId !== nativeDescriptor.sessionId
         ) {
           return {
             ok: false as const,

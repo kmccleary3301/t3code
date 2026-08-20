@@ -101,6 +101,37 @@ describe("Pi/OMP native event projection", () => {
       { kind: "turn.settled", requestId: "turn-handled", raw: handled },
     ]);
   });
+  it("projects Pi extension UI requests through the portable request contract", () => {
+    const projector = new PiFamilyEventProjector("pi");
+    assert.deepEqual(
+      projector.project({
+        type: "extension_ui_request",
+        id: "pi-confirm-1",
+        method: "confirm",
+        title: "Approve",
+        message: "Continue?",
+      }),
+      [
+        {
+          kind: "ui.request",
+          request: {
+            kind: "confirm",
+            requestId: "pi-confirm-1",
+            title: "Approve",
+            message: "Continue?",
+          },
+          raw: {
+            type: "extension_ui_request",
+            id: "pi-confirm-1",
+            method: "confirm",
+            title: "Approve",
+            message: "Continue?",
+          },
+        },
+      ],
+    );
+  });
+
   it("projects OMP automatic compaction and retry lifecycle without settling a turn", () => {
     const projector = new PiFamilyEventProjector("omp");
     const events = [

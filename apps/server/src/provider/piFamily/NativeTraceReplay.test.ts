@@ -10,10 +10,15 @@ import {
 } from "./index.ts";
 import { nativeEventId, PiFamilyEventProjector } from "./PiFamilyEventProjector.ts";
 import {
+  nativeTraceProvenance,
   ompNativeChunkedTraceJsonl,
   ompNativeTrace,
+  ompRecordedNativeChunkedTraceJsonl,
+  ompRecordedNativeTrace,
   piNativeTrace,
   piNativeTraceJsonl,
+  piRecordedNativeTrace,
+  piRecordedNativeTraceJsonl,
 } from "./nativeTraceFixtures.ts";
 import { StrictJsonlDecoder } from "./StrictJsonlDecoder.ts";
 
@@ -149,6 +154,35 @@ function assertReplayContract(
 }
 
 describe("Pi/OMP native trace replay", () => {
+  it("replays the revision-bound scrubbed Pi capture through production framing", () => {
+    const replay = replayTrace(piRecordedNativeTraceJsonl, "pi", false);
+    assert.deepEqual(replay.events, piRecordedNativeTrace);
+    assert.equal(new Set(replay.identities).size, piRecordedNativeTrace.length);
+    const kinds = replay.projected.map((event) => event.kind);
+    assert.include(kinds, "turn.started");
+    assert.include(kinds, "message.completed");
+    assert.include(kinds, "turn.settled");
+    assert.match(nativeTraceProvenance.pi.runtimeRevision, /^[0-9a-f]{40}$/);
+    assert.match(nativeTraceProvenance.pi.sourceSha256, /^[0-9a-f]{64}$/);
+  });
+
+  it("reassembles the revision-bound scrubbed OMP root/task captures", () => {
+    const replay = replayTrace(ompRecordedNativeChunkedTraceJsonl, "omp", true);
+    assert.deepEqual(replay.events, ompRecordedNativeTrace);
+    assert.equal(new Set(replay.identities).size, ompRecordedNativeTrace.length);
+    const kinds = replay.projected.map((event) => event.kind);
+    assert.include(kinds, "ui.request");
+    assert.include(kinds, "tool.started");
+    assert.include(kinds, "task.started");
+    assert.include(kinds, "task.completed");
+    assert.include(kinds, "message.completed");
+    assert.include(kinds, "turn.settled");
+    assert.match(nativeTraceProvenance.omp.runtimeRevision, /^[0-9a-f]{40}$/);
+    for (const hash of nativeTraceProvenance.omp.sourceSha256) {
+      assert.match(hash, /^[0-9a-f]{64}$/);
+    }
+  });
+
   it("replays a scrubbed Pi JSONL trace through framing and canonical projection", () => {
     const first = replayTrace(piNativeTraceJsonl, "pi", false);
     const second = replayTrace(piNativeTraceJsonl, "pi", false);
