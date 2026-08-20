@@ -43,10 +43,16 @@ the package scripts, so CI does not invent one or silently skip one. The
 run on the headless runners; generated/product identity coverage in CI is the
 contract test above plus the desktop build/preload assertions.
 
+These jobs use GitHub-hosted runner labels so they execute in the owner-controlled fork without
+requiring the upstream Blacksmith runner integration. The production relay workflow skips fork
+pushes unless `T3_ENABLE_RELAY_DEPLOY=true`; fork releases consume their separately configured relay
+metadata instead of deploying upstream infrastructure.
+
 ## Compatibility matrix
 
-The release has two product profiles. Profile selection is explicit; it is not
-inferred from a binary name or a provider version.
+The release workflow selects a profile explicitly from its tag, input, or repository configuration.
+An installed CLI can additionally recover the `pi-omp` profile from its dedicated package or binary
+name when `T3_PRODUCT_PROFILE` is absent. Neither path infers behavior from a provider version.
 
 | Concern           | T3 (`upstream`)           | Pi + OMP (`pi-omp`)            |
 | ----------------- | ------------------------- | ------------------------------ |
@@ -66,8 +72,9 @@ inferred from a binary name or a provider version.
   `^22.16 || ^23.11 || >=24.10`; that wider runtime range does not change the
   Node declaration used by root CI.
 - The POSIX installer does not install Node.js. It requires Node.js and npm for the
-  profile-specific CLI package path; its local tests use a fake registry/package and do not prove
-  clean-machine network installation.
+  profile-specific CLI package path. Routine CI uses a fake release server/package; the published
+  `fork-v0.0.33` path was separately exercised through GitHub on an isolated prefix, including
+  binary execution and uninstall.
 
 ### Pi and OMP runtime protocol baseline
 
@@ -109,6 +116,11 @@ The artifact builder has code paths for additional architectures, but those path
 evidence until a release matrix enables them. macOS signing/passkey and Windows Trusted Signing
 depend on release-only credentials. Missing credentials produce unsigned artifacts where the release
 workflow allows that; pull-request CI does not test signing.
+
+The published `fork-v0.0.33` personal release contains only the macOS arm64 desktop targets plus
+the profile-specific CLI/web tarball. Those desktop artifacts are unsigned and unnotarized. The
+larger workflow matrix remains a declared target, not evidence that the inaugural release shipped
+or executed every platform.
 
 Optional Pi/OMP runtime bundles are supplied through the owner-controlled
 `T3_PI_OMP_RUNTIME_BUNDLES_JSON` repository variable. The value is a JSON object with a `bundles`
