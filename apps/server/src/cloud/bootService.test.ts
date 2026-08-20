@@ -58,7 +58,7 @@ const macPlan = {
   logPath: "/Users/theo/.t3/userdata/logs/boot-service.log",
   unitPath: "/Users/theo/Library/LaunchAgents/com.t3tools.t3code.service.plist",
   productProfile: "upstream",
-};
+} satisfies BootService.BootServicePlan;
 
 it("keeps launchd pinned to the stable launcher rather than a versioned server", () => {
   const plist = BootService.renderBootServicePlist(macPlan, { homeDir: "/Users/theo" });

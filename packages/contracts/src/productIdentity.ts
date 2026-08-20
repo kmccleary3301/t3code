@@ -30,7 +30,7 @@ export type ProductEnvironment = Readonly<Record<string, string | undefined>>;
 
 export function resolveProductUpdateRepository(
   profile: ProductProfile,
-  environment: ProductEnvironment = process.env,
+  environment: ProductEnvironment = {},
 ): string | undefined {
   const configured = environment[PRODUCT_UPDATE_REPOSITORY_ENV]?.trim();
   if (profile === "pi-omp" && configured === undefined) return undefined;

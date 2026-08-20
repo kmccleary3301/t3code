@@ -541,6 +541,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const baseConfig = {
     executablePath: "wsl.exe",
     entryPath: wslEntryPath,
+    cwd: environment.backendCwd,
     env: {
       ...parentEnvWithoutT3Home,
       ...backendChildEnvPatch(),
