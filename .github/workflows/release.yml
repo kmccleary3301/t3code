@@ -111,6 +111,7 @@ jobs:
 
   preflight:
     name: Preflight
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     needs: [check_changes]
     if: |
       always() &&
@@ -162,7 +163,6 @@ jobs:
           SCHEDULED_PROFILE: ${{ vars.T3_RELEASE_PRODUCT_PROFILE }}
           T3_PI_OMP_RELEASE_REPOSITORY: ${{ vars.T3_PI_OMP_RELEASE_REPOSITORY }}
           T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ vars.T3CODE_DESKTOP_UPDATE_REPOSITORY }}
-          NIGHTLY_DATE: ${{ github.run_started_at }}
           NIGHTLY_SHA: ${{ github.sha }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
         run: |
@@ -212,7 +212,7 @@ jobs:
           echo "cli_package_name=$cli_package_name" >> "$GITHUB_OUTPUT"
 
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ) ]]; then
-            nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
+            nightly_date="$(date -u +%Y%m%d)"
 
             node scripts/resolve-nightly-release.ts \
               --date "$nightly_date" \
