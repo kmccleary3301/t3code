@@ -1678,6 +1678,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                     grok: {
                       enabled: false,
                     },
+                    pi: {
+                      enabled: false,
+                    },
+                    omp: {
+                      enabled: false,
+                    },
                   },
                 }),
               ),

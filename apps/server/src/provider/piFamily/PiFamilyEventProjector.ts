@@ -143,6 +143,8 @@ export class PiFamilyEventProjector {
   private readonly maxUnknownEvents: number;
   private readonly maxTaskSnapshots: number;
   private droppedUnknownEvents = 0;
+  private activeOmpTurnRequestId: string | undefined;
+  private ompTurnSettledByMessage = false;
 
   public constructor(runtime: PiFamilyRuntimeKind, options: PiFamilyEventProjectorOptions = {}) {
     this.runtime = runtime;
@@ -163,11 +165,19 @@ export class PiFamilyEventProjector {
     }
 
     if (event.type === "agent_start" || event.type === "turn_start") {
+      if (this.runtime === "omp" && event.type === "turn_start") return [];
       const requestId = this.eventRequestId(event);
+      if (this.runtime === "omp") {
+        this.activeOmpTurnRequestId = requestId;
+        this.ompTurnSettledByMessage = false;
+      }
       return [{ kind: "turn.started", ...(requestId ? { requestId } : {}), raw: event }];
     }
     if (event.type === "agent_settled" || event.type === "turn_end") {
+      if (this.runtime === "omp" && event.type === "turn_end") return [];
       const requestId = this.eventRequestId(event);
+      this.activeOmpTurnRequestId = undefined;
+      this.ompTurnSettledByMessage = false;
       return [{ kind: "turn.settled", ...(requestId ? { requestId } : {}), raw: event }];
     }
     if (event.type === "agent_end") {
@@ -177,7 +187,13 @@ export class PiFamilyEventProjector {
         this.retainUnknown(event, "OMP agent_end is a non-terminal retry/pause");
         return [{ kind: "runtime.raw", event }];
       }
+      if (this.runtime === "omp" && this.ompTurnSettledByMessage) {
+        this.activeOmpTurnRequestId = undefined;
+        this.ompTurnSettledByMessage = false;
+        return [];
+      }
       const requestId = this.eventRequestId(event);
+      this.activeOmpTurnRequestId = undefined;
       return [{ kind: "turn.settled", ...(requestId ? { requestId } : {}), raw: event }];
     }
     if (event.type === "prompt_result") {
@@ -210,7 +226,11 @@ export class PiFamilyEventProjector {
         this.retainUnknown(event, "known message_end without a terminal assistant payload");
         return [{ kind: "runtime.raw", event }];
       }
-      return [{ kind: "message.completed", raw: event }];
+      const completed: PiFamilyProjectedEvent = { kind: "message.completed", raw: event };
+      if (this.runtime !== "omp") return [completed];
+      const requestId = this.eventRequestId(event) ?? this.activeOmpTurnRequestId;
+      this.ompTurnSettledByMessage = true;
+      return [completed, { kind: "turn.settled", ...(requestId ? { requestId } : {}), raw: event }];
     }
     if (
       event.type === "tool_execution_start" ||
@@ -317,9 +337,9 @@ export class PiFamilyEventProjector {
     const nestedTask = asRecord(payload?.task) ?? asRecord(data?.task) ?? asRecord(event.task);
     const source: JsonRecord = {
       ...event,
-      ...(data ?? {}),
-      ...(payload ?? {}),
-      ...(nestedTask ?? {}),
+      ...data,
+      ...payload,
+      ...nestedTask,
     };
     const id =
       asString(source.id) ??

@@ -99,12 +99,26 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     '    out({ id: command.id, type: "response", command: "prompt", success: true });',
     '    if (command.message === "arm-hang") process.on("SIGTERM", () => {});',
     '    if (command.message === "portable-ui") {',
-    '      out({ type: "turn_start", id: command.id });',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_start" });']
+      : ['      out({ type: "turn_start", id: command.id });']),
     '      out({ type: "extension_ui_request", id: "ui-confirm", method: "confirm", title: "Confirm", message: "Continue?" });',
     '      out({ type: "extension_ui_request", id: "ui-select", method: "select", title: "Choose", options: [{ id: "alpha", label: "Alpha" }, { id: "beta", label: "Beta" }] });',
     '      out({ type: "extension_ui_request", id: "ui-input", method: "input", title: "Name", placeholder: "value" });',
     '      out({ type: "extension_ui_request", id: "ui-editor", method: "editor", title: "Edit", prefill: "before" });',
-    '      out({ type: "turn_end", id: command.id });',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_end", isTerminal: true });']
+      : ['      out({ type: "turn_end", id: command.id });']),
+    "      return;",
+    "    }",
+    '    if (command.message === "anonymous-pi-lifecycle") {',
+    '      out({ type: "agent_start" });',
+    '      out({ type: "turn_start" });',
+    '      out({ type: "message_update", delta: { text: "anonymous pi complete" } });',
+    '      out({ type: "message_end", message: { id: "assistant-anonymous", role: "assistant", content: [{ type: "text", text: "anonymous pi complete" }], stopReason: "stop" } });',
+    '      out({ type: "turn_end" });',
+    '      out({ type: "agent_end" });',
+    '      out({ type: "agent_settled" });',
     "      return;",
     "    }",
     ...(malformed
@@ -116,15 +130,24 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
           '      out({ type: "tool_execution_start", toolName: "subagent", id: "tool-1" });',
           '      out({ type: "tool_execution_end", toolName: "subagent", id: "tool-1" });',
           '      out({ type: "message_update", delta: { text: "after malformed" } });',
-          '      out({ type: "turn_end", id: command.id });',
+          ...(runtime === "omp"
+            ? ['      out({ type: "agent_end", isTerminal: true });']
+            : ['      out({ type: "turn_end", id: command.id });']),
           "      return;",
           "    }",
         ]
       : []),
-    '    out({ type: "turn_start", id: command.id });',
+    ...(runtime === "omp"
+      ? [
+          '    out({ type: "agent_start" });',
+          '    out({ type: "turn_start" });',
+          '    out({ type: "turn_end" });',
+          '    out({ type: "turn_start" });',
+        ]
+      : ['    out({ type: "turn_start", id: command.id });']),
     '    out({ type: "message_update", delta: { text: "hello from native" } });',
     '    out({ type: "message_end", message: { id: "assistant-1", role: "assistant", content: [{ type: "text", text: "hello from native" }], stopReason: "stop" } });',
-    '    out({ type: "turn_end", id: command.id });',
+    ...(runtime === "omp" ? [] : ['    out({ type: "turn_end", id: command.id });']),
     "  }",
     '  if (command.type === "abort") out({ id: command.id, type: "response", command: "abort", success: true });',
     "});",
@@ -208,6 +231,50 @@ describe("Pi-family native adapter", () => {
         yield* adapter.stopSession(threadId);
         assert.equal(yield* adapter.hasSession(threadId), false);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
+  for (const runtime of ["pi", "omp"] as const) {
+    it.effect(
+      `binds anonymous ${runtime} lifecycle frames to the accepted prompt exactly once`,
+      () =>
+        Effect.gen(function* () {
+          const provider = ProviderDriverKind.make(runtime);
+          const threadId = ThreadId.make(`${runtime}-anonymous-lifecycle-thread`);
+          const instanceId = ProviderInstanceId.make(`${runtime}-anonymous-lifecycle-instance`);
+          const adapter = yield* makePiFamilyAdapter({
+            provider,
+            runtime,
+            binaryPath: process.execPath,
+            cwd: process.cwd(),
+            launchArguments: ["-e", makeNativeScript(runtime), "--"],
+            requestTimeoutMs: 2_000,
+            startupTimeoutMs: 2_000,
+            maxLineBytes: 1_048_576,
+            maxMessageBytes: 67_108_864,
+            stderrLimitBytes: 16_384,
+            instanceId,
+          });
+
+          yield* adapter.startSession({
+            threadId,
+            provider,
+            providerInstanceId: instanceId,
+            runtimeMode: "full-access",
+          });
+          yield* nextEvent(adapter.streamEvents);
+          const turn = yield* adapter.sendTurn({ threadId, input: "anonymous-pi-lifecycle" });
+          const events = yield* adapter.streamEvents.pipe(Stream.take(4), Stream.runCollect);
+          assert.deepEqual(
+            Array.from(events, (event) => event.type),
+            ["turn.started", "content.delta", "item.completed", "turn.completed"],
+          );
+          const started = events[0];
+          const completed = events[3];
+          assert.equal(started?.turnId, turn.turnId);
+          assert.equal(completed?.turnId, turn.turnId);
+          yield* adapter.stopSession(threadId);
+          assert.equal(yield* adapter.hasSession(threadId), false);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
   it.effect("round-trips every interactive portable UI response over the native wire", () =>

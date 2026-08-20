@@ -165,6 +165,8 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [PI_DRIVER_KIND]: "openai-codex/gpt-5.4",
+  [OMP_DRIVER_KIND]: "openai-codex/gpt-5.6-sol",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<

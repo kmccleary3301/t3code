@@ -13,7 +13,7 @@ import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { ServerConfig } from "../../config.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import { ProviderAdapterRequestError, type ProviderAdapterError } from "../Errors.ts";
+import type { ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ServerProviderShape } from "../Services/ServerProvider.ts";
 import {
@@ -30,6 +30,10 @@ import {
 } from "../providerSnapshot.ts";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import { makePiFamilyAdapter } from "../piFamily/NativeAdapter.ts";
+import {
+  discoverPiFamilyModels,
+  modelDiscoverySnapshotMessage,
+} from "../piFamily/ModelDiscovery.ts";
 import { makePiFamilyTextGeneration } from "../../textGeneration/PiFamilyTextGeneration.ts";
 
 export type PiFamilySettings = typeof PiSettings.Type | typeof OmpSettings.Type;
@@ -117,14 +121,50 @@ function makeSnapshot(
     }
     const result = probe.success.value;
     const version = parseGenericCliVersion(`${result.stdout}\n${result.stderr}`);
+    if (result.code !== 0) {
+      return {
+        ...base,
+        installed: true,
+        version,
+        status: "error" as const,
+        auth: { status: "unknown" as const },
+        checkedAt,
+        message: `${provider} version probe exited unsuccessfully.`,
+      } satisfies ServerProvider;
+    }
+    const discovery = yield* discoverPiFamilyModels({
+      runtime: provider === "omp" ? "omp" : "pi",
+      provider,
+      binaryPath: config.binaryPath,
+      cwd: dependencies.cwd,
+      ...(config.agentDirectory ? { agentDirectory: config.agentDirectory } : {}),
+      environment,
+      launchArguments: config.launchArguments,
+      trustMode: config.trustMode,
+      requestTimeoutMs: config.requestTimeoutMs,
+      startupTimeoutMs: config.startupTimeoutMs,
+      maxLineBytes: config.maxLineBytes,
+      maxMessageBytes: config.maxMessageBytes,
+    }).pipe(Effect.result);
+    if (Result.isFailure(discovery)) {
+      return {
+        ...base,
+        installed: true,
+        version,
+        status: "ready" as const,
+        auth: { status: "unknown" as const },
+        checkedAt,
+        message: modelDiscoverySnapshotMessage(provider, discovery.failure),
+      } satisfies ServerProvider;
+    }
     return {
       ...base,
+      models: discovery.success.models,
       installed: true,
       version,
-      status: result.code === 0 ? ("ready" as const) : ("error" as const),
+      status: "ready" as const,
       auth: { status: "unknown" as const },
       checkedAt,
-      ...(result.code === 0 ? {} : { message: `${provider} version probe exited unsuccessfully.` }),
     } satisfies ServerProvider;
   }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, dependencies.spawner));
   return {

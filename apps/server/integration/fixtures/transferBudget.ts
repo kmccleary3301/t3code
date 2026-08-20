@@ -14,6 +14,57 @@ export const TRANSFER_MEASURED_TOOLS = 20;
 export const TRANSFER_HISTORY_MCP_RESULT_BYTES = 900_000;
 export const TRANSFER_MEASURED_MCP_RESULT_BYTES = 1_100_000;
 
+type FixtureProviderProfile = {
+  readonly label: string;
+  readonly seed: number;
+  readonly model: string;
+  readonly effort: string;
+  readonly command: (toolIndex: number) => string;
+};
+
+const providerFixtureProfiles: Readonly<Record<string, FixtureProviderProfile>> = {
+  codex: {
+    label: "Codex",
+    seed: 0x43_4f_44_45,
+    model: "gpt-5.4",
+    effort: "high",
+    command: (toolIndex) => `vp test transfer-budget-${toolIndex + 1}`,
+  },
+  claudeAgent: {
+    label: "Claude",
+    seed: 0x43_4c_41_55,
+    model: "claude-opus-4-1",
+    effort: "default",
+    command: (toolIndex) => `review transfer budget ${toolIndex + 1}`,
+  },
+  pi: {
+    label: "Pi",
+    seed: 0x50_49_46_58,
+    model: "pi-transfer-fixture",
+    effort: "medium",
+    command: (toolIndex) => `pi inspect transfer-budget-${toolIndex + 1}`,
+  },
+  omp: {
+    label: "Oh My Pi",
+    seed: 0x4f_4d_50_46,
+    model: "omp-transfer-fixture",
+    effort: "low",
+    command: (toolIndex) => `omp inspect transfer-budget-${toolIndex + 1}`,
+  },
+};
+
+const defaultFixtureProviderProfile: FixtureProviderProfile = {
+  label: "Provider",
+  seed: 0x46_49_58_54,
+  model: "provider-transfer-fixture",
+  effort: "default",
+  command: (toolIndex) => `inspect transfer-budget-${toolIndex + 1}`,
+};
+
+function providerFixtureProfile(provider: ProviderDriverKind): FixtureProviderProfile {
+  return providerFixtureProfiles[provider] ?? defaultFixtureProviderProfile;
+}
+
 const sourceModules = [
   "connection/session.ts",
   "connection/supervisor.ts",
@@ -69,7 +120,7 @@ function diagnosticOutput(input: {
   readonly targetBytes: number;
 }): string {
   const chunks: string[] = [];
-  const providerSeed = input.provider === "codex" ? 0x43_4f_44_45 : 0x43_4c_41_55;
+  const providerSeed = providerFixtureProfile(input.provider).seed;
   let length = 0;
   let lineIndex = 0;
 
@@ -90,9 +141,9 @@ function diagnosticOutput(input: {
 }
 
 function assistantChunks(provider: ProviderDriverKind, turnIndex: number): ReadonlyArray<string> {
-  const providerName = provider === "codex" ? "Codex" : "Claude";
+  const providerProfile = providerFixtureProfile(provider);
   const paragraphs: string[] = [
-    `I traced the ${providerName} request through the environment connection and orchestration layers. `,
+    `I traced the ${providerProfile.label} request through the environment connection and orchestration layers. `,
   ];
   let paragraphIndex = 0;
   while (paragraphs.join("").length < 4_096) {
@@ -145,8 +196,8 @@ function baseEvent(
 }
 
 /**
- * Synthetic canonical events calibrated from heavy local Codex and Claude
- * threads. Ten historical turns produce 9 MB of retained MCP results without
+ * Synthetic canonical events calibrated for the Codex, Claude Agent, Pi, and OMP (Oh My Pi)
+ * provider families. Ten historical turns produce 9 MB of retained MCP results without
  * committing user content. Command output is intentionally modest because the
  * client projection strips it.
  */
@@ -157,6 +208,7 @@ export function makeRecordedTransferTurn(
   const measuredTurn = turnIndex >= TRANSFER_HISTORY_TURN_COUNT;
   const toolCount = measuredTurn ? TRANSFER_MEASURED_TOOLS : TRANSFER_HISTORY_TOOLS_PER_TURN;
   const turnId = `${FIXTURE_TURN_ID}-${turnIndex + 1}`;
+  const providerProfile = providerFixtureProfile(provider);
   const events: FixtureProviderRuntimeEvent[] = [];
   let eventIndex = 0;
 
@@ -165,17 +217,14 @@ export function makeRecordedTransferTurn(
     ...baseEvent(provider, turnIndex, eventIndex++),
     turnId,
     payload: {
-      model: provider === "codex" ? "gpt-5.4" : "claude-opus-4-1",
-      effort: provider === "codex" ? "high" : "default",
+      model: providerProfile.model,
+      effort: providerProfile.effort,
     },
   });
 
   for (let toolIndex = 0; toolIndex < toolCount; toolIndex += 1) {
     const itemId = `tool-${turnIndex + 1}-${toolIndex + 1}`;
-    const command =
-      provider === "codex"
-        ? `vp test transfer-budget-${toolIndex + 1}`
-        : `review transfer budget ${toolIndex + 1}`;
+    const command = providerProfile.command(toolIndex);
     events.push(
       {
         type: "item.started",

@@ -1,0 +1,416 @@
+import type { ServerProviderModel } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { OmpChunkAssembler } from "./OmpChunkAssembler.ts";
+import { StrictJsonlDecoder } from "./StrictJsonlDecoder.ts";
+import {
+  asRecord,
+  asString,
+  isRpcResponse,
+  makeOmpNegotiateProtocolCommand,
+  parseJsonObject,
+  PiFamilyProtocolError,
+  validateOmpNegotiateProtocolResponse,
+  validateOmpReadyFrame,
+  type JsonRecord,
+  type PiFamilyRuntimeKind,
+  type RpcResponse,
+} from "./protocol.ts";
+
+const MAX_DISCOVERY_LINE_BYTES = 1_048_576;
+const MAX_DISCOVERY_MESSAGE_BYTES = 67_108_864;
+const MAX_DISCOVERY_STDERR_BYTES = 256 * 1024;
+const MAX_DISCOVERY_TOTAL_TIMEOUT_MS = 60_000;
+const encodeRpcEnvelope = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+export interface PiFamilyModelDiscoveryConfig {
+  readonly runtime: PiFamilyRuntimeKind;
+  readonly provider: string;
+  readonly binaryPath: string;
+  readonly cwd: string;
+  readonly agentDirectory?: string;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly launchArguments?: readonly string[];
+  readonly trustMode?: string;
+  readonly requestTimeoutMs: number;
+  readonly startupTimeoutMs: number;
+  readonly maxLineBytes: number;
+  readonly maxMessageBytes: number;
+  readonly stderrLimitBytes?: number;
+}
+
+export interface PiFamilyModelDiscoveryResult {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
+export type PiFamilyModelDiscoveryErrorCode = "spawn" | "timeout" | "protocol" | "native" | "limit";
+
+export class PiFamilyModelDiscoveryError extends Error {
+  public readonly code: PiFamilyModelDiscoveryErrorCode;
+
+  public constructor(code: PiFamilyModelDiscoveryErrorCode, message: string) {
+    super(message);
+    this.name = "PiFamilyModelDiscoveryError";
+    this.code = code;
+  }
+}
+
+/** Keep launch behavior identical to native chat sessions. */
+export function resolvePiFamilyLaunchArguments(
+  launchArguments: readonly string[] | undefined,
+  trustMode: string | undefined,
+): ReadonlyArray<string> {
+  const resolved = [...(launchArguments ?? [])];
+  const hasRpcMode = resolved.some(
+    (argument) => argument === "--mode" || argument.startsWith("--mode="),
+  );
+  if (!hasRpcMode) resolved.push("--mode", "rpc");
+  if (
+    trustMode === "approve-for-this-run" &&
+    !resolved.some((argument) => argument === "--approve" || argument === "-a")
+  ) {
+    resolved.push("--approve");
+  } else if (
+    trustMode === "deny-for-this-run" &&
+    !resolved.some((argument) => argument === "--no-approve" || argument === "-na")
+  ) {
+    resolved.push("--no-approve");
+  }
+  return resolved;
+}
+
+/** Map only native rows with the provider/id identity needed by NativeAdapter. */
+export function mapPiFamilyModels(input: {
+  readonly rows: unknown;
+  readonly currentModel?: unknown;
+}): ReadonlyArray<ServerProviderModel> {
+  if (!Array.isArray(input.rows)) {
+    throw new PiFamilyModelDiscoveryError(
+      "protocol",
+      "Native model discovery returned a malformed model list.",
+    );
+  }
+
+  const current = asRecord(input.currentModel);
+  const currentProvider = nonEmptyString(current?.provider);
+  const currentId = nonEmptyString(current?.id);
+  const currentSlug =
+    currentProvider === undefined || currentId === undefined
+      ? undefined
+      : `${currentProvider}/${currentId}`;
+  const seen = new Set<string>();
+  const models: ServerProviderModel[] = [];
+
+  for (const row of input.rows) {
+    const model = asRecord(row);
+    const provider = nonEmptyString(model?.provider);
+    const id = nonEmptyString(model?.id);
+    if (provider === undefined || id === undefined) continue;
+    const slug = `${provider}/${id}`;
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    const name = nonEmptyString(model?.name) ?? id;
+    models.push({
+      slug,
+      name,
+      isCustom: false,
+      ...(slug === currentSlug ? { isDefault: true } : {}),
+      capabilities: null,
+    });
+  }
+
+  return models;
+}
+
+export function modelDiscoverySnapshotMessage(provider: string, error: unknown): string {
+  const code = error instanceof PiFamilyModelDiscoveryError ? error.code : "native";
+  if (code === "timeout") return `${provider} model discovery timed out.`;
+  if (code === "protocol") return `${provider} returned invalid model discovery data.`;
+  if (code === "limit") return `${provider} model discovery exceeded its output limit.`;
+  return `${provider} model discovery failed.`;
+}
+
+export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(function* (
+  config: PiFamilyModelDiscoveryConfig,
+) {
+  const requestTimeoutMs = boundedTimeout(config.requestTimeoutMs, 1);
+  const startupTimeoutMs = boundedTimeout(config.startupTimeoutMs, 1);
+  const totalTimeoutMs = Math.min(
+    MAX_DISCOVERY_TOTAL_TIMEOUT_MS,
+    Math.max(requestTimeoutMs, startupTimeoutMs + requestTimeoutMs * 2),
+  );
+  const run = Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const environment = {
+        ...config.environment,
+        ...(config.agentDirectory ? { PI_CODING_AGENT_DIR: config.agentDirectory } : {}),
+      };
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          config.binaryPath,
+          resolvePiFamilyLaunchArguments(config.launchArguments, config.trustMode),
+          {
+            cwd: config.cwd,
+            env: environment,
+            extendEnv: true,
+            stdin: { stream: "pipe", endOnDone: false },
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        ),
+      );
+
+      const pending = new Map<
+        string,
+        {
+          readonly command: string;
+          readonly deferred: Deferred.Deferred<RpcResponse, PiFamilyModelDiscoveryError>;
+        }
+      >();
+      const fatal = yield* Deferred.make<never, PiFamilyModelDiscoveryError>();
+      const ready =
+        config.runtime === "omp"
+          ? yield* Deferred.make<void, PiFamilyModelDiscoveryError>()
+          : undefined;
+      const decoder = new StrictJsonlDecoder(
+        Math.min(Math.max(1, config.maxLineBytes), MAX_DISCOVERY_LINE_BYTES),
+      );
+      const chunks =
+        config.runtime === "omp"
+          ? new OmpChunkAssembler(
+              Math.min(Math.max(1, config.maxMessageBytes), MAX_DISCOVERY_MESSAGE_BYTES),
+            )
+          : undefined;
+      const stderrLimit = Math.min(
+        Math.max(1, config.stderrLimitBytes ?? MAX_DISCOVERY_STDERR_BYTES),
+        MAX_DISCOVERY_STDERR_BYTES,
+      );
+      let stderrBytes = 0;
+
+      const asError = (cause: unknown): PiFamilyModelDiscoveryError => {
+        if (cause instanceof PiFamilyModelDiscoveryError) return cause;
+        if (cause instanceof PiFamilyProtocolError) {
+          return new PiFamilyModelDiscoveryError("protocol", cause.message);
+        }
+        return new PiFamilyModelDiscoveryError("native", "Native RPC model discovery failed.");
+      };
+      const signalFailure = (cause: unknown) =>
+        Effect.gen(function* () {
+          const error = asError(cause);
+          yield* Deferred.fail(fatal, error).pipe(Effect.ignore);
+          yield* Effect.forEach(
+            [...pending.values()],
+            ({ deferred }) => Deferred.fail(deferred, error).pipe(Effect.ignore),
+            { discard: true },
+          );
+        });
+
+      const routeFrame = (frame: JsonRecord) =>
+        Effect.gen(function* () {
+          if (config.runtime === "omp" && frame.type === "ready") {
+            validateOmpReadyFrame(frame);
+            if (ready) yield* Deferred.succeed(ready, undefined).pipe(Effect.ignore);
+            return;
+          }
+          if (frame.type !== "response") return;
+          if (!isRpcResponse(frame)) {
+            return yield* Effect.fail(
+              new PiFamilyModelDiscoveryError(
+                "protocol",
+                "Native model discovery returned a malformed RPC response.",
+              ),
+            );
+          }
+          const id = asString(frame.id);
+          if (id === undefined) return;
+          const request = pending.get(id);
+          if (!request) return;
+          pending.delete(id);
+          if (frame.command !== request.command) {
+            return yield* Effect.fail(
+              new PiFamilyModelDiscoveryError(
+                "protocol",
+                "Native model discovery response command did not match its request.",
+              ),
+            );
+          }
+          if (!frame.success) {
+            return yield* Deferred.fail(
+              request.deferred,
+              new PiFamilyModelDiscoveryError("native", "Native model discovery request failed."),
+            ).pipe(Effect.ignore);
+          }
+          yield* Deferred.succeed(request.deferred, frame).pipe(Effect.ignore);
+        });
+      const processLine = (line: string) =>
+        Effect.try({
+          try: () => parseJsonObject(line),
+          catch: (cause) => asError(cause),
+        }).pipe(
+          Effect.flatMap((frame) => {
+            const complete = chunks ? chunks.accept(frame) : frame;
+            return complete === undefined ? Effect.void : routeFrame(complete);
+          }),
+        );
+
+      const stdoutReader = Stream.runForEach(child.stdout, (chunk) =>
+        Effect.try({
+          try: () => decoder.push(chunk),
+          catch: (cause) => asError(cause),
+        }).pipe(Effect.flatMap((lines) => Effect.forEach(lines, processLine, { discard: true }))),
+      ).pipe(
+        Effect.ensuring(
+          Effect.try({
+            try: () => decoder.finish(),
+            catch: (cause) => asError(cause),
+          }).pipe(
+            Effect.flatMap((lines) => Effect.forEach(lines, processLine, { discard: true })),
+            Effect.catch((cause) => signalFailure(cause)),
+          ),
+        ),
+        Effect.catch((cause) => signalFailure(cause)),
+        Effect.forkScoped,
+      );
+      yield* stdoutReader;
+
+      const stderrReader = Stream.runForEach(child.stderr, (chunk) =>
+        Effect.gen(function* () {
+          stderrBytes += chunk.byteLength;
+          if (stderrBytes > stderrLimit) {
+            return yield* Effect.fail(
+              new PiFamilyModelDiscoveryError(
+                "limit",
+                "Native model discovery exceeded its stderr limit.",
+              ),
+            );
+          }
+        }),
+      ).pipe(
+        Effect.catch((cause) => signalFailure(cause)),
+        Effect.forkScoped,
+      );
+      yield* stderrReader;
+
+      yield* child.exitCode.pipe(
+        Effect.mapError((cause) => asError(cause)),
+        Effect.flatMap((code) =>
+          signalFailure(
+            Number(code) === 0
+              ? new PiFamilyModelDiscoveryError(
+                  "native",
+                  "Native process exited before discovery completed.",
+                )
+              : new PiFamilyModelDiscoveryError(
+                  "native",
+                  "Native process exited during model discovery.",
+                ),
+          ),
+        ),
+        Effect.catch(() => Effect.void),
+        Effect.forkScoped,
+      );
+
+      let requestCounter = 0;
+      const request = (command: string, envelope: JsonRecord) => {
+        const id = asString(envelope.id) ?? `${command}-${++requestCounter}`;
+        return Effect.gen(function* () {
+          const deferred = yield* Deferred.make<RpcResponse, PiFamilyModelDiscoveryError>();
+          pending.set(id, { command, deferred });
+          const requestEnvelope = { ...envelope, id, type: command };
+          yield* Stream.run(
+            Stream.make(new TextEncoder().encode(`${encodeRpcEnvelope(requestEnvelope)}\n`)),
+            child.stdin,
+          ).pipe(
+            Effect.mapError(
+              () => new PiFamilyModelDiscoveryError("native", "Native RPC input failed."),
+            ),
+          );
+          return yield* Deferred.await(deferred).pipe(
+            Effect.raceFirst(Deferred.await(fatal)),
+            Effect.timeout(requestTimeoutMs),
+            Effect.catchTag("TimeoutError", () =>
+              Effect.fail(
+                new PiFamilyModelDiscoveryError("timeout", "Native RPC model discovery timed out."),
+              ),
+            ),
+          );
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              pending.delete(id);
+            }),
+          ),
+        );
+      };
+
+      if (ready) {
+        yield* Deferred.await(ready).pipe(
+          Effect.raceFirst(Deferred.await(fatal)),
+          Effect.timeout(startupTimeoutMs),
+          Effect.catchTag("TimeoutError", () =>
+            Effect.fail(
+              new PiFamilyModelDiscoveryError("timeout", "OMP did not emit a ready frame."),
+            ),
+          ),
+        );
+        const negotiation = yield* request(
+          "negotiate_protocol",
+          makeOmpNegotiateProtocolCommand("protocol-1"),
+        );
+        yield* Effect.try({
+          try: () => validateOmpNegotiateProtocolResponse(negotiation),
+          catch: (cause) => asError(cause),
+        });
+      }
+
+      const stateResponse = yield* request("get_state", { type: "get_state" });
+      const modelsResponse = yield* request("get_available_models", {
+        type: "get_available_models",
+      });
+      const stateData = asRecord(stateResponse.data);
+      const modelsData = asRecord(modelsResponse.data);
+      if (!stateData || !modelsData || !Array.isArray(modelsData.models)) {
+        return yield* Effect.fail(
+          new PiFamilyModelDiscoveryError(
+            "protocol",
+            "Native model discovery returned malformed response data.",
+          ),
+        );
+      }
+      return {
+        models: mapPiFamilyModels({
+          rows: modelsData.models,
+          currentModel: stateData.model,
+        }),
+      } satisfies PiFamilyModelDiscoveryResult;
+    }),
+  );
+
+  return yield* run.pipe(
+    Effect.timeout(totalTimeoutMs),
+    Effect.catchTag("TimeoutError", () =>
+      Effect.fail(new PiFamilyModelDiscoveryError("timeout", "Native model discovery timed out.")),
+    ),
+    Effect.mapError((cause) =>
+      cause instanceof PiFamilyModelDiscoveryError
+        ? cause
+        : new PiFamilyModelDiscoveryError("spawn", "Native model discovery could not start."),
+    ),
+  );
+});
+
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
+function boundedTimeout(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0
+    ? Math.min(value, MAX_DISCOVERY_TOTAL_TIMEOUT_MS)
+    : fallback;
+}

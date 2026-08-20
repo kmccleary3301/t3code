@@ -3,6 +3,10 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  applyThreadDetailEvent,
+  isThreadEventSequenceNewer,
+} from "@t3tools/client-runtime/state/threads";
 
 import {
   AuthAccessTokenType,
@@ -160,6 +164,7 @@ import {
   makeWebSocketTransferRecorder,
   measureHttpGet,
   transferDelta,
+  type WebSocketTransferRecorder,
 } from "../integration/NetworkTransferMeasurement.integration.ts";
 import {
   expectedMeasuredAssistantText,
@@ -8025,6 +8030,583 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 });
+it.live(
+  "keeps authenticated thread subscribers converged across bounded reconnect replay",
+  () =>
+    Effect.acquireUseRelease(
+      makeOrchestrationIntegrationHarness(),
+      (harness) =>
+        Effect.gen(function* () {
+          const targetProjectId = ProjectId.make("replay-convergence-target-project");
+          const targetThreadId = ThreadId.make("replay-convergence-target-thread");
+          const unrelatedThreadId = ThreadId.make("replay-convergence-unrelated-thread");
+          const provider = ProviderDriverKind.make("codex");
+          const modelSelection = defaultModelSelection;
+          const nowDateTime = DateTime.makeUnsafe("2026-08-20T00:00:00.000Z");
+          const now = DateTime.formatIso(nowDateTime);
+          const turnCreatedAt = (turnIndex: number) =>
+            DateTime.formatIso(DateTime.add(nowDateTime, { seconds: turnIndex }));
+
+          const seedProjectAndThread = (projectId: ProjectId, threadId: ThreadId, title: string) =>
+            Effect.gen(function* () {
+              yield* harness.engine.dispatch({
+                type: "project.create",
+                commandId: CommandId.make(`replay:${title}:project-create`),
+                projectId,
+                title: `${title} project`,
+                workspaceRoot: harness.workspaceDir,
+                defaultModelSelection: modelSelection,
+                createdAt: now,
+              });
+              yield* harness.engine.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make(`replay:${title}:thread-create`),
+                threadId,
+                projectId,
+                title: `${title} thread`,
+                modelSelection,
+                runtimeMode: "approval-required",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: harness.workspaceDir,
+                createdAt: now,
+              });
+            });
+
+          const makeTurnResponse = (label: string, threadId: ThreadId, turnIndex: number) => {
+            const taskId = `replay-task-${label}`;
+            const turnId = `replay-turn-${label}`;
+            let nativeEventIndex = 0;
+            const event = (type: string, suffix: string, payload?: unknown) => ({
+              type,
+              eventId: EventId.make(`replay-fixture:${label}:${suffix}`),
+              provider,
+              createdAt: DateTime.formatIso(
+                DateTime.add(DateTime.makeUnsafe(turnCreatedAt(turnIndex)), {
+                  milliseconds: ++nativeEventIndex * 10,
+                }),
+              ),
+              threadId: String(threadId),
+              turnId,
+              ...(payload === undefined ? {} : { payload }),
+            });
+
+            return {
+              events: [
+                event("turn.started", "started"),
+                {
+                  ...event("message.delta", "message"),
+                  delta: `${label} assistant response`,
+                },
+                event("task.started", "task-started", {
+                  taskId,
+                  taskType: "subagent",
+                  title: `${label} task`,
+                }),
+                event("task.completed", "task-completed", {
+                  taskId,
+                  status: "completed",
+                  summary: `${label} task completed`,
+                }),
+                {
+                  ...event("turn.completed", "completed"),
+                  status: "completed",
+                },
+              ],
+            };
+          };
+
+          const startTurn = (
+            threadId: ThreadId,
+            commandId: string,
+            messageId: string,
+            text: string,
+            createdAt: string,
+          ) =>
+            Effect.scoped(
+              withWsRpcClient(authenticatedWsUrl, (client) =>
+                client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                  type: "thread.turn.start",
+                  commandId: CommandId.make(commandId),
+                  threadId,
+                  message: {
+                    messageId: MessageId.make(messageId),
+                    role: "user",
+                    text,
+                    attachments: [],
+                  },
+                  modelSelection,
+                  runtimeMode: "approval-required",
+                  interactionMode: "default",
+                  createdAt,
+                }),
+              ),
+            );
+
+          yield* seedProjectAndThread(targetProjectId, targetThreadId, "replay-convergence-target");
+          yield* harness.engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("replay:convergence:unrelated-thread-create"),
+            threadId: unrelatedThreadId,
+            projectId: targetProjectId,
+            title: "replay-convergence-unrelated thread",
+            modelSelection,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: harness.workspaceDir,
+            createdAt: now,
+          });
+          yield* buildAppUnderTest({
+            layers: {
+              orchestrationEngine: harness.engine,
+              projectionSnapshotQuery: harness.snapshotQuery,
+            },
+          });
+
+          const baseUrl = yield* getHttpServerUrl();
+          const cookie = yield* getAuthenticatedSessionCookieHeader();
+          const authenticatedWsUrl = appendSessionCookieToWsUrl(
+            baseUrl.replace(/^http:/, "ws:") + "/ws",
+            cookie,
+          );
+          const wsBaseUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+
+          if (!harness.adapterHarness) {
+            return yield* Effect.die("The convergence test requires the replay adapter.");
+          }
+
+          yield* harness.adapterHarness.queueTurnResponseForNextSession(
+            makeTurnResponse("baseline", targetThreadId, 1),
+          );
+          yield* startTurn(
+            targetThreadId,
+            "replay:target:baseline",
+            "replay-user-baseline",
+            "Produce the baseline response.",
+            turnCreatedAt(1),
+          );
+          yield* harness.waitForThread(
+            targetThreadId,
+            (thread) =>
+              thread.latestTurn?.state === "completed" &&
+              thread.messages.some(
+                (message) => message.text === "baseline assistant response" && !message.streaming,
+              ),
+            20_000,
+          );
+          yield* harness.drainProviderRuntime;
+          yield* harness.drainCheckpointReactor;
+
+          const readThreadSnapshot = Effect.fn("ReplayConvergence.readThreadSnapshot")(
+            function* () {
+              const response = yield* fetchEffect(
+                `${baseUrl}/api/orchestration/threads/${targetThreadId}`,
+                { headers: { cookie } },
+              );
+              assert.equal(response.status, 200);
+              return yield* responseJsonEffect<OrchestrationThreadDetailSnapshot>(response);
+            },
+          );
+          const initialSnapshot = yield* readThreadSnapshot();
+          assert.isAbove(initialSnapshot.snapshotSequence, 0);
+
+          const initialEvents = yield* harness.engine
+            .readEvents(0, initialSnapshot.snapshotSequence)
+            .pipe(
+              Stream.runCollect,
+              Effect.map((events) => Array.from(events)),
+            );
+          const initialTargetEvents = initialEvents.filter(
+            (event) => event.aggregateId === targetThreadId && isThreadDetailEvent(event),
+          );
+          assert.isAtLeast(initialTargetEvents.length, 1);
+          const replayCursor = Math.max(
+            0,
+            Math.min(...initialTargetEvents.map((event) => event.sequence)) - 1,
+          );
+          assert.isBelow(replayCursor, initialSnapshot.snapshotSequence);
+
+          const canonicalFromThread = (thread: typeof initialSnapshot.thread) => ({
+            messages: thread.messages
+              .map((message) => ({
+                id: String(message.id),
+                role: message.role,
+                text: message.text,
+                streaming: message.streaming,
+              }))
+              .sort((left, right) => left.id.localeCompare(right.id)),
+            tasks: thread.activities
+              .filter((activity) => activity.kind.startsWith("task."))
+              .map((activity) => {
+                const payload =
+                  typeof activity.payload === "object" && activity.payload !== null
+                    ? (activity.payload as Record<string, unknown>)
+                    : {};
+                return {
+                  id: String(activity.id),
+                  kind: activity.kind,
+                  summary: activity.summary,
+                  taskId: typeof payload.taskId === "string" ? payload.taskId : null,
+                };
+              })
+              .sort((left, right) => left.id.localeCompare(right.id)),
+            checkpoints: thread.checkpoints
+              .map((checkpoint) => ({
+                turnId: String(checkpoint.turnId),
+                checkpointRef: String(checkpoint.checkpointRef),
+                checkpointTurnCount: checkpoint.checkpointTurnCount,
+                status: checkpoint.status,
+                nativeRuntime: checkpoint.nativeCheckpoint?.runtime ?? null,
+              }))
+              .sort((left, right) => left.checkpointRef.localeCompare(right.checkpointRef)),
+          });
+          const applyClientEvents = (
+            initial: typeof initialSnapshot.thread,
+            initialSequence: number,
+            events: ReadonlyArray<OrchestrationEvent>,
+          ) => {
+            let thread = initial;
+            let lastSequence = initialSequence;
+            for (const event of events) {
+              if (!isThreadEventSequenceNewer(lastSequence, event.sequence)) continue;
+              lastSequence = event.sequence;
+              const result = applyThreadDetailEvent(thread, event);
+              if (result.kind === "deleted") {
+                throw new Error("The convergence replay unexpectedly deleted its target thread.");
+              }
+              if (result.kind === "updated") thread = result.thread;
+            }
+            return canonicalFromThread(thread);
+          };
+
+          const makeSubscription = (
+            input: {
+              readonly threadId: ThreadId;
+              readonly afterSequence: number;
+              readonly requestCompletionMarker: true;
+            },
+            queue: Queue.Queue<OrchestrationThreadStreamItem>,
+            recorder: WebSocketTransferRecorder,
+            stopWhen: (item: OrchestrationThreadStreamItem) => boolean,
+          ) =>
+            Effect.scoped(
+              Effect.gen(function* () {
+                const client = yield* makeCountingWsRpcClient;
+                yield* client[ORCHESTRATION_WS_METHODS.subscribeThread](input).pipe(
+                  Stream.takeUntil(stopWhen),
+                  Stream.runForEach((item) => Queue.offer(queue, item).pipe(Effect.asVoid)),
+                );
+              }).pipe(
+                Effect.provide(
+                  countingWsRpcProtocolLayer({
+                    url: wsBaseUrl,
+                    cookie,
+                    recorder,
+                  }),
+                ),
+              ),
+            );
+
+          const clientAItems: OrchestrationThreadStreamItem[] = [];
+          const clientBItems: OrchestrationThreadStreamItem[] = [];
+          const clientAQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+          const clientBQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+          const clientARecorder = makeWebSocketTransferRecorder();
+          const clientBRecorder = makeWebSocketTransferRecorder();
+          const isCheckpointCapturedEvent = (item: OrchestrationThreadStreamItem) =>
+            item.kind === "event" &&
+            item.event.type === "thread.activity-appended" &&
+            item.event.payload.activity.kind === "checkpoint.captured";
+          let clientBCheckpointEvents = 0;
+          const clientAFiber = yield* makeSubscription(
+            {
+              threadId: targetThreadId,
+              afterSequence: initialSnapshot.snapshotSequence,
+              requestCompletionMarker: true,
+            },
+            clientAQueue,
+            clientARecorder,
+            isCheckpointCapturedEvent,
+          ).pipe(Effect.forkScoped);
+          const clientBFiber = yield* makeSubscription(
+            {
+              threadId: targetThreadId,
+              afterSequence: replayCursor,
+              requestCompletionMarker: true,
+            },
+            clientBQueue,
+            clientBRecorder,
+            (item) => {
+              if (isCheckpointCapturedEvent(item)) clientBCheckpointEvents += 1;
+              return clientBCheckpointEvents >= 3;
+            },
+          ).pipe(Effect.forkScoped);
+
+          clientAItems.push(
+            ...(yield* collectQueueUntil(
+              clientAQueue,
+              (item) => item.kind === "synchronized",
+              "client A initial synchronization",
+            )),
+          );
+          clientBItems.push(
+            ...(yield* collectQueueUntil(
+              clientBQueue,
+              (item) => item.kind === "synchronized",
+              "client B bounded replay synchronization",
+            )),
+          );
+          yield* Effect.logInfo("replay-stage: initial-sync");
+          assert.isFalse(clientAItems.some((item) => item.kind === "snapshot"));
+          assert.isFalse(clientBItems.some((item) => item.kind === "snapshot"));
+          assert.isFalse(
+            clientAItems.some((item) => item.kind === "event"),
+            "HTTP-bootstrapped client should not receive baseline replay events",
+          );
+          assert.isTrue(
+            clientBItems.some(
+              (item) => item.kind === "event" && item.event.type === "thread.message-sent",
+            ),
+            "bounded earlier cursor should replay the baseline message",
+          );
+
+          yield* harness.adapterHarness.queueTurnResponse(
+            targetThreadId,
+            makeTurnResponse("first-live", targetThreadId, 2),
+          );
+          yield* startTurn(
+            targetThreadId,
+            "replay:target:first-live",
+            "replay-user-first-live",
+            "Produce the first live response.",
+            turnCreatedAt(2),
+          );
+          yield* harness.waitForThread(
+            targetThreadId,
+            (thread) =>
+              thread.latestTurn?.state === "completed" &&
+              thread.messages.some(
+                (message) => message.text === "first-live assistant response" && !message.streaming,
+              ),
+            20_000,
+          );
+          yield* harness.drainProviderRuntime;
+          yield* harness.drainCheckpointReactor;
+          clientAItems.push(
+            ...(yield* collectQueueUntil(
+              clientAQueue,
+              isCheckpointCapturedEvent,
+              "client A first live turn",
+            )),
+          );
+          clientBItems.push(
+            ...(yield* collectQueueUntil(
+              clientBQueue,
+              isCheckpointCapturedEvent,
+              "client B first live turn",
+            )),
+          );
+          yield* Effect.logInfo("replay-stage: first-live-collected");
+          const firstLiveSequence = Math.max(
+            ...clientAItems.flatMap((item) => (item.kind === "event" ? [item.event.sequence] : [])),
+          );
+          assert.isAbove(firstLiveSequence, initialSnapshot.snapshotSequence);
+          yield* Effect.sync(() => clientARecorder.terminate());
+          yield* Fiber.await(clientAFiber).pipe(Effect.timeout("5 seconds"));
+          yield* Effect.logInfo("replay-stage: first-client-closed");
+
+          yield* harness.engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make("replay:unrelated:activity"),
+            threadId: unrelatedThreadId,
+            activity: {
+              id: EventId.make("replay:unrelated:activity"),
+              tone: "info",
+              kind: "replay.unrelated",
+              summary: "unrelated work remained isolated",
+              payload: null,
+              turnId: null,
+              createdAt: now,
+            },
+            createdAt: now,
+          });
+
+          yield* harness.adapterHarness.queueTurnResponse(
+            targetThreadId,
+            makeTurnResponse("second-live", targetThreadId, 3),
+          );
+          yield* startTurn(
+            targetThreadId,
+            "replay:target:second-live",
+            "replay-user-second-live",
+            "Produce the second live response.",
+            turnCreatedAt(3),
+          );
+          yield* harness.waitForThread(
+            targetThreadId,
+            (thread) =>
+              thread.latestTurn?.state === "completed" &&
+              thread.messages.some(
+                (message) =>
+                  message.text === "second-live assistant response" && !message.streaming,
+              ),
+            20_000,
+          );
+          yield* harness.drainProviderRuntime;
+          yield* harness.drainCheckpointReactor;
+          clientBItems.push(
+            ...(yield* collectQueueUntil(
+              clientBQueue,
+              isCheckpointCapturedEvent,
+              "client B second live turn",
+            )),
+          );
+          yield* Effect.logInfo("replay-stage: second-live-collected");
+          const finalTargetSequence = Math.max(
+            ...clientBItems.flatMap((item) => (item.kind === "event" ? [item.event.sequence] : [])),
+          );
+          assert.isAbove(finalTargetSequence, firstLiveSequence);
+          yield* Effect.sync(() => clientBRecorder.terminate());
+          yield* Fiber.await(clientBFiber).pipe(Effect.timeout("5 seconds"));
+          yield* Effect.logInfo("replay-stage: second-client-closed");
+
+          const clientAReconnectItems: OrchestrationThreadStreamItem[] = [];
+          const clientAReconnectQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+          const clientAReconnectRecorder = makeWebSocketTransferRecorder();
+          const clientAReconnectFiber = yield* makeSubscription(
+            {
+              threadId: targetThreadId,
+              afterSequence: firstLiveSequence,
+              requestCompletionMarker: true,
+            },
+            clientAReconnectQueue,
+            clientAReconnectRecorder,
+            (item) => item.kind === "synchronized",
+          ).pipe(Effect.forkScoped);
+          clientAReconnectItems.push(
+            ...(yield* collectQueueUntil(
+              clientAReconnectQueue,
+              (item) => item.kind === "synchronized",
+              "client A bounded reconnect synchronization",
+            )),
+          );
+          yield* Effect.logInfo("replay-stage: reconnect-collected");
+          yield* Effect.sync(() => clientAReconnectRecorder.terminate());
+          yield* Fiber.await(clientAReconnectFiber).pipe(Effect.timeout("5 seconds"));
+          yield* Effect.logInfo("replay-stage: reconnect-closed");
+
+          assert.isFalse(clientAReconnectItems.some((item) => item.kind === "snapshot"));
+          const eventsFromItems = (items: ReadonlyArray<OrchestrationThreadStreamItem>) =>
+            items.flatMap((item) => (item.kind === "event" ? [item.event] : []));
+          const eventKey = (event: OrchestrationEvent) =>
+            `${event.sequence}:${String(event.eventId)}:${event.type}`;
+          const assertOrdered = (
+            items: ReadonlyArray<OrchestrationThreadStreamItem>,
+            description: string,
+          ) => {
+            const events = eventsFromItems(items);
+            const sequences = events.map((event) => event.sequence);
+            assert.isTrue(
+              sequences.every((sequence, index) => index === 0 || sequence > sequences[index - 1]!),
+              `${description} sequences must be strictly increasing`,
+            );
+            const eventIds = events.map((event) => String(event.eventId));
+            assert.equal(
+              new Set(eventIds).size,
+              eventIds.length,
+              `${description} must not duplicate event IDs`,
+            );
+          };
+          assertOrdered(clientAItems.concat(clientAReconnectItems), "client A");
+          assertOrdered(clientBItems, "client B");
+
+          const clientAEvents = eventsFromItems(clientAItems.concat(clientAReconnectItems));
+          const clientBEvents = eventsFromItems(clientBItems);
+          const clientAResumedEvents = eventsFromItems(clientAReconnectItems);
+          const clientBSecondLiveEvents = clientBEvents.filter(
+            (event) => event.sequence > firstLiveSequence,
+          );
+          assert.deepEqual(
+            clientAResumedEvents.map(eventKey),
+            clientBSecondLiveEvents.map(eventKey),
+            "reconnected and continuously connected clients must receive the same bounded live tail",
+          );
+          assert.deepEqual(
+            clientAEvents
+              .filter((event) => event.sequence > initialSnapshot.snapshotSequence)
+              .map(eventKey),
+            clientBEvents
+              .filter((event) => event.sequence > initialSnapshot.snapshotSequence)
+              .map(eventKey),
+            "clients must converge on the same canonical live event sequence",
+          );
+          assert.isTrue(
+            clientBEvents.every((event) => event.aggregateId === targetThreadId),
+            "target subscription must remain isolated from unrelated work",
+          );
+
+          const finalSnapshot = yield* readThreadSnapshot();
+          const finalCanonical = canonicalFromThread(finalSnapshot.thread);
+          assert.deepEqual(
+            applyClientEvents(
+              initialSnapshot.thread,
+              initialSnapshot.snapshotSequence,
+              clientAEvents,
+            ),
+            finalCanonical,
+            "HTTP-bootstrapped client projection must converge to the canonical thread state",
+          );
+          assert.deepEqual(
+            applyClientEvents(
+              initialSnapshot.thread,
+              initialSnapshot.snapshotSequence,
+              clientBEvents,
+            ),
+            finalCanonical,
+            "bounded-replay client projection must converge to the canonical thread state",
+          );
+
+          const assistantTexts = finalSnapshot.thread.messages
+            .filter((message) => message.role === "assistant")
+            .map((message) => message.text);
+          assert.deepEqual(assistantTexts, [
+            "baseline assistant response",
+            "first-live assistant response",
+            "second-live assistant response",
+          ]);
+          assert.equal(new Set(assistantTexts).size, assistantTexts.length);
+          const taskIds = finalSnapshot.thread.activities
+            .filter((activity) => activity.kind === "task.completed")
+            .flatMap((activity) => {
+              const payload =
+                typeof activity.payload === "object" && activity.payload !== null
+                  ? (activity.payload as Record<string, unknown>)
+                  : {};
+              return typeof payload.taskId === "string" ? [payload.taskId] : [];
+            });
+          assert.include(taskIds, "replay-task-baseline");
+          assert.include(taskIds, "replay-task-first-live");
+          assert.include(taskIds, "replay-task-second-live");
+          assert.equal(finalSnapshot.thread.latestTurn?.state, "completed");
+          assert.equal(finalSnapshot.thread.session?.status, "ready");
+
+          const unrelatedSnapshot = yield* harness.snapshotQuery
+            .getThreadDetailSnapshot(unrelatedThreadId)
+            .pipe(Effect.map(Option.getOrThrow));
+          assert.include(
+            unrelatedSnapshot.thread.activities.map((activity) => activity.summary),
+            "unrelated work remained isolated",
+          );
+        }),
+      (harness) =>
+        Effect.logInfo("replay-stage: dispose-start").pipe(
+          Effect.andThen(harness.dispose),
+          Effect.tap(() => Effect.logInfo("replay-stage: dispose-complete")),
+        ),
+    ).pipe(Effect.provide(Layer.merge(NodeHttpServerTestWithWsDeflate, NodeServices.layer))),
+  30_000,
+);
 
 it.live(
   "reports thread HTTP and WebSocket transfer budgets",
@@ -8033,6 +8615,8 @@ it.live(
       const providers = [
         ProviderDriverKind.make("codex"),
         ProviderDriverKind.make("claudeAgent"),
+        ProviderDriverKind.make("pi"),
+        ProviderDriverKind.make("omp"),
       ] as const;
 
       const runs = yield* Effect.forEach(
@@ -8187,5 +8771,5 @@ it.live(
       }
       assert.deepEqual(transferBudgetViolations(runs), []);
     }).pipe(Effect.provide(NodeServices.layer)),
-  120_000,
+  240_000,
 );

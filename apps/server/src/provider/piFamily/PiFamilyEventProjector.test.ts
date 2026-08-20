@@ -12,28 +12,63 @@ describe("Pi/OMP native event projection", () => {
     assert.equal(nativeEventId("pi", event), nativeEventId("pi", structuredClone(event)));
     assert.notEqual(nativeEventId("pi", event), nativeEventId("omp", event));
   });
-  it("projects terminal message_end without duplicating streamed assistant text", () => {
+  it("settles OMP turns on terminal assistant messages and suppresses a later duplicate end", () => {
     const projector = new PiFamilyEventProjector("omp");
+    projector.project({ type: "agent_start", requestId: "turn-1" });
     const update = projector.project({
       type: "message_update",
       delta: { text: "final" },
     });
-    const final = projector.project({
+    const messageEnd = {
       type: "message_end",
       message: {
         role: "assistant",
         content: [{ type: "text", text: "final" }],
         stopReason: "stop",
       },
-    });
+    };
+    const final = projector.project(messageEnd);
     assert.deepEqual(
       update.map((event) => event.kind),
       ["message.delta"],
     );
     assert.deepEqual(
       final.map((event) => event.kind),
-      ["message.completed"],
+      ["message.completed", "turn.settled"],
     );
+    assert.deepEqual(final[1], {
+      kind: "turn.settled",
+      requestId: "turn-1",
+      raw: messageEnd,
+    });
+    assert.deepEqual(
+      projector.project({
+        type: "agent_end",
+        requestId: "turn-1",
+        isTerminal: true,
+      }),
+      [],
+    );
+  });
+
+  it("does not settle OMP turns on intermediate tool-call messages", () => {
+    const projector = new PiFamilyEventProjector("omp");
+    const event = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", name: "task" }],
+        stopReason: "toolUse",
+      },
+    };
+    assert.deepEqual(projector.project(event), [{ kind: "runtime.raw", event }]);
+  });
+
+  it("ignores OMP model-segment turn markers inside one agent run", () => {
+    const projector = new PiFamilyEventProjector("omp");
+    assert.equal(projector.project({ type: "agent_start" })[0]?.kind, "turn.started");
+    assert.deepEqual(projector.project({ type: "turn_start" }), []);
+    assert.deepEqual(projector.project({ type: "turn_end" }), []);
   });
 
   it("does not settle turns on accepted prompts that start or queue agent work", () => {

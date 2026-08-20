@@ -62,6 +62,7 @@ import {
   type RpcResponse,
   type RuntimeCapabilities,
 } from "./protocol.ts";
+import { resolvePiFamilyLaunchArguments } from "./ModelDiscovery.ts";
 
 export interface PiFamilyNativeConfig {
   readonly provider: ProviderDriverKind;
@@ -685,7 +686,6 @@ export const makePiFamilyAdapter = (
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimeScope = yield* Scope.Scope;
     const events = yield* Queue.bounded<ProviderRuntimeEvent>(NATIVE_EVENT_QUEUE_CAPACITY);
     const sessions = new Map<ThreadId, NativeSession>();
     const adapterCapabilities = {
@@ -808,6 +808,35 @@ export const makePiFamilyAdapter = (
       );
     };
 
+    const inferTurnRequestId = (session: NativeSession): string | undefined => {
+      let candidate: string | undefined;
+      for (const requestId of session.activeTurns) {
+        if (requestId === "__anonymous__") continue;
+        if (candidate !== undefined && candidate !== requestId) return undefined;
+        candidate = requestId;
+      }
+      for (const requestId of session.acceptedPromptIds) {
+        if (candidate !== undefined && candidate !== requestId) return undefined;
+        candidate = requestId;
+      }
+      return candidate;
+    };
+
+    const identifyTurnProjection = (
+      session: NativeSession,
+      projection: PiFamilyProjectedEvent,
+    ): PiFamilyProjectedEvent | undefined => {
+      if (
+        (projection.kind !== "turn.started" && projection.kind !== "turn.settled") ||
+        projection.requestId !== undefined
+      ) {
+        return projection;
+      }
+      const requestId = inferTurnRequestId(session);
+      if (requestId !== undefined) return { ...projection, requestId };
+      return projection.kind === "turn.settled" ? undefined : projection;
+    };
+
     const handleFrame = (
       session: NativeSession,
       value: unknown,
@@ -854,46 +883,61 @@ export const makePiFamilyAdapter = (
           return Effect.forEach(
             projections,
             (projection) => {
-              if (projection.kind === "turn.started") {
-                session.activeTurns.add(projection.requestId ?? "__anonymous__");
-              } else if (projection.kind === "turn.settled") {
-                if (projection.requestId) {
-                  session.activeTurns.delete(projection.requestId);
-                  session.acceptedPromptIds.delete(projection.requestId);
+              const identifiedProjection = identifyTurnProjection(session, projection);
+              if (identifiedProjection === undefined) return Effect.void;
+              if (identifiedProjection.kind === "turn.started") {
+                const requestId = identifiedProjection.requestId ?? "__anonymous__";
+                if (session.activeTurns.has(requestId)) {
+                  return Effect.void;
+                }
+                session.activeTurns.add(requestId);
+              } else if (identifiedProjection.kind === "turn.settled") {
+                if (identifiedProjection.requestId) {
+                  if (
+                    !session.activeTurns.has(identifiedProjection.requestId) &&
+                    !session.activeTurns.has("__anonymous__") &&
+                    !session.acceptedPromptIds.has(identifiedProjection.requestId)
+                  ) {
+                    return Effect.void;
+                  }
+                  session.activeTurns.delete(identifiedProjection.requestId);
+                  session.activeTurns.delete("__anonymous__");
+                  session.acceptedPromptIds.delete(identifiedProjection.requestId);
                 } else {
                   session.activeTurns.clear();
                   session.acceptedPromptIds.clear();
                 }
               } else if (
-                projection.kind === "tool.started" ||
-                projection.kind === "tool.progress"
+                identifiedProjection.kind === "tool.started" ||
+                identifiedProjection.kind === "tool.progress"
               ) {
-                session.activeTools.add(projection.toolCallId ?? "__anonymous__");
-              } else if (projection.kind === "tool.completed") {
-                if (projection.toolCallId) session.activeTools.delete(projection.toolCallId);
+                session.activeTools.add(identifiedProjection.toolCallId ?? "__anonymous__");
+              } else if (identifiedProjection.kind === "tool.completed") {
+                if (identifiedProjection.toolCallId)
+                  session.activeTools.delete(identifiedProjection.toolCallId);
                 else session.activeTools.delete("__anonymous__");
               } else if (
-                projection.kind === "task.started" ||
-                projection.kind === "task.progress"
+                identifiedProjection.kind === "task.started" ||
+                identifiedProjection.kind === "task.progress"
               ) {
-                session.activeTasks.add(projection.task.id);
-              } else if (projection.kind === "task.completed") {
-                session.activeTasks.delete(projection.task.id);
+                session.activeTasks.add(identifiedProjection.task.id);
+              } else if (identifiedProjection.kind === "task.completed") {
+                session.activeTasks.delete(identifiedProjection.task.id);
               } else if (
-                projection.kind === "ui.request" &&
-                projection.request.requestId !== undefined
+                identifiedProjection.kind === "ui.request" &&
+                identifiedProjection.request.requestId !== undefined
               ) {
-                const requestKind = projection.request.kind;
+                const requestKind = identifiedProjection.request.kind;
                 if (
                   requestKind === "confirm" ||
                   requestKind === "select" ||
                   requestKind === "input" ||
                   requestKind === "editor"
                 ) {
-                  session.uiRequestKinds.set(projection.request.requestId, requestKind);
+                  session.uiRequestKinds.set(identifiedProjection.request.requestId, requestKind);
                 }
               }
-              return offerProjection(session.threadId, projection);
+              return offerProjection(session.threadId, identifiedProjection);
             },
             { discard: true },
           );
@@ -931,25 +975,13 @@ export const makePiFamilyAdapter = (
 
         const sessionScope = yield* Scope.make("sequential");
         const environment = {
-          ...(config.environment ?? {}),
+          ...config.environment,
           ...(config.agentDirectory ? { PI_CODING_AGENT_DIR: config.agentDirectory } : {}),
         };
-        const launchArguments = [...(config.launchArguments ?? [])];
-        const hasRpcMode = launchArguments.some(
-          (argument) => argument === "--mode" || argument.startsWith("--mode="),
+        const launchArguments = resolvePiFamilyLaunchArguments(
+          config.launchArguments,
+          config.trustMode,
         );
-        if (!hasRpcMode) launchArguments.push("--mode", "rpc");
-        if (
-          config.trustMode === "approve-for-this-run" &&
-          !launchArguments.some((argument) => argument === "--approve" || argument === "-a")
-        ) {
-          launchArguments.push("--approve");
-        } else if (
-          config.trustMode === "deny-for-this-run" &&
-          !launchArguments.some((argument) => argument === "--no-approve" || argument === "-na")
-        ) {
-          launchArguments.push("--no-approve");
-        }
         const child = yield* spawner
           .spawn(
             ChildProcess.make(config.binaryPath, launchArguments, {

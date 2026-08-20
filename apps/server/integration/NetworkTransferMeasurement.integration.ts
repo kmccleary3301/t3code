@@ -101,6 +101,7 @@ export interface WebSocketTransferRecorder {
   ) => globalThis.WebSocket;
   readonly totals: () => WebSocketTransferTotals;
   readonly negotiatedExtensions: () => string;
+  readonly terminate: () => void;
 }
 
 interface NodeWebSocketWithTransport extends NodeSocket.NodeWS.WebSocket {
@@ -141,6 +142,7 @@ export function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
       messages,
     }),
     negotiatedExtensions: () => socket?.extensions ?? "",
+    terminate: () => socket?.terminate(),
   };
 }
 

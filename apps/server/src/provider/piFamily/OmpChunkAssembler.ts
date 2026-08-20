@@ -1,8 +1,8 @@
 import {
   asRecord,
   PiFamilyProtocolError,
-  type JsonRecord,
   type OmpRpcChunkFrame,
+  type RpcEnvelope,
 } from "./protocol.ts";
 
 export const OMP_MAX_FRAME_BYTES = 1_048_576;
@@ -39,7 +39,7 @@ export class OmpChunkAssembler {
     this.maxChunkCount = Math.ceil(maxReassembledBytes / OMP_CHUNK_PAYLOAD_BYTES);
   }
 
-  public accept(value: unknown): JsonRecord | undefined {
+  public accept(value: unknown): RpcEnvelope | undefined {
     if (!this.isChunkFrame(value)) {
       if (this.pending) {
         this.pending = undefined;
@@ -50,9 +50,13 @@ export class OmpChunkAssembler {
         );
       }
       const record = asRecord(value);
-      if (!record)
-        throw new PiFamilyProtocolError("RPC frame must be an object", "RPC_INVALID_FRAME", value);
-      return record;
+      if (!record || typeof record.type !== "string")
+        throw new PiFamilyProtocolError(
+          "RPC frame must be an object with a string type",
+          "RPC_INVALID_FRAME",
+          value,
+        );
+      return record as RpcEnvelope;
     }
 
     const { chunkId, index, count, byteLength } = value;
@@ -181,7 +185,7 @@ export class OmpChunkAssembler {
         parsed,
       );
     }
-    return record;
+    return record as RpcEnvelope;
   }
 
   public clear(): void {

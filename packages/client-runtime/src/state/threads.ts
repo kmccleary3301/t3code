@@ -36,6 +36,13 @@ import {
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
 
+export { applyThreadDetailEvent };
+
+/** Rejects replayed events already represented by the loaded snapshot or live state. */
+export function isThreadEventSequenceNewer(lastSequence: number, eventSequence: number): boolean {
+  return eventSequence > lastSequence;
+}
+
 function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): EnvironmentThreadStatus {
   return Option.isSome(data) ? "cached" : "empty";
 }
@@ -339,7 +346,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
 
     const sequence = yield* SubscriptionRef.get(lastSequence);
-    if (item.event.sequence <= sequence) {
+    if (!isThreadEventSequenceNewer(sequence, item.event.sequence)) {
       return;
     }
     yield* SubscriptionRef.set(lastSequence, item.event.sequence);

@@ -383,7 +383,7 @@ export function isRpcResponse(value: unknown): value is RpcResponse {
   );
 }
 
-export function parseJsonObject(value: string): JsonRecord {
+export function parseJsonObject(value: string): RpcEnvelope {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
@@ -398,7 +398,7 @@ export function parseJsonObject(value: string): JsonRecord {
       parsed,
     );
   }
-  return record;
+  return record as RpcEnvelope;
 }
 
 export function validateOmpReadyFrame(value: unknown): OmpReadyFrame {

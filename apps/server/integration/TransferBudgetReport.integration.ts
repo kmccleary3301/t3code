@@ -41,6 +41,8 @@ const TRANSFER_BUDGET = {
 export const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> = {
   codex: TRANSFER_BUDGET,
   claudeAgent: TRANSFER_BUDGET,
+  pi: TRANSFER_BUDGET,
+  omp: TRANSFER_BUDGET,
 };
 
 function totalWireBytes(run: TransferBudgetRun): number {
@@ -146,7 +148,7 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     "# T3 Code thread transfer budget",
     "",
     "Wire values are thread data bytes read from local HTTP and WebSocket sockets. HTTP includes response headers; WebSocket measurement starts after the resumed thread subscription synchronizes. TCP/IP, TLS framing, and the WebSocket upgrade are excluded. WebSocket permessage-deflate is negotiated.",
-    `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Payload sizes are calibrated from heavy local Codex and Claude histories and contain no user data.`,
+    `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Payload sizes use deterministic, privacy-safe synthetic fixtures covering the Codex, Claude Agent, Pi, and OMP (Oh My Pi) provider families; no raw private traces or user data are committed.`,
     "",
     "| Provider | Total thread wire | Budget | Result |",
     "| --- | ---: | ---: | --- |",
