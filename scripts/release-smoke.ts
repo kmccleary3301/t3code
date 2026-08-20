@@ -307,6 +307,16 @@ try {
   assertContains(releaseWorkflow, "--provenance", "npm provenance is not enabled.");
   assertContains(
     releaseWorkflow,
+    "T3_PI_OMP_PUBLISH_NPM",
+    "Fork npm publication must remain an explicit opt-in.",
+  );
+  assertContains(
+    releaseWorkflow,
+    "--pack-destination cli-release",
+    "Fork GitHub release tarball packaging drifted.",
+  );
+  assertContains(
+    releaseWorkflow,
     "actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be",
     "Release attestation drifted.",
   );

@@ -12,11 +12,14 @@ This document covers the unified release workflow for stable and nightly desktop
   - scheduled nightly check every three hours
   - manual `workflow_dispatch` for either channel
 - Runs quality gates first: lint, typecheck, test.
-- Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
-- Builds four artifacts in parallel for both channels:
+- Reads the shared production T3 Connect relay URL and Clerk client configuration for the upstream
+  profile. The fork profile uses the isolated `fork-release` environment and does not deploy shared
+  relay or hosted-web infrastructure.
+- Builds five artifacts in parallel for both channels:
   - macOS `arm64` DMG
   - macOS `x64` DMG
   - Linux `x64` AppImage
+  - Linux `arm64` AppImage
   - Windows `x64` NSIS installer
 - Publishes one GitHub Release with all produced files.
   - Stable tags with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
@@ -24,14 +27,16 @@ This document covers the unified release workflow for stable and nightly desktop
   - Nightly runs are always GitHub prereleases and never marked latest.
   - Automatically generated release notes are pinned to the previous tag in the same channel, so stable compares to the previous stable tag and nightly compares to the previous nightly tag.
 - Includes Electron auto-update metadata (for example `latest*.yml`, `nightly*.yml`, and `*.blockmap`) in release assets.
-- Publishes the profile-selected CLI package (`apps/server`; `t3` for upstream or `t3-pi-omp` for
-  `pi-omp`) with npm OIDC trusted publishing and provenance from the same workflow file:
-  - stable releases publish npm dist-tag `latest`
-  - nightly releases publish npm dist-tag `nightly`
-- Deploys the hosted web app to Vercel only after a release is published:
+- Builds the profile-selected CLI package (`apps/server`; `t3` for upstream or `t3-pi-omp` for
+  `pi-omp`):
+  - upstream releases publish to npm with OIDC provenance
+  - fork releases always attach a locally packed tarball to GitHub and publish to npm only when the
+    repository variable `T3_PI_OMP_PUBLISH_NPM=true`
+  - stable npm releases use dist-tag `latest`; nightly npm releases use `nightly`
+- Deploys the hosted web app to Vercel only for the upstream profile after publication:
   - stable releases are aliased to the `latest` hosted app channel
   - nightly releases are aliased to the `nightly` hosted app channel
-- Signing is optional and auto-detected per platform from secrets.
+- Signing is optional and auto-detected per platform from secrets, matching upstream behavior.
 
 Fork releases use the same workflow with an isolated product profile:
 
@@ -45,9 +50,9 @@ Fork releases use the same workflow with an isolated product profile:
 The upstream and fork products must never share package names, desktop schemes, bundle IDs, state
 directories, or release tags.
 
-The automated workflow also publishes `install.sh` and `SHA256SUMS`. Desktop assets are signed when
-the platform credentials are configured; the CLI is published with npm OIDC provenance; GitHub
-release assets receive build provenance attestations.
+The automated workflow also publishes `install.sh`, `RELEASE-MANIFEST.json`, and `SHA256SUMS`.
+Desktop assets are signed when platform credentials are configured. GitHub release assets receive
+build provenance attestations. Fork npm publication is an explicit opt-in.
 
 ### Published private release
 
@@ -82,11 +87,12 @@ It must contain:
 }
 ```
 
-Provide both `pi` and `omp` entries for every shipped macOS/Linux architecture. The release job
-requires HTTPS URLs, exact SHA-256 digests, deterministic archive names, duplicate-free provider
-identities, a 512 MiB per-archive limit, and checksum verification before upload. Unset means no
-runtime assets are published. This keeps native provider installation opt-in and prevents replacing
-user-managed `pi` or `omp` binaries.
+Provide both `pi` and `omp` entries for every shipped macOS/Linux architecture when the release is
+intended to be self-contained. Each supplied bundle requires an HTTPS URL, exact SHA-256 digest,
+deterministic archive name, duplicate-free provider identity, a 512 MiB per-archive limit, and
+checksum verification before upload. Partial and unset configurations remain valid because native
+runtimes are optional and may be managed by the user. This keeps native provider installation
+opt-in and prevents replacing user-managed `pi` or `omp` binaries.
 
 After publishing, verify the generated manifest contains `kind: "runtime"` entries with matching
 `runtime`, `platform`, `arch`, and SHA-256 fields. Configure the emitted `PI_BINARY_PATH` and
@@ -95,15 +101,16 @@ native configuration.
 
 ## Required release credentials
 
-Stable releases require these GitHub Actions secrets in addition to the platform and deployment
-credentials documented below:
+Upstream stable releases require these GitHub Actions secrets in addition to the platform and
+deployment credentials documented below:
 
 - `RELEASE_APP_ID`
 - `RELEASE_APP_PRIVATE_KEY`
 
-The finalize job uses them to commit and push aligned package versions to `main` as the Release App.
-GitHub Release publication uses the repository-scoped workflow token so it has a rate-limit quota
-independent from the shared Release App installation.
+The upstream finalize job uses them to commit and push aligned package versions to `main` as the
+Release App. Fork releases skip this upstream-only finalization; update the versioned package files
+in the release-preparation commit. GitHub Release publication uses the repository-scoped workflow
+token.
 
 ## T3 Connect relay deployment
 
@@ -311,32 +318,34 @@ configuration is applied correctly. npm provenance is enabled in CI through OIDC
 
 Checklist:
 
-1. Confirm npm org/user owns both `t3` and `t3-pi-omp` when fork releases are enabled.
-2. In each npm package's settings, configure Trusted Publisher:
+1. Confirm npm org/user owns `t3` and, when fork npm publication is enabled, `t3-pi-omp`.
+2. In each published package's settings, configure Trusted Publisher:
    - Provider: GitHub Actions
-   - Repository: this repo
    - Workflow file: `.github/workflows/release.yml`
    - Environment (if used): match your npm trusted publishing config
-3. Ensure npm account and org policies allow trusted publishing and provenance for both packages.
-4. Create release tag `vX.Y.Z` or `fork-vX.Y.Z` and push; workflow will:
-   - align the release package versions to `X.Y.Z`
-   - build web + server
-   - invoke the CLI publish script with npm dist-tag `latest` and provenance
-5. Nightly runs invoke the same publish script with npm dist-tag `nightly`.
+3. Ensure npm account and org policies allow trusted publishing and provenance.
+4. For fork npm publication, set repository variable `T3_PI_OMP_PUBLISH_NPM=true`. Leave it unset
+   until the package and trusted publisher exist; the workflow still publishes a checksummed GitHub
+   Release tarball.
+5. Create release tag `vX.Y.Z` or `fork-vX.Y.Z` and push. The workflow aligns release package
+   versions, builds web + server, and either publishes to npm with provenance or packs the fork CLI
+   locally.
+6. Nightly runs use the same profile-specific behavior and npm dist-tag `nightly` when npm is
+   enabled.
 
 ## 1) Release validation and unsigned builds
 
 There is no dry-run tag path. Pushing any accepted non-nightly tag, including
-`v0.0.0-test.1` or `fork-v0.0.0-test.1`, classifies the run as the stable channel. It publishes
-the profile-selected CLI package with npm dist-tag `latest`, creates a real GitHub Release, aliases
-the hosted app to `latest.app.t3.codes` and `app.t3.codes`, and can commit a version bump to `main`
-in the finalize job. Do not push a test tag to validate the workflow.
+`v0.0.0-test.1` or `fork-v0.0.0-test.1`, classifies the run as stable and creates a real GitHub
+Release. Upstream additionally publishes npm, deploys the hosted app, and may commit a version bump.
+Fork releases publish a local CLI tarball by default; npm is used only when
+`T3_PI_OMP_PUBLISH_NPM=true`. Do not push a test tag to validate the workflow.
 
 The workflow has no non-publishing `workflow_dispatch` mode. Use normal CI or local quality gates to
-validate checks and builds without shipping. To exercise the complete release graph at lower stable
-risk, manually dispatch `channel=nightly`; this still publishes a real nightly npm package, GitHub
-prerelease, desktop updater release, and hosted nightly alias, but it does not update stable aliases or
-commit a version bump to `main`. Only run it when a real nightly release is acceptable.
+validate checks and builds without shipping. Manually dispatching `channel=nightly` still creates a
+real nightly GitHub prerelease and desktop updater release. Upstream also publishes npm and deploys
+the hosted nightly alias; fork npm publication remains opt-in. Only run it when a real nightly
+release is acceptable.
 
 Manual `channel=stable` with a version input is also a real stable-channel release. Omitting signing
 secrets only makes platform artifacts unsigned; it does not prevent publication.
@@ -365,9 +374,11 @@ Checklist:
 
 1. Apple Developer account access:
    - Team has rights to create Developer ID certificates.
-2. Create an explicit App ID for `com.t3tools.t3code` and enable Associated Domains.
-3. Create a `Developer ID Application` certificate and a compatible provisioning profile for that
-   App ID with Associated Domains enabled.
+2. Create an explicit App ID and enable Associated Domains:
+   - upstream profile: `com.t3tools.t3code`
+   - fork profile: `com.t3tools.t3code.piomp`
+3. Create a `Developer ID Application` certificate and a compatible provisioning profile for the
+   selected profile's App ID with Associated Domains enabled.
 4. Export the certificate + private key as `.p12` from Keychain.
 5. Base64-encode the `.p12` and store as `CSC_LINK`.
 6. Base64-encode the provisioning profile and store it as `MACOS_PROVISIONING_PROFILE`.
@@ -419,12 +430,12 @@ Checklist:
 
 1. Ensure `main` is green in CI.
 2. Bump app version as needed.
-3. Create release tag: `vX.Y.Z`.
+3. Create the profile-specific release tag: `vX.Y.Z` or `fork-vX.Y.Z`.
 4. Push tag.
 5. Verify workflow steps:
    - preflight passes
    - all matrix builds pass
-   - `publish_cli` publishes the exact release version before the release job
+   - `publish_cli` produces the exact release-version tarball and publishes npm only when configured
    - release job uploads expected files
 6. Smoke test downloaded artifacts.
 
@@ -432,7 +443,8 @@ Checklist:
 
 - macOS build unsigned when expected signed:
   - Check all Apple secrets plus `APPLE_TEAM_ID` are populated and non-empty.
-  - Confirm the provisioning profile belongs to `APPLE_TEAM_ID.com.t3tools.t3code` and includes
+  - Confirm the provisioning profile belongs to the selected profile's App ID
+    (`APPLE_TEAM_ID.com.t3tools.t3code` or `APPLE_TEAM_ID.com.t3tools.t3code.piomp`) and includes
     Associated Domains.
 - Windows build unsigned when expected signed:
   - Check all Azure ATS and auth secrets are populated and non-empty.

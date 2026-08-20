@@ -225,6 +225,10 @@ const publishCmd = Command.make(
     ),
     provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
     dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
+    packDestination: Flag.string("pack-destination").pipe(
+      Flag.withDescription("Write a release tarball locally instead of publishing to npm."),
+      Flag.optional,
+    ),
     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
   },
   (config) =>
@@ -309,21 +313,38 @@ const publishCmd = Command.make(
             }
             yield* Effect.log("[cli] Applied package metadata and publish icon overrides");
 
-            const args = createVpPmPublishArgs({
-              ...config,
-              packageName: resource.packageName,
-            });
-            const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args]);
+            if (Option.isSome(config.packDestination)) {
+              const destination = path.resolve(repoRoot, config.packDestination.value);
+              yield* fs.makeDirectory(destination, { recursive: true });
+              const args = ["pack", "--pack-destination", destination];
+              const spawnCommand = yield* resolveSpawnCommand("npm", args);
 
-            yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);
-            yield* runCommand(
-              ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-                cwd: repoRoot,
-                stdout: config.verbose ? "inherit" : "ignore",
-                stderr: "inherit",
-                shell: spawnCommand.shell,
-              }),
-            );
+              yield* Effect.log(`[cli] Running: npm ${args.join(" ")}`);
+              yield* runCommand(
+                ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+                  cwd: serverDir,
+                  stdout: config.verbose ? "inherit" : "ignore",
+                  stderr: "inherit",
+                  shell: spawnCommand.shell,
+                }),
+              );
+            } else {
+              const args = createVpPmPublishArgs({
+                ...config,
+                packageName: resource.packageName,
+              });
+              const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args]);
+
+              yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);
+              yield* runCommand(
+                ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+                  cwd: repoRoot,
+                  stdout: config.verbose ? "inherit" : "ignore",
+                  stderr: "inherit",
+                  shell: spawnCommand.shell,
+                }),
+              );
+            }
           }),
         // Release: restore every file even if applying overrides or publishing fails.
         (resource) =>

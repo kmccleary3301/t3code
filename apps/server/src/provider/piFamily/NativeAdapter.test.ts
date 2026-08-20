@@ -86,16 +86,27 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     '  if (command.type === "set_subagent_subscription") out({ id: command.id, type: "response", command: "set_subagent_subscription", success: true });',
     ...(runtime === "omp"
       ? [
-          '  if (command.type === "checkpoint") out({ id: command.id, type: "response", command: "checkpoint", success: true, data: { goal: command.goal, startedAt: "2026-01-01T00:00:00.000Z" } });',
-          '  if (command.type === "rewind") out({ id: command.id, type: "response", command: "rewind", success: true, data: { report: command.report, rewound: true } });',
+          '  if (command.type === "checkpoint") out({ id: command.id, type: "response", command: "checkpoint", success: true, data: { sessionId: "test-session", checkpointId: "checkpoint-1" } });',
+          '  if (command.type === "rewind") out({ id: command.id, type: "response", command: "rewind", success: true, data: { checkpointId: command.checkpointId, rewound: true } });',
         ]
       : [
           '  if (command.type === "capture_checkpoint") out({ id: command.id, type: "response", command: "capture_checkpoint", success: true, data: { runtime: "pi", sessionId: "test-session", leafEntryId: "leaf-1" } });',
           '  if (command.type === "restore_checkpoint") out({ id: command.id, type: "response", command: "restore_checkpoint", success: true });',
         ]),
     '  if (command.type === "extension_ui_response" && command.id === "approval-1" && command.confirmed === true) out({ type: "message_update", delta: { text: "confirmed" } });',
+    '  if (command.type === "extension_ui_response" && command.id.startsWith("ui-")) out({ type: "message_update", delta: { text: command.id + ":" + String(command.confirmed ?? command.value) } });',
     '  if (command.type === "prompt") {',
     '    out({ id: command.id, type: "response", command: "prompt", success: true });',
+    '    if (command.message === "arm-hang") process.on("SIGTERM", () => {});',
+    '    if (command.message === "portable-ui") {',
+    '      out({ type: "turn_start", id: command.id });',
+    '      out({ type: "extension_ui_request", id: "ui-confirm", method: "confirm", title: "Confirm", message: "Continue?" });',
+    '      out({ type: "extension_ui_request", id: "ui-select", method: "select", title: "Choose", options: [{ id: "alpha", label: "Alpha" }, { id: "beta", label: "Beta" }] });',
+    '      out({ type: "extension_ui_request", id: "ui-input", method: "input", title: "Name", placeholder: "value" });',
+    '      out({ type: "extension_ui_request", id: "ui-editor", method: "editor", title: "Edit", prefill: "before" });',
+    '      out({ type: "turn_end", id: command.id });',
+    "      return;",
+    "    }",
     ...(malformed
       ? [
           '    if (command.message === "malformed") {',
@@ -185,12 +196,123 @@ describe("Pi-family native adapter", () => {
           assert.equal(assistantCompleted.value.payload.detail, "hello from native");
         }
         assert.equal(turnCompleted.value.type, "turn.completed");
+        const captureCheckpoint = adapter.captureNativeCheckpoint;
+        const restoreCheckpoint = adapter.restoreNativeCheckpoint;
+        assert.isDefined(captureCheckpoint);
+        assert.isDefined(restoreCheckpoint);
+        if (!captureCheckpoint || !restoreCheckpoint) return;
+        const checkpoint = yield* captureCheckpoint(threadId);
+        assert.notEqual(checkpoint, undefined);
+        yield* restoreCheckpoint(threadId, checkpoint);
 
         yield* adapter.stopSession(threadId);
         assert.equal(yield* adapter.hasSession(threadId), false);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+  it.effect("round-trips every interactive portable UI response over the native wire", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-portable-ui-thread");
+      const instanceId = ProviderInstanceId.make("omp-portable-ui-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextEvent(adapter.streamEvents);
+      yield* adapter.sendTurn({ threadId, input: "portable-ui" });
+
+      const turnStarted = yield* nextEvent(adapter.streamEvents);
+      const confirm = yield* nextEvent(adapter.streamEvents);
+      const select = yield* nextEvent(adapter.streamEvents);
+      const input = yield* nextEvent(adapter.streamEvents);
+      const editor = yield* nextEvent(adapter.streamEvents);
+      const turnCompleted = yield* nextEvent(adapter.streamEvents);
+      assert.equal(Option.getOrUndefined(turnStarted)?.type, "turn.started");
+      assert.equal(Option.getOrUndefined(confirm)?.type, "request.opened");
+      assert.equal(Option.getOrUndefined(select)?.type, "user-input.requested");
+      assert.equal(Option.getOrUndefined(input)?.type, "request.opened");
+      assert.equal(Option.getOrUndefined(editor)?.type, "request.opened");
+      assert.equal(Option.getOrUndefined(turnCompleted)?.type, "turn.completed");
+
+      yield* adapter.respondToRequest(threadId, ApprovalRequestId.make("ui-confirm"), "accept");
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("ui-select"), {
+        choice: "beta",
+      });
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("ui-input"), {
+        value: "typed",
+      });
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("ui-editor"), {
+        value: "edited",
+      });
+
+      const expected = ["ui-confirm:true", "ui-select:beta", "ui-input:typed", "ui-editor:edited"];
+      for (const detail of expected) {
+        const response = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+        assert.equal(response?.type, "content.delta");
+        if (response?.type === "content.delta") {
+          assert.equal(response.payload.delta, detail);
+        }
+      }
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.live("force-kills an unresponsive child and starts a replacement session", () =>
+    Effect.gen(function* () {
+      const runtime = "pi" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("pi-force-kill-thread");
+      const instanceId = ProviderInstanceId.make("pi-force-kill-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+      const start = {
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access" as const,
+      };
+
+      yield* adapter.startSession(start);
+      yield* nextEvent(adapter.streamEvents);
+      yield* adapter.sendTurn({ threadId, input: "arm-hang" });
+      for (let index = 0; index < 4; index += 1) yield* nextEvent(adapter.streamEvents);
+      yield* adapter.stopSession(threadId);
+      assert.equal(yield* adapter.hasSession(threadId), false);
+
+      yield* adapter.startSession(start);
+      const restarted = yield* nextEvent(adapter.streamEvents);
+      assert.equal(Option.getOrUndefined(restarted)?.type, "session.started");
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.effect("does not advertise model switching before native negotiation supports it", () =>
     Effect.gen(function* () {
       const provider = ProviderDriverKind.make("pi");

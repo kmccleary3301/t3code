@@ -866,7 +866,7 @@ jobs:
           if-no-files-found: error
 
   publish_cli:
-    name: Publish CLI to npm
+    name: Build and optionally publish CLI
     needs: [preflight, relay_public_config, build]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
@@ -881,6 +881,7 @@ jobs:
       T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
       T3_PRODUCT_PROFILE: ${{ needs.preflight.outputs.product_profile }}
       T3_PI_OMP_RELEASE_REPOSITORY: ${{ needs.preflight.outputs.release_repository }}
+      T3_PI_OMP_PUBLISH_NPM: ${{ vars.T3_PI_OMP_PUBLISH_NPM }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -943,15 +944,19 @@ jobs:
             chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
           done
 
-      - name: Publish CLI package
+      - name: Publish CLI package to npm
+        if: ${{ needs.preflight.outputs.product_profile == 'upstream' || env.T3_PI_OMP_PUBLISH_NPM == 'true' }}
         run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --profile "${{ needs.preflight.outputs.product_profile }}" --provenance --verbose
-      - name: Download profile-specific CLI package tarball
+      - name: Pack fork CLI package locally
+        if: ${{ needs.preflight.outputs.product_profile == 'pi-omp' && env.T3_PI_OMP_PUBLISH_NPM != 'true' }}
+        run: node apps/server/scripts/cli.ts publish --app-version "${{ needs.preflight.outputs.version }}" --profile pi-omp --pack-destination cli-release --verbose
+      - name: Download published CLI package tarball
+        if: ${{ needs.preflight.outputs.product_profile == 'upstream' || env.T3_PI_OMP_PUBLISH_NPM == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p cli-release
           npm pack "${{ needs.preflight.outputs.cli_package_name }}@${{ needs.preflight.outputs.version }}" --pack-destination cli-release
-
       - name: Upload profile-specific CLI package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -1270,7 +1275,7 @@ jobs:
 
   finalize:
     name: Finalize release
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' && needs.preflight.outputs.product_profile == 'upstream' }}
     needs: [preflight, release]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
