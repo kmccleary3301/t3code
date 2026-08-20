@@ -108,11 +108,12 @@ export function resolveRuntimeProductProfile(input: RuntimeIdentityInput = {}): 
 }
 
 /**
- * A pinned runtime is an exact `t3@<version>` npm-installed into
- * <baseDir>/runtime/versions/<version>. The boot service points its unit or
- * launch agent here, and server self-update installs the target version here before
- * switching over, never `npx t3`, whose cache is ephemeral and whose
- * registry fetch at boot would make startup depend on the network.
+ * A pinned runtime is an exact profile-selected package installed into
+ * <baseDir>/runtime/versions/<version>. Upstream installs `t3@<version>` from
+ * npm; the fork installs its checksummed GitHub release tarball unless npm
+ * publication is explicitly enabled. The boot service points its unit or
+ * launch agent here, and self-update prepares the target before switching.
+ * Startup never depends on `npx` caches or an unverified network fetch.
  */
 
 const PINNED_RUNTIME_DIR = "runtime";

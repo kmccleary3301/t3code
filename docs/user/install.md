@@ -76,7 +76,7 @@ Download the latest release from
 [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
 registry.
 
-The private Pi + OMP `fork-v0.0.33` release currently provides an unsigned,
+The verified inaugural private Pi + OMP `fork-v0.0.33` release provides an unsigned,
 unnotarized [macOS arm64 DMG](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.33/T3-Code-Pi-OMP-0.0.33-arm64.dmg).
 Verify it against the release `SHA256SUMS` before use. It installs side by side with the upstream
 desktop app under a distinct bundle ID and URL scheme.
@@ -112,13 +112,20 @@ yay -S t3code-nightly-bin
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
-| Provider   | CLI                                                   | Default binary | Log in with           |
-| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Provider   | CLI                                                     | Default binary | Authentication           |
+| ---------- | ------------------------------------------------------- | -------------- | ------------------------ |
+| Pi         | [Pi coding agent](https://github.com/earendil-works/pi) | `pi`           | Configure in the runtime |
+| OMP        | [Oh My Pi](https://github.com/can1357/oh-my-pi)         | `omp`          | Configure in the runtime |
+| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)    | `codex`        | `codex login`            |
+| Claude     | [Claude Code](https://claude.com/product/claude-code)   | `claude`       | `claude auth login`      |
+| Cursor     | [Cursor CLI](https://cursor.com/cli)                    | `cursor-agent` | `agent login`            |
+| Grok Build | [Grok Build CLI](https://x.ai/cli)                      | `grok`         | `grok login`             |
+| OpenCode   | [OpenCode](https://opencode.ai)                         | `opencode`     | `opencode auth login`    |
+
+Pi and OMP are separate provider kinds with separate settings and processes. Configuring Pi never
+launches OMP, and configuring OMP never launches Pi. Their native runtimes own model, account,
+tool, task, and checkpoint behavior; T3 Code negotiates the advertised RPC capabilities and
+projects the resulting events.
 
 Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
 them on in **Settings** → the provider's card when you want to use them.

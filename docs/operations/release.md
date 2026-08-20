@@ -114,15 +114,16 @@ Release App. Fork releases skip this upstream-only finalization; update the vers
 in the release-preparation commit. GitHub Release publication uses the repository-scoped workflow
 token.
 
-## T3 Connect relay deployment
+## T3 Connect relay deployment (upstream only)
 
-The relay is a shared control plane versioned separately from client releases. Stable and nightly
-client builds must point at the same relay so users see the same linked environments when switching
-release channels.
+The relay is a shared upstream control plane versioned separately from client releases. Stable and
+nightly upstream clients use the same relay so linked environments remain available across channels.
 
-`.github/workflows/deploy-relay.yml` deploys Alchemy stage `prod` on every push to `main`. The
-release workflow reads the relay URL and Clerk client configuration from the existing `production`
-GitHub Actions environment before building desktop, CLI, or hosted web artifacts.
+`.github/workflows/deploy-relay.yml` deploys Alchemy stage `prod` for upstream `main`. In the
+owner-controlled fork it skips unless `T3_ENABLE_RELAY_DEPLOY=true`. Upstream releases read relay
+and Clerk client configuration from the `production` environment. Fork releases use the isolated
+`fork-release` environment, leave those values blank, and do not deploy relay or hosted-web
+infrastructure.
 
 Required repository variables shared by relay deployments:
 
@@ -172,12 +173,12 @@ Developers deploy personal stages locally rather than through pull-request autom
 vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 ```
 
-## Hosted web app release deployment
+## Hosted web app release deployment (upstream only)
 
 The hosted app is intentionally not deployed by Vercel's Git integration. The
 web project disables automatic Git deployments in `apps/web/vercel.ts` via
-`git.deploymentEnabled: false`, and `.github/workflows/release.yml` deploys the
-web app with Vercel CLI after the GitHub Release succeeds.
+`git.deploymentEnabled: false`, and the upstream path in `.github/workflows/release.yml` deploys
+the web app with Vercel CLI after the GitHub Release succeeds. Fork releases skip this job.
 
 Required GitHub Actions secrets:
 
@@ -233,31 +234,39 @@ or can be started manually with `workflow_dispatch`.
   `0.0.18-nightly.*`.
 - Publishes Electron auto-update metadata to the dedicated `nightly` updater channel, so desktop
   users can opt into that track independently from stable.
-- Publishes the profile-selected CLI package (`t3` or `t3-pi-omp`) to the `nightly` npm dist-tag
-  using the same nightly version.
+- Publishes `t3` to the `nightly` npm dist-tag for upstream. Fork nightlies publish
+  `t3-pi-omp` to npm only when `T3_PI_OMP_PUBLISH_NPM=true`; otherwise they attach the exact
+  profile-specific tarball to the GitHub Release.
 - Does not commit version bumps back to `main`.
 
 ## Server self-update release invariant
 
-Connected servers update to the client's exact version, not to an npm dist-tag. Every released
-desktop or hosted client version must therefore have a matching profile-selected package available
-on npm before users can receive that client.
+Connected servers update to the client's exact version, not to a moving dist-tag. Every released
+client version must therefore expose the matching profile-selected package through its configured
+distribution channel:
+
+- upstream and npm-enabled fork releases use the exact npm package version;
+- default fork releases use the exact `t3-pi-omp` tarball in the matching GitHub Release, verified
+  against both `RELEASE-MANIFEST.json` and `SHA256SUMS`.
 
 The workflow enforces this ordering:
 
-1. `publish_cli` publishes the exact stable or nightly version to `t3` or `t3-pi-omp`.
-2. `release` depends on `publish_cli` before exposing desktop artifacts in GitHub Releases.
-3. `deploy_web` depends on `release` before moving the hosted channel to the new client.
+1. `publish_cli` either publishes the exact package to npm or packs the fork tarball locally.
+2. `release` depends on `publish_cli`, verifies and publishes the tarball plus release metadata,
+   then exposes desktop artifacts.
+3. The upstream-only `deploy_web` job depends on `release` before moving the hosted channel.
 
-Preserve these dependencies when changing the release graph. Publishing a client first would leave
-the **Update server** action targeting a package version that does not exist yet.
+Preserve these dependencies when changing the release graph. Publishing a client before its exact
+server package would leave **Update server** without a verifiable target.
 
-For a release smoke test, confirm `npm view <package>@<version> version` returns the expected version,
-then connect the new client to a server on the previous version and verify that the update action
-reconnects to the matching server. Use releases with identical migration manifests for the
-automatic path. When the manifest changed, verify that the remote action stops before restart and
-shows the exact local package command. Also test the manual or desktop-managed guidance when those
-environments are available.
+For an upstream or npm-enabled fork smoke test, confirm
+`npm view <package>@<version> version` returns the expected version. For a default fork release,
+download the matching tarball, `RELEASE-MANIFEST.json`, and `SHA256SUMS`; verify both recorded
+digests, then exercise installation from the verified local archive. Connect the new client to a
+server on the previous version and verify that the update action reconnects to the exact server.
+Use releases with identical migration manifests for the automatic path. When the manifest changed,
+verify that the remote action stops before restart and shows the exact local package command. Also
+test the manual or desktop-managed guidance when those environments are available.
 
 ## Desktop auto-update notes
 
