@@ -47,7 +47,11 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import {
+  type ProviderAdapterError,
+  ProviderAdapterRequestError,
+  ProviderValidationError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -1117,6 +1121,52 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const captureNativeCheckpoint: ProviderServiceMethod<"captureNativeCheckpoint"> = Effect.fn(
+    "captureNativeCheckpoint",
+  )(function* (rawInput) {
+    const input = rawInput;
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.captureNativeCheckpoint",
+      allowRecovery: false,
+    });
+    yield* Effect.annotateCurrentSpan({
+      "provider.operation": "capture-native-checkpoint",
+      "provider.kind": routed.adapter.provider,
+      "provider.thread_id": input.threadId,
+    });
+    const capture = routed.adapter.captureNativeCheckpoint;
+    if (capture === undefined) {
+      return undefined;
+    }
+    return yield* capture(routed.threadId);
+  });
+
+  const restoreNativeCheckpoint: ProviderServiceMethod<"restoreNativeCheckpoint"> = Effect.fn(
+    "restoreNativeCheckpoint",
+  )(function* (rawInput) {
+    const input = rawInput;
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.restoreNativeCheckpoint",
+      allowRecovery: false,
+    });
+    yield* Effect.annotateCurrentSpan({
+      "provider.operation": "restore-native-checkpoint",
+      "provider.kind": routed.adapter.provider,
+      "provider.thread_id": input.threadId,
+    });
+    const restore = routed.adapter.restoreNativeCheckpoint;
+    if (restore === undefined) {
+      return yield* new ProviderAdapterRequestError({
+        provider: routed.adapter.provider,
+        method: "restore_checkpoint",
+        detail: `Provider '${routed.adapter.provider}' does not support native checkpoint restore.`,
+      });
+    }
+    yield* restore(routed.threadId, input.checkpoint);
+  });
+
   const runStopAll = Effect.fn("runStopAll")(function* () {
     const threadIds = yield* directory.listThreadIds();
     const currentAdapters = yield* getAdapterEntries;
@@ -1188,6 +1238,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getCapabilities,
     getInstanceInfo,
     rollbackConversation,
+    captureNativeCheckpoint,
+    restoreNativeCheckpoint,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

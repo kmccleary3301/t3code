@@ -2,11 +2,15 @@ import {
   CommandId,
   type CheckpointRef,
   EventId,
+  isNativeCheckpointDescriptor,
   MessageId,
+  type NativeCheckpointDescriptor,
+  type OrchestrationEvent,
+  type OrchestrationSession,
   type ProjectId,
+  ProviderInstanceId,
   ThreadId,
   TurnId,
-  type OrchestrationEvent,
   type ProviderRuntimeEvent,
   type VcsStatusLocalResult,
 } from "@t3tools/contracts";
@@ -14,6 +18,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
@@ -21,11 +26,13 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
-import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
+  CHECKPOINT_RECOVERY_BLOCKED_PREFIX,
+  checkpointRefForRestoreCompensation,
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
+import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
@@ -60,6 +67,10 @@ function sameId(left: string | null | undefined, right: string | null | undefine
     return false;
   }
   return left === right;
+}
+
+function failureDetail(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
 }
 
 function checkpointStatusFromRuntime(status: string | undefined): "ready" | "missing" | "error" {
@@ -120,6 +131,45 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+  const persistRecoveryFailure = (input: {
+    readonly threadId: ThreadId;
+    readonly turnCount: number;
+    readonly detail: string;
+    readonly createdAt: string;
+    readonly providerName: OrchestrationSession["providerName"];
+    readonly providerInstanceId: OrchestrationSession["providerInstanceId"];
+    readonly runtimeMode: OrchestrationSession["runtimeMode"];
+  }) =>
+    Effect.gen(function* () {
+      yield* orchestrationEngine
+        .dispatch({
+          type: "thread.session.set",
+          commandId: yield* serverCommandId("checkpoint-recovery-blocked"),
+          threadId: input.threadId,
+          session: {
+            threadId: input.threadId,
+            status: "error",
+            providerName: input.providerName,
+            ...(input.providerInstanceId === undefined
+              ? {}
+              : { providerInstanceId: input.providerInstanceId }),
+            runtimeMode: input.runtimeMode,
+            activeTurnId: null,
+            lastError: `${CHECKPOINT_RECOVERY_BLOCKED_PREFIX}${input.detail}`,
+            updatedAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("failed to persist checkpoint recovery blocked state", {
+              threadId: input.threadId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      yield* appendRevertFailureActivity(input);
+    });
 
   const appendCaptureFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -234,6 +284,40 @@ const make = Effect.gen(function* () {
     readonly assistantMessageId: MessageId | undefined;
     readonly createdAt: string;
   }) {
+    // Bind the opaque leaf to the active provider session before persistence.
+    // ProviderService still owns the raw leaf; the orchestration descriptor
+    // prevents restoring it into a different provider/session.
+    const nativeSession = yield* providerService
+      .listSessions()
+      .pipe(
+        Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
+      );
+    const nativeLeaf = yield* providerService.captureNativeCheckpoint({
+      threadId: input.threadId,
+    });
+    if (nativeLeaf !== undefined && nativeSession === undefined) {
+      return yield* Effect.die(
+        new Error(
+          `Native checkpoint capture returned a leaf without an active provider session for thread '${input.threadId}'.`,
+        ),
+      );
+    }
+    const nativeCheckpoint: NativeCheckpointDescriptor | undefined =
+      nativeLeaf === undefined
+        ? undefined
+        : {
+            version: 1,
+            runtime: String(nativeSession!.provider) as NativeCheckpointDescriptor["runtime"],
+            provider: nativeSession!.provider,
+            instanceId:
+              nativeSession!.providerInstanceId ??
+              ProviderInstanceId.make(String(nativeSession!.provider)),
+            threadId: input.threadId,
+            sessionId: String(nativeSession!.threadId) as NativeCheckpointDescriptor["sessionId"],
+            captureState: "captured",
+            opaque: nativeLeaf,
+          };
+
     const fromTurnCount = Math.max(0, input.turnCount - 1);
     const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
     const targetCheckpointRef = checkpointRefForThreadTurn(input.threadId, input.turnCount);
@@ -312,6 +396,7 @@ const make = Effect.gen(function* () {
       files,
       assistantMessageId,
       checkpointTurnCount: input.turnCount,
+      ...(nativeCheckpoint === undefined ? {} : { nativeCheckpoint }),
       createdAt: input.createdAt,
     });
     yield* receiptBus.publish({
@@ -731,12 +816,16 @@ const make = Effect.gen(function* () {
     if (event.payload.turnCount > currentTurnCount) {
       yield* appendRevertFailureActivity({
         threadId: event.payload.threadId,
+
         turnCount: event.payload.turnCount,
         detail: `Checkpoint turn count ${event.payload.turnCount} exceeds current turn count ${currentTurnCount}.`,
         createdAt: now,
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
+    const targetCheckpoint = thread.checkpoints.find(
+      (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
+    );
 
     const targetCheckpointRef =
       event.payload.turnCount === 0
@@ -755,17 +844,172 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const restored = yield* checkpointStore.restoreCheckpoint({
-      cwd: sessionRuntime.value.cwd,
-      checkpointRef: targetCheckpointRef,
-      fallbackToHead: event.payload.turnCount === 0,
-    });
-    if (!restored) {
-      yield* appendRevertFailureActivity({
+    const nativeTarget =
+      targetCheckpoint?.nativeCheckpoint === null ? undefined : targetCheckpoint?.nativeCheckpoint;
+    const nativeDescriptor =
+      nativeTarget !== undefined && isNativeCheckpointDescriptor(nativeTarget)
+        ? nativeTarget
+        : undefined;
+    const nativeLeaf = nativeDescriptor === undefined ? nativeTarget : nativeDescriptor.opaque;
+    const compensationRef = checkpointRefForRestoreCompensation(
+      event.payload.threadId,
+      yield* randomUUID,
+    );
+    const cleanupCompensationRef = checkpointStore
+      .deleteCheckpointRefs({
+        cwd: sessionRuntime.value.cwd,
+        checkpointRefs: [compensationRef],
+      })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to delete checkpoint restore compensation ref", {
+            threadId: event.payload.threadId,
+            compensationRef,
+            detail: failureDetail(error),
+          }),
+        ),
+      );
+
+    const resourceRestore = Effect.gen(function* () {
+      let currentNative: unknown | undefined;
+      if (nativeDescriptor !== undefined) {
+        const currentSession = yield* providerService
+          .listSessions()
+          .pipe(
+            Effect.map((sessions) =>
+              sessions.find((session) => session.threadId === sessionRuntime.value.threadId),
+            ),
+          );
+        if (
+          currentSession === undefined ||
+          currentSession.threadId !== nativeDescriptor.threadId ||
+          currentSession.provider !== nativeDescriptor.provider ||
+          currentSession.providerInstanceId !== nativeDescriptor.instanceId ||
+          String(currentSession.threadId) !== nativeDescriptor.sessionId ||
+          String(currentSession.provider) !== nativeDescriptor.runtime
+        ) {
+          return {
+            ok: false as const,
+            detail:
+              "Native checkpoint restore was refused because its provider/session identity does not match the active session.",
+          };
+        }
+      }
+
+      if (nativeLeaf !== undefined) {
+        const capturedNative = yield* providerService
+          .captureNativeCheckpoint({ threadId: sessionRuntime.value.threadId })
+          .pipe(Effect.result);
+        if (Result.isFailure(capturedNative)) {
+          return {
+            ok: false as const,
+            detail: `Native checkpoint compensation capture failed: ${failureDetail(capturedNative.failure)}`,
+          };
+        }
+        if (capturedNative.success === undefined) {
+          return {
+            ok: false as const,
+            detail:
+              "Native checkpoint restore was refused because the current native leaf could not be captured for compensation.",
+          };
+        }
+        currentNative = capturedNative.success;
+      }
+
+      const capturedFilesystem = yield* checkpointStore
+        .captureCheckpoint({
+          cwd: sessionRuntime.value.cwd,
+          checkpointRef: compensationRef,
+        })
+        .pipe(Effect.result);
+      if (Result.isFailure(capturedFilesystem)) {
+        return {
+          ok: false as const,
+          detail: `Filesystem compensation capture failed: ${failureDetail(capturedFilesystem.failure)}`,
+        };
+      }
+
+      const restoredFilesystem = yield* checkpointStore
+        .restoreCheckpoint({
+          cwd: sessionRuntime.value.cwd,
+          checkpointRef: targetCheckpointRef,
+          fallbackToHead: event.payload.turnCount === 0,
+        })
+        .pipe(Effect.result);
+      if (Result.isFailure(restoredFilesystem)) {
+        const compensatedFilesystem = yield* checkpointStore
+          .restoreCheckpoint({
+            cwd: sessionRuntime.value.cwd,
+            checkpointRef: compensationRef,
+          })
+          .pipe(Effect.result);
+        const compensationDetail = Result.isFailure(compensatedFilesystem)
+          ? ` Filesystem compensation failed: ${failureDetail(compensatedFilesystem.failure)}`
+          : compensatedFilesystem.success
+            ? ""
+            : " Filesystem compensation checkpoint was unavailable.";
+        return {
+          ok: false as const,
+          detail: `Filesystem checkpoint restore failed: ${failureDetail(restoredFilesystem.failure)}.${compensationDetail}`,
+        };
+      }
+      if (!restoredFilesystem.success) {
+        return {
+          ok: false as const,
+          detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
+        };
+      }
+
+      if (nativeLeaf !== undefined) {
+        const restoredNative = yield* providerService
+          .restoreNativeCheckpoint({
+            threadId: sessionRuntime.value.threadId,
+            checkpoint: nativeLeaf,
+          })
+          .pipe(Effect.result);
+        if (Result.isFailure(restoredNative)) {
+          const compensatedNative = yield* providerService
+            .restoreNativeCheckpoint({
+              threadId: sessionRuntime.value.threadId,
+              checkpoint: currentNative,
+            })
+            .pipe(Effect.result);
+          const compensatedFilesystem = yield* checkpointStore
+            .restoreCheckpoint({
+              cwd: sessionRuntime.value.cwd,
+              checkpointRef: compensationRef,
+            })
+            .pipe(Effect.result);
+          const compensationDetails = [
+            Result.isFailure(compensatedNative)
+              ? ` Native compensation failed: ${failureDetail(compensatedNative.failure)}`
+              : "",
+            Result.isFailure(compensatedFilesystem)
+              ? ` Filesystem compensation failed: ${failureDetail(compensatedFilesystem.failure)}`
+              : !compensatedFilesystem.success
+                ? " Filesystem compensation checkpoint was unavailable."
+                : "",
+          ].join("");
+          return {
+            ok: false as const,
+            detail: `Native checkpoint restore failed: ${failureDetail(restoredNative.failure)}.${compensationDetails}`,
+          };
+        }
+      }
+
+      return { ok: true as const };
+    }).pipe(Effect.ensuring(cleanupCompensationRef));
+
+    const resourceResult = yield* resourceRestore;
+    if (!resourceResult.ok) {
+      yield* persistRecoveryFailure({
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
-        detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
+        detail: resourceResult.detail,
         createdAt: now,
+        providerName: thread.session?.providerName ?? null,
+        providerInstanceId: thread.session?.providerInstanceId,
+        runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
@@ -775,13 +1019,12 @@ const make = Effect.gen(function* () {
     yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
-    if (rolledBackTurns > 0) {
+    if (nativeTarget === undefined && rolledBackTurns > 0) {
       yield* providerService.rollbackConversation({
         threadId: sessionRuntime.value.threadId,
         numTurns: rolledBackTurns,
       });
     }
-
     const staleCheckpointRefs: Array<CheckpointRef> = [];
     for (const checkpoint of thread.checkpoints) {
       if (checkpoint.checkpointTurnCount > event.payload.turnCount) {

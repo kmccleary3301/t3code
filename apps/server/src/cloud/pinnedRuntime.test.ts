@@ -12,7 +12,23 @@ import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
+  resolveRuntimePackageName,
+  resolveRuntimeProductProfile,
 } from "./pinnedRuntime.ts";
+
+it("resolves the fork runtime package from explicit identity", () => {
+  assert.equal(
+    resolveRuntimePackageName({ env: { T3_PRODUCT_PROFILE: "pi-omp" }, argv: [] }),
+    "t3-pi-omp",
+  );
+  assert.equal(
+    resolveRuntimeProductProfile({
+      env: {},
+      argv: ["/usr/bin/node", "/home/me/node_modules/t3-pi-omp/dist/bin.mjs"],
+    }),
+    "pi-omp",
+  );
+});
 
 const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
   ProcessRunner.ProcessRunner.of({

@@ -25,7 +25,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
-import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import {
+  CHECKPOINT_RECOVERY_BLOCKED_PREFIX,
+  resolveThreadWorkspaceCwd,
+} from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
@@ -735,6 +738,18 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
+    if (
+      thread.session?.status === "error" &&
+      thread.session.lastError?.startsWith(CHECKPOINT_RECOVERY_BLOCKED_PREFIX)
+    ) {
+      return yield* new ProviderAdapterRequestError({
+        provider: thread.session.providerName ?? "unknown",
+        method: "thread.turn.start",
+        detail:
+          "Thread prompting is blocked because checkpoint recovery failed. Retry checkpoint recovery before prompting.",
+      });
+    }
+
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,

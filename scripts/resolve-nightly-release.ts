@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { parseProductProfile, resolveProductIdentity, ProductProfile } from "@t3tools/contracts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
@@ -95,20 +96,21 @@ export const resolveNightlyTargetVersion = (version: string) => {
   const [, major, minor, patch] = match;
   return Effect.succeed(`${major}.${minor}.${Number(patch) + 1}`);
 };
-
 export const resolveNightlyReleaseMetadata = (
   baseVersion: string,
   date: string,
   runNumber: number,
   sha: string,
+  profile: ProductProfile = "upstream",
 ) => {
   const shortSha = sha.slice(0, 12);
+  const identity = resolveProductIdentity(profile);
   const version = `${baseVersion}-nightly.${date}.${runNumber}`;
   return {
     baseVersion,
     version,
-    tag: `v${version}`,
-    name: `T3 Code Nightly ${version} (${shortSha})`,
+    tag: `${identity.releaseTagPrefix}${version}`,
+    name: `${identity.baseName} Nightly ${version} (${shortSha})`,
     shortSha,
   };
 };
@@ -198,6 +200,10 @@ const command = Command.make(
       Flag.withSchema(ShaSchema),
       Flag.withDescription("Commit sha for the nightly build."),
     ),
+    profile: Flag.string("profile").pipe(
+      Flag.withDescription("Product profile for the release channel (upstream or pi-omp)."),
+      Flag.withDefault("upstream"),
+    ),
     githubOutput: Flag.boolean("github-output").pipe(
       Flag.withDescription("Write values to GITHUB_OUTPUT instead of stdout."),
       Flag.withDefault(false),
@@ -207,9 +213,17 @@ const command = Command.make(
       Flag.optional,
     ),
   },
-  ({ date, runNumber, sha, githubOutput, root }) =>
+  ({ date, runNumber, sha, profile, githubOutput, root }) =>
     readDesktopBaseVersion(Option.getOrUndefined(root)).pipe(
-      Effect.map((baseVersion) => resolveNightlyReleaseMetadata(baseVersion, date, runNumber, sha)),
+      Effect.map((baseVersion) =>
+        resolveNightlyReleaseMetadata(
+          baseVersion,
+          date,
+          runNumber,
+          sha,
+          parseProductProfile(profile),
+        ),
+      ),
       Effect.flatMap((metadata) => writeNightlyReleaseOutput(metadata, githubOutput)),
     ),
 ).pipe(Command.withDescription("Resolve nightly release version metadata."));

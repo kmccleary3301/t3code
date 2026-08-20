@@ -131,6 +131,14 @@ describe("ssh command", () => {
         }),
         "t3@nightly",
       );
+      assert.equal(
+        resolveRemoteT3CliPackageSpec({
+          appVersion: "0.0.17",
+          updateChannel: "latest",
+          packageName: "t3-pi-omp",
+        }),
+        "t3-pi-omp@0.0.17",
+      );
     }),
   );
 

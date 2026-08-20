@@ -12,6 +12,7 @@ import {
   type DirectoryRecord,
 } from "@electron/asar";
 
+import { ProductProfile, parseProductProfile, resolveProductIdentity } from "@t3tools/contracts";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
@@ -49,9 +50,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+const BUILD_PRODUCT_PROFILE = parseProductProfile(process.env.T3_PRODUCT_PROFILE);
+const DESKTOP_PRODUCT_IDENTITY = resolveProductIdentity(BUILD_PRODUCT_PROFILE);
+const DESKTOP_APP_ID = DESKTOP_PRODUCT_IDENTITY.bundleIdentifier;
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1953,10 +1955,12 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
     updateRepository: Config.string("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
     githubRepository: Config.string("GITHUB_REPOSITORY").pipe(Config.option),
   });
+  const configuredUpdaterRepository = Option.getOrUndefined(env.updateRepository)?.trim() || "";
   const rawRepo = (
-    Option.getOrUndefined(env.updateRepository)?.trim() ||
-    Option.getOrUndefined(env.githubRepository)?.trim() ||
-    ""
+    configuredUpdaterRepository ||
+    (BUILD_PRODUCT_PROFILE === "pi-omp"
+      ? ""
+      : Option.getOrUndefined(env.githubRepository)?.trim() || "")
   ).trim();
   if (!rawRepo) return undefined;
 
@@ -2012,11 +2016,16 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
-
-export function resolveDesktopProductName(version: string): string {
+export function resolveDesktopProductName(
+  version: string,
+  profile: ProductProfile = BUILD_PRODUCT_PROFILE,
+): string {
+  const identity = resolveProductIdentity(profile);
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+    ? `${identity.baseName} (Nightly)`
+    : profile === "upstream"
+      ? (desktopPackageJson.productName ?? `${identity.baseName} (Alpha)`)
+      : `${identity.baseName} (Alpha)`;
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2033,10 +2042,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       }
     | undefined,
 ) {
+  const identity = DESKTOP_PRODUCT_IDENTITY;
+  const productName = resolveDesktopProductName(version, identity.profile);
+  const protocolSchemes = [identity.productionScheme, identity.developmentScheme];
+  const artifactPrefix = identity.profile === "upstream" ? "T3-Code" : "T3-Code-Pi-OMP";
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    appId: identity.bundleIdentifier,
+    productName,
+    artifactName: `${artifactPrefix}-\${version}-\${arch}.\${ext}`,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [...DESKTOP_FILE_EXCLUSIONS],
     directories: {
@@ -2071,8 +2084,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: identity.baseName,
+          schemes: protocolSchemes,
         },
       ],
       ...(macPasskeySigning
@@ -2089,7 +2102,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // Give the themed installer its own Finder volume name. Finder caches
       // DMG window backgrounds by volume name, so reusing a generic name can
       // make a newly built background look unchanged during testing.
-      title: `${resolveDesktopProductName(version)} ${version} Installer`,
+      title: `${resolveDesktopProductName(version, identity.profile)} ${version} Installer`,
       background: `dmg/dmg-background-${updateChannel}.png`,
       window: {
         width: 540,
@@ -2110,21 +2123,21 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
-      executableName: "t3code",
+      executableName: identity.cliBinaryName,
       icon: "icons",
       category: "Development",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
       // in the .desktop entry (Exec already gets %U), so browsers can hand
-      // t3code:// OAuth callbacks to the app.
+      // the product's OAuth callbacks to the app.
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: identity.baseName,
+          schemes: protocolSchemes,
         },
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: identity.linuxWmClass,
         },
       },
     };

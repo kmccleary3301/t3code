@@ -24,13 +24,60 @@ This document covers the unified release workflow for stable and nightly desktop
   - Nightly runs are always GitHub prereleases and never marked latest.
   - Automatically generated release notes are pinned to the previous tag in the same channel, so stable compares to the previous stable tag and nightly compares to the previous nightly tag.
 - Includes Electron auto-update metadata (for example `latest*.yml`, `nightly*.yml`, and `*.blockmap`) in release assets.
-- Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing from the same workflow file:
+- Publishes the profile-selected CLI package (`apps/server`; `t3` for upstream or `t3-pi-omp` for
+  `pi-omp`) with npm OIDC trusted publishing and provenance from the same workflow file:
   - stable releases publish npm dist-tag `latest`
   - nightly releases publish npm dist-tag `nightly`
 - Deploys the hosted web app to Vercel only after a release is published:
   - stable releases are aliased to the `latest` hosted app channel
   - nightly releases are aliased to the `nightly` hosted app channel
 - Signing is optional and auto-detected per platform from secrets.
+
+Fork releases use the same workflow with an isolated product profile:
+
+- stable tags: `fork-vX.Y.Z`
+- nightly tags: `fork-vX.Y.Z-nightly.DATE.RUN`
+- npm package and binary: `t3-pi-omp`
+- npm dist-tags: `latest` for stable and `nightly` for nightly
+- desktop identity: `com.t3tools.t3code.piomp`, `t3code-pi-omp`, and
+  `t3code-pi-omp-dev`
+
+The upstream and fork products must never share package names, desktop schemes, bundle IDs, state
+directories, or release tags.
+
+Every release also publishes `install.sh` and `SHA256SUMS`. Desktop assets are signed when the
+platform credentials are configured; the CLI is published with npm OIDC provenance; GitHub release
+assets receive build provenance attestations.
+
+### Optional Pi/OMP runtime bundles
+
+The private release repository may set `T3_PI_OMP_RUNTIME_BUNDLES_JSON` as a repository variable.
+It must contain:
+
+```json
+{
+  "bundles": [
+    {
+      "provider": "pi",
+      "platform": "darwin",
+      "arch": "arm64",
+      "url": "https://downloads.example.test/pi-runtime-darwin-arm64.tar.gz",
+      "sha256": "<64 lowercase hexadecimal characters>"
+    }
+  ]
+}
+```
+
+Provide both `pi` and `omp` entries for every shipped macOS/Linux architecture. The release job
+requires HTTPS URLs, exact SHA-256 digests, deterministic archive names, duplicate-free provider
+identities, a 512 MiB per-archive limit, and checksum verification before upload. Unset means no
+runtime assets are published. This keeps native provider installation opt-in and prevents replacing
+user-managed `pi` or `omp` binaries.
+
+After publishing, verify the generated manifest contains `kind: "runtime"` entries with matching
+`runtime`, `platform`, `arch`, and SHA-256 fields. Configure the emitted `PI_BINARY_PATH` and
+`OMP_BINARY_PATH` values explicitly in the Pi/OMP provider settings; the installer never mutates
+native configuration.
 
 ## Required release credentials
 
@@ -148,50 +195,46 @@ One-time Vercel dashboard setup:
 1. Confirm the web project root directory remains `apps/web`.
 2. Add the three domains above to the web project.
 3. Disable automatic Git deployments in the dashboard if desired; the committed
-   `vercel.ts` setting is the source-of-truth, but disconnecting Git in the
-   dashboard is also safe.
-4. Run one stable release deployment, or manually alias the current stable
-   deployment, so `app.t3.codes` points at a deployment containing the router
-   rules in `apps/web/vercel.ts`. Future stable releases keep this alias current.
+   `vercel.ts` setting is the source-of-truth, but disconnecting Git in the dashboard is also safe.
+4. Run one stable release deployment, or manually alias the current stable deployment, so
+   `app.t3.codes` points at a deployment containing the router rules in `apps/web/vercel.ts`.
+   Future stable releases keep this alias current.
 
 ## Nightly builds
 
+Nightly builds are scheduled every three hours when `main` has changed since the previous nightly,
+or can be started manually with `workflow_dispatch`.
+
 - Workflow: `.github/workflows/release.yml`
-- Triggers:
-  - scheduled check every three hours
-  - manual `workflow_dispatch` with `channel=nightly`
-- Runs the same desktop quality gates and artifact matrix as the tagged release flow.
-- Publishes a GitHub prerelease only:
-  - current tag format: `vX.Y.Z-nightly.YYYYMMDD.<run_number>`
-  - `nightly-v...` is accepted only as a legacy previous-nightly tag
-  - release name includes the short commit SHA
-  - `make_latest` is always `false`
-- Uses the next stable patch version as the nightly base. For example, `0.0.17` produces nightlies on `0.0.18-nightly.*`.
-- Publishes Electron auto-update metadata to the dedicated `nightly` updater channel, so desktop users can opt into that track independently from stable.
-- Publishes the CLI package (`apps/server`, npm package `t3`) to the `nightly` npm dist-tag using the same nightly version.
+- Uses the next stable patch version as the nightly base. For example, `0.0.17` produces nightlies on
+  `0.0.18-nightly.*`.
+- Publishes Electron auto-update metadata to the dedicated `nightly` updater channel, so desktop
+  users can opt into that track independently from stable.
+- Publishes the profile-selected CLI package (`t3` or `t3-pi-omp`) to the `nightly` npm dist-tag
+  using the same nightly version.
 - Does not commit version bumps back to `main`.
 
 ## Server self-update release invariant
 
 Connected servers update to the client's exact version, not to an npm dist-tag. Every released
-desktop or hosted client version must therefore have a matching `t3@<version>` package available on
-npm before users can receive that client.
+desktop or hosted client version must therefore have a matching profile-selected package available
+on npm before users can receive that client.
 
 The workflow enforces this ordering:
 
-1. `publish_cli` publishes the exact stable or nightly version to npm.
+1. `publish_cli` publishes the exact stable or nightly version to `t3` or `t3-pi-omp`.
 2. `release` depends on `publish_cli` before exposing desktop artifacts in GitHub Releases.
 3. `deploy_web` depends on `release` before moving the hosted channel to the new client.
 
 Preserve these dependencies when changing the release graph. Publishing a client first would leave
 the **Update server** action targeting a package version that does not exist yet.
 
-For a release smoke test, confirm `npm view t3@<version> version` returns the expected version, then
-connect the new client to a server on the previous version and verify that the update action
+For a release smoke test, confirm `npm view <package>@<version> version` returns the expected version,
+then connect the new client to a server on the previous version and verify that the update action
 reconnects to the matching server. Use releases with identical migration manifests for the
 automatic path. When the manifest changed, verify that the remote action stops before restart and
-shows the exact local `npx t3@<version> service update` command. Also test the manual or
-desktop-managed guidance when those environments are available.
+shows the exact local package command. Also test the manual or desktop-managed guidance when those
+environments are available.
 
 ## Desktop auto-update notes
 
@@ -248,31 +291,32 @@ blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
 ## 0) npm OIDC trusted publishing setup (CLI)
 
 The workflow invokes `node apps/server/scripts/cli.ts publish` after aligning package versions. That
-script temporarily prepares the `t3` package, then runs `vp pm publish --filter t3 ...` from the
-repository root so workspace publish configuration is applied correctly.
+script temporarily prepares the profile-selected package (`t3` or `t3-pi-omp`), then runs
+`vp pm publish --filter <selected-package> ...` from the repository root so workspace publish
+configuration is applied correctly. npm provenance is enabled in CI through OIDC.
 
 Checklist:
 
-1. Confirm npm org/user owns package `t3` (or rename package first if needed).
-2. In npm package settings, configure Trusted Publisher:
+1. Confirm npm org/user owns both `t3` and `t3-pi-omp` when fork releases are enabled.
+2. In each npm package's settings, configure Trusted Publisher:
    - Provider: GitHub Actions
    - Repository: this repo
    - Workflow file: `.github/workflows/release.yml`
    - Environment (if used): match your npm trusted publishing config
-3. Ensure npm account and org policies allow trusted publishing for the package.
-4. Create release tag `vX.Y.Z` and push; workflow will:
+3. Ensure npm account and org policies allow trusted publishing and provenance for both packages.
+4. Create release tag `vX.Y.Z` or `fork-vX.Y.Z` and push; workflow will:
    - align the release package versions to `X.Y.Z`
    - build web + server
-   - invoke the CLI publish script with npm dist-tag `latest`
+   - invoke the CLI publish script with npm dist-tag `latest` and provenance
 5. Nightly runs invoke the same publish script with npm dist-tag `nightly`.
 
 ## 1) Release validation and unsigned builds
 
 There is no dry-run tag path. Pushing any accepted non-nightly tag, including
-`v0.0.0-test.1`, classifies the run as the stable channel. It publishes `t3` with npm dist-tag
-`latest`, creates a real GitHub Release, aliases the hosted app to `latest.app.t3.codes` and
-`app.t3.codes`, and can commit a version bump to `main` in the finalize job. Do not push a test tag
-to validate the workflow.
+`v0.0.0-test.1` or `fork-v0.0.0-test.1`, classifies the run as the stable channel. It publishes
+the profile-selected CLI package with npm dist-tag `latest`, creates a real GitHub Release, aliases
+the hosted app to `latest.app.t3.codes` and `app.t3.codes`, and can commit a version bump to `main`
+in the finalize job. Do not push a test tag to validate the workflow.
 
 The workflow has no non-publishing `workflow_dispatch` mode. Use normal CI or local quality gates to
 validate checks and builds without shipping. To exercise the complete release graph at lower stable

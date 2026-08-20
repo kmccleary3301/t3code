@@ -1,3 +1,8 @@
+import {
+  parseProductProfile,
+  resolveProductIdentity,
+  type ProductProfile,
+} from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -5,8 +10,47 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
-
 import * as ProcessRunner from "../processRunner.ts";
+
+const SAFE_PACKAGE_NAME = /^(?:@[a-z0-9._~-]+\/)?[a-z0-9._~-]+$/u;
+
+export interface RuntimeIdentityInput {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly argv?: ReadonlyArray<string>;
+}
+
+export function resolveRuntimePackageName(input: RuntimeIdentityInput = {}): string {
+  const env = input.env ?? process.env;
+  const configuredPackageName = env.T3_PRODUCT_PACKAGE_NAME?.trim();
+  if (configuredPackageName !== undefined && SAFE_PACKAGE_NAME.test(configuredPackageName)) {
+    return configuredPackageName;
+  }
+
+  const configuredProfile = env.T3_PRODUCT_PROFILE?.trim();
+  if (configuredProfile === "pi-omp") {
+    return resolveProductIdentity("pi-omp").packageName;
+  }
+  if (configuredProfile === "upstream") {
+    return resolveProductIdentity("upstream").packageName;
+  }
+
+  const entryPath = (input.argv ?? process.argv)[1]?.replaceAll("\\", "/");
+  const packageMatch = entryPath?.match(/\/node_modules\/((?:@[^/]+\/)?[^/]+)\/dist\/bin\.mjs$/u);
+  if (packageMatch?.[1] !== undefined && SAFE_PACKAGE_NAME.test(packageMatch[1])) {
+    return packageMatch[1];
+  }
+
+  return resolveProductIdentity(parseProductProfile(configuredProfile)).packageName;
+}
+
+export function resolveRuntimeProductProfile(input: RuntimeIdentityInput = {}): ProductProfile {
+  const configuredProfile = input.env?.T3_PRODUCT_PROFILE ?? process.env.T3_PRODUCT_PROFILE;
+  if (configuredProfile?.trim() === "pi-omp") return "pi-omp";
+  if (configuredProfile?.trim() === "upstream") return "upstream";
+  return resolveRuntimePackageName(input) === resolveProductIdentity("pi-omp").packageName
+    ? "pi-omp"
+    : "upstream";
+}
 
 /**
  * A pinned runtime is an exact `t3@<version>` npm-installed into
@@ -32,11 +76,12 @@ export function pinnedRuntimePaths(
   path: Path.Path,
   baseDir: string,
   version: string,
+  packageName = resolveRuntimePackageName(),
 ): PinnedRuntimePaths {
   const versionDir = path.join(baseDir, PINNED_RUNTIME_DIR, "versions", version);
   return {
     versionDir,
-    entryPath: path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+    entryPath: path.join(versionDir, "node_modules", packageName, "dist", "bin.mjs"),
     sentinelPath: path.join(versionDir, ".install-complete"),
   };
 }
@@ -80,6 +125,7 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedErrorClass<
 interface PinnedRuntimeInstallInput {
   readonly baseDir: string;
   readonly version: string;
+  readonly packageName?: string;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly runner: ProcessRunner.ProcessRunner["Service"];
@@ -92,7 +138,8 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   input: PinnedRuntimeInstallInput,
 ) {
   const { fs, runner } = input;
-  const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version);
+  const packageName = input.packageName ?? resolveRuntimePackageName();
+  const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version, packageName);
   const [versionDirExists, entryExists, sentinel] = yield* Effect.all([
     fs.exists(paths.versionDir),
     fs.exists(paths.entryPath),
@@ -146,16 +193,23 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
     );
   const stagingPaths: PinnedRuntimePaths = {
     versionDir: stagingDir,
-    entryPath: input.path.join(stagingDir, "node_modules", "t3", "dist", "bin.mjs"),
+    entryPath: input.path.join(stagingDir, "node_modules", packageName, "dist", "bin.mjs"),
     sentinelPath: input.path.join(stagingDir, ".install-complete"),
   };
 
   return yield* Effect.gen(function* () {
-    const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
+    const installStep = `installing the pinned ${packageName} runtime (this can take a few minutes)`;
     yield* runner
       .run({
         command: "npm",
-        args: ["install", "--prefix", stagingDir, "--no-fund", "--no-audit", `t3@${input.version}`],
+        args: [
+          "install",
+          "--prefix",
+          stagingDir,
+          "--no-fund",
+          "--no-audit",
+          `${packageName}@${input.version}`,
+        ],
         // Native dependencies may compile from source on slower machines.
         timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
       })

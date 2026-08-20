@@ -64,6 +64,18 @@ it.effect("accepts legacy nightly tags when selecting the previous nightly", () 
     assert.equal(previous, "nightly-v1.2.0-nightly.20260620.1");
   }),
 );
+it.effect("isolates fork stable tags from upstream releases", () =>
+  Effect.gen(function* () {
+    const previous = yield* resolvePreviousReleaseTag(
+      "stable",
+      "fork-v1.2.0",
+      ["v9.0.0", "fork-v1.1.3", "fork-v1.2.0"],
+      "pi-omp",
+    );
+
+    assert.equal(previous, "fork-v1.1.3");
+  }),
+);
 
 it.effect("reports the invalid tag with its release channel", () =>
   Effect.gen(function* () {

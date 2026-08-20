@@ -1,3 +1,4 @@
+import { defaultInstanceIdForDriver } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -82,6 +83,38 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
             idleDurationMs,
           });
           continue;
+        }
+
+        let nativeResumeCursor = binding.resumeCursor;
+        if (binding.provider === "pi" || binding.provider === "omp") {
+          if (nativeResumeCursor === null || nativeResumeCursor === undefined) {
+            const captured = yield* providerService
+              .captureNativeCheckpoint({ threadId: binding.threadId })
+              .pipe(Effect.result);
+            if (captured._tag === "Success") {
+              nativeResumeCursor = captured.success;
+            } else {
+              yield* Effect.logDebug("provider.session.reaper.native-checkpoint-failed", {
+                threadId: binding.threadId,
+                provider: binding.provider,
+                cause: captured.failure,
+              });
+            }
+          }
+          if (nativeResumeCursor === null || nativeResumeCursor === undefined) {
+            yield* Effect.logDebug("provider.session.reaper.skipped-native-no-resume", {
+              threadId: binding.threadId,
+              provider: binding.provider,
+            });
+            continue;
+          }
+          yield* directory.upsert({
+            provider: binding.provider,
+            threadId: binding.threadId,
+            providerInstanceId:
+              binding.providerInstanceId ?? defaultInstanceIdForDriver(binding.provider),
+            resumeCursor: nativeResumeCursor,
+          });
         }
 
         const reaped = yield* providerService.stopSession({ threadId: binding.threadId }).pipe(

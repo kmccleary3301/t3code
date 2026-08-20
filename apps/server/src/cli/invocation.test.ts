@@ -46,6 +46,26 @@ it("re-suggests the nightly channel only for nightly builds", () => {
   assert.equal(suggestedPackageSpec("0.0.31"), "t3");
 });
 
+it("preserves the fork package name when suggesting a nightly invocation", () => {
+  assert.equal(suggestedPackageSpec("0.0.31-nightly.20260729", "t3-pi-omp"), "t3-pi-omp@nightly");
+  assert.equal(
+    formatCliCommand({
+      subcommand: "serve",
+      entryPath: "/tmp/bunx-1000-t3-pi-omp@nightly/node_modules/t3-pi-omp/dist/bin.mjs",
+      version: "0.0.31-nightly.20260729",
+    }),
+    "bunx t3-pi-omp@nightly serve",
+  );
+  assert.equal(
+    formatCliCommand({
+      subcommand: "serve",
+      entryPath: "/usr/local/lib/node_modules/t3-pi-omp/dist/bin.mjs",
+      version: "0.0.31",
+    }),
+    "t3-pi-omp serve",
+  );
+});
+
 it("formats serve suggestions to match the launching command", () => {
   assert.equal(
     formatCliCommand({

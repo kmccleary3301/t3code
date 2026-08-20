@@ -9,17 +9,25 @@ import * as NodeURL from "node:url";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
+const isPiOmpProfile = process.env.T3_PRODUCT_PROFILE?.trim() === "pi-omp";
+const productBaseName = isPiOmpProfile ? "T3 Code Pi + OMP" : "T3 Code";
+const productBundleId = isPiOmpProfile ? "com.t3tools.t3code.piomp" : "com.t3tools.t3code";
+const productSchemes = isPiOmpProfile
+  ? ["t3code-pi-omp", "t3code-pi-omp-dev"]
+  : ["t3code", "t3code-dev"];
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 export const desktopDir = NodePath.resolve(__dirname, "..");
 const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+export const APP_DISPLAY_NAME = isDevelopment
+  ? `${productBaseName} (Dev)`
+  : `${productBaseName} (Alpha)`;
 export const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
+  ? `${productBundleId}.dev.${devBundleIdSuffix || "local"}`
+  : productBundleId;
+const APP_PROTOCOL_SCHEMES = isDevelopment ? [productSchemes[1]] : [productSchemes[0]];
 const LAUNCHER_VERSION = 15;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
@@ -108,6 +116,7 @@ export function makeDevelopmentLauncherScript({
 }) {
   const envEntries = [
     ["VITE_DEV_SERVER_URL", environment.VITE_DEV_SERVER_URL],
+    ["T3_PRODUCT_PROFILE", environment.T3_PRODUCT_PROFILE],
     ["T3CODE_PORT", environment.T3CODE_PORT],
     ["T3CODE_HOME", environment.T3CODE_HOME],
     ["T3CODE_COMMIT_HASH", environment.T3CODE_COMMIT_HASH],

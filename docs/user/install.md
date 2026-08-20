@@ -17,6 +17,52 @@ npx t3@latest
 This starts the T3 Code server on your machine and opens the local web app. Use
 `npx t3@latest --help` for the full CLI reference.
 
+## CLI Installer
+
+The release workflow publishes a profile-specific POSIX installer with every release. It
+downloads only HTTPS assets, verifies `RELEASE-MANIFEST.json` and `SHA256SUMS`, and never
+evaluates downloaded shell or JavaScript:
+
+```sh
+curl -fsSL https://github.com/pingdotgg/t3code/releases/latest/download/install.sh |
+  sh -s -- --profile upstream
+```
+
+For the private Pi + OMP product, use the owner-controlled fork repository and its separate
+release channel:
+
+```sh
+curl -fsSL https://github.com/OWNER/REPOSITORY/releases/latest/download/install.sh |
+  sh -s -- --profile pi-omp --repository OWNER/REPOSITORY
+```
+
+Replace `OWNER/REPOSITORY` with the configured `T3_PI_OMP_RELEASE_REPOSITORY`; do not point
+the private installer at the official T3 release repository. For a pinned, auditable install,
+download `install.sh`, `RELEASE-MANIFEST.json`, and `SHA256SUMS` from the exact `fork-vX.Y.Z`
+release, verify the installer with the checksum file, then run it locally:
+
+```sh
+expected=$(awk '$2 == "install.sh" { print $1 }' SHA256SUMS)
+actual=$(shasum -a 256 install.sh | awk '{ print $1 }') # use sha256sum on Linux
+test "$actual" = "$expected"
+sh install.sh --profile pi-omp --repository OWNER/REPOSITORY --version X.Y.Z
+```
+
+Use `--channel nightly` for the newest matching nightly, `--version X.Y.Z` for an exact
+release, `--prefix "$HOME/.local/share/t3code/pi-omp"` for an isolated prefix, and `--dry-run`
+to inspect the resolved action without network or filesystem mutation. `--desktop` downloads
+the verified platform desktop artifact into the owned prefix; it does not install or replace
+an existing desktop application. `--uninstall` and `--rollback` operate only on an installation
+whose ownership marker matches the selected profile.
+
+`--install-runtimes` is opt-in. It installs only Pi/OMP archives explicitly listed in the
+release manifest, into the profile-owned prefix, and prints `PI_BINARY_PATH` and
+`OMP_BINARY_PATH` for explicit provider configuration. Releases without those optional assets
+fail closed when the flag is used. The flag never replaces `pi`, `omp`, or their configuration.
+
+The installer requires Node.js and npm when the release manifest uses its npm package fallback.
+It does not install Node.js or the native provider runtimes.
+
 ## Desktop App
 
 Download the latest release from

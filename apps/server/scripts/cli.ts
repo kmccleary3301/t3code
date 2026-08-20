@@ -19,6 +19,11 @@ import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import {
+  parseProductProfile,
+  resolveProductIdentity,
+  type ProductProfile,
+} from "@t3tools/contracts";
 import serverPackageJson from "../package.json" with { type: "json" };
 import {
   ServerCliBuildAssetMissingError,
@@ -182,6 +187,7 @@ const buildCmd = Command.make(
 interface PublishCommandConfig {
   readonly access: string;
   readonly tag: string;
+  readonly packageName: string;
   readonly provenance: boolean;
   readonly dryRun: boolean;
 }
@@ -190,7 +196,7 @@ const createVpPmPublishArgs = (config: PublishCommandConfig): ReadonlyArray<stri
   const args = [
     "publish",
     "--filter",
-    "t3",
+    config.packageName,
     "--access",
     config.access,
     "--tag",
@@ -210,6 +216,10 @@ const publishCmd = Command.make(
     tag: Flag.string("tag").pipe(Flag.withDefault("latest")),
     access: Flag.string("access").pipe(Flag.withDefault("public")),
     appVersion: Flag.string("app-version").pipe(Flag.optional),
+    profile: Flag.string("profile").pipe(
+      Flag.withDescription("Product profile to publish (upstream or pi-omp)."),
+      Flag.withDefault("upstream"),
+    ),
     provenance: Flag.boolean("provenance").pipe(Flag.withDefault(false)),
     dryRun: Flag.boolean("dry-run").pipe(Flag.withDefault(false)),
     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
@@ -238,13 +248,31 @@ const publishCmd = Command.make(
         // Acquire: resolve publish metadata and read every original before mutation.
         Effect.gen(function* () {
           const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
+          const profile: ProductProfile = parseProductProfile(config.profile);
+          const identity = resolveProductIdentity(profile);
           const workspaceConfig = yield* readWorkspaceConfig();
           const workspaceCatalog = workspaceConfig.catalog ?? {};
           const workspaceOverrides = workspaceConfig.overrides ?? {};
+          const repository =
+            profile === "pi-omp"
+              ? process.env.T3_PI_OMP_RELEASE_REPOSITORY?.trim() ||
+                (process.env.GITHUB_REPOSITORY?.trim()
+                  ? `https://github.com/${process.env.GITHUB_REPOSITORY.trim()}`
+                  : (() => {
+                      throw new Error(
+                        "T3_PI_OMP_RELEASE_REPOSITORY or GITHUB_REPOSITORY is required for pi-omp publishing.",
+                      );
+                    })())
+              : serverPackageJson.repository.url;
           const pkg: PackageJson = {
-            name: serverPackageJson.name,
-            repository: serverPackageJson.repository,
-            bin: serverPackageJson.bin,
+            name: identity.packageName,
+            repository: {
+              ...serverPackageJson.repository,
+              url: repository.startsWith("https://")
+                ? repository
+                : `https://github.com/${repository}`,
+            },
+            bin: { [identity.cliBinaryName]: "./dist/bin.mjs" },
             type: serverPackageJson.type,
             version,
             engines: serverPackageJson.engines,
@@ -262,6 +290,7 @@ const publishCmd = Command.make(
           };
 
           return {
+            packageName: identity.packageName,
             packageJsonString: yield* encodePackageJson(pkg),
             originalPackageJson: yield* fs.readFile(packageJsonPath),
             icons: yield* preparePublishIcons(repoRoot, serverDir, version),
@@ -277,7 +306,10 @@ const publishCmd = Command.make(
             }
             yield* Effect.log("[cli] Applied package metadata and publish icon overrides");
 
-            const args = createVpPmPublishArgs(config);
+            const args = createVpPmPublishArgs({
+              ...config,
+              packageName: resource.packageName,
+            });
             const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args]);
 
             yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);

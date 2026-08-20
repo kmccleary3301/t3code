@@ -22,6 +22,21 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("exposes Pi-family metadata through the generic settings form", () => {
+    const pi = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("pi")];
+    const omp = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("omp")];
+
+    expect(pi).toMatchObject({ label: "Pi" });
+    expect(omp).toMatchObject({ label: "Oh My Pi" });
+    expect(deriveProviderSettingsFields(pi!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "agentDirectory",
+      "environment",
+      "launchArguments",
+      "trustMode",
+    ]);
+  });
+
   it("sources labels and descriptions from schema annotations", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();
@@ -128,5 +143,54 @@ describe("ProviderSettingsForm helpers", () => {
 
   it("reads missing boolean config values from the supplied default", () => {
     expect(readProviderConfigBoolean({}, "experimental", true)).toBe(true);
+  });
+
+  it("round-trips Pi-family structured values without flattening them", () => {
+    const pi = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("pi")];
+    expect(pi).toBeDefined();
+    const fields = deriveProviderSettingsFields(pi!);
+    const environment = fields.find((field) => field.key === "environment");
+    const launchArguments = fields.find((field) => field.key === "launchArguments");
+    expect(environment?.valueFormat).toBe("json");
+    expect(launchArguments?.valueFormat).toBe("json");
+
+    const current = {
+      opaqueForkSetting: { keep: true },
+      environment: { PI_PROFILE: "work", EMPTY: "" },
+      launchArguments: ["--model", "reasoning", "--flag=value"],
+    };
+    expect(readProviderConfigString(current, "environment", environment?.valueFormat)).toContain(
+      '"PI_PROFILE": "work"',
+    );
+    expect(
+      nextProviderConfigWithFieldValue(
+        current,
+        environment!,
+        '{ "PI_PROFILE": "personal", "EMPTY": "" }',
+      ),
+    ).toEqual({
+      opaqueForkSetting: { keep: true },
+      environment: { PI_PROFILE: "personal", EMPTY: "" },
+      launchArguments: ["--model", "reasoning", "--flag=value"],
+    });
+    expect(
+      nextProviderConfigWithFieldValue(current, launchArguments!, '[ "--model", "fast" ]'),
+    ).toEqual({
+      opaqueForkSetting: { keep: true },
+      environment: { PI_PROFILE: "work", EMPTY: "" },
+      launchArguments: ["--model", "fast"],
+    });
+  });
+
+  it("keeps the last valid structured value while JSON is incomplete", () => {
+    const field = {
+      key: "launchArguments",
+      control: "textarea" as const,
+      label: "Launch arguments",
+      clearWhenEmpty: "omit" as const,
+      valueFormat: "json" as const,
+    };
+    const current = { launchArguments: ["--model", "reasoning"], opaque: "keep" };
+    expect(nextProviderConfigWithFieldValue(current, field, '[ "--model",')).toEqual(current);
   });
 });

@@ -273,6 +273,12 @@ export interface ProviderSettingsFormAnnotation {
   readonly placeholder?: string | undefined;
   readonly hidden?: boolean | undefined;
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
+  /**
+   * Structured values are edited as JSON while remaining typed in the
+   * persisted provider config. This keeps provider-specific arrays/records
+   * round-trippable without flattening them into opaque strings.
+   */
+  readonly valueFormat?: "json" | undefined;
 }
 
 export interface ProviderSettingsFormSchemaAnnotation {
@@ -519,6 +525,95 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
   },
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
+export const PiFamilyTrustMode = Schema.Literals([
+  "inherit-native",
+  "approve-for-this-run",
+  "deny-for-this-run",
+]);
+export type PiFamilyTrustMode = typeof PiFamilyTrustMode.Type;
+
+const makePiFamilySettingsFields = (binaryFallback: string) => ({
+  enabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  binaryPath: makeBinaryPathSetting(binaryFallback).pipe(
+    Schema.annotateKey({
+      title: "Binary path",
+      description: `Path to the ${binaryFallback} binary used by this instance.`,
+      providerSettingsForm: { placeholder: binaryFallback, clearWhenEmpty: "omit" },
+    }),
+  ),
+  agentDirectory: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: "Agent directory",
+      description:
+        "Native profile and session directory for this instance. Keep it separate to isolate accounts and state.",
+      providerSettingsForm: {
+        placeholder: `~/.${binaryFallback}`,
+        clearWhenEmpty: "omit",
+      },
+    }),
+  ),
+  environment: Schema.Record(Schema.String, Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+    Schema.annotateKey({
+      title: "Environment",
+      description: "Environment variables applied only to this provider process.",
+      providerSettingsForm: {
+        control: "textarea",
+        placeholder: '{ "KEY": "value" }',
+        valueFormat: "json",
+      },
+    }),
+  ),
+  launchArguments: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+    Schema.annotateKey({
+      title: "Launch arguments",
+      description: "Explicit arguments appended to the native process launch.",
+      providerSettingsForm: {
+        control: "textarea",
+        placeholder: '[ "--flag", "value" ]',
+        valueFormat: "json",
+      },
+    }),
+  ),
+  trustMode: PiFamilyTrustMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("inherit-native" as const)),
+    Schema.annotateKey({
+      title: "Trust mode",
+      description: "Trust policy forwarded to the native runtime when supported.",
+      providerSettingsForm: { control: "text", placeholder: "inherit-native" },
+    }),
+  ),
+  requestTimeoutMs: Schema.Int.check(Schema.isGreaterThan(0)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(30_000)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  startupTimeoutMs: Schema.Int.check(Schema.isGreaterThan(0)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(10_000)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  maxLineBytes: Schema.Int.check(Schema.isGreaterThan(0)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(1_048_576)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  maxMessageBytes: Schema.Int.check(Schema.isGreaterThan(0)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(67_108_864)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+});
+export const PiSettings = makeProviderSettingsSchema(makePiFamilySettingsFields("pi"), {
+  order: ["binaryPath", "agentDirectory", "environment", "launchArguments", "trustMode"],
+});
+export type PiSettings = typeof PiSettings.Type;
+
+export const OmpSettings = makeProviderSettingsSchema(makePiFamilySettingsFields("omp"), {
+  order: ["binaryPath", "agentDirectory", "environment", "launchArguments", "trustMode"],
+});
+export type OmpSettings = typeof OmpSettings.Type;
 
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -662,6 +757,8 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    omp: OmpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -808,6 +905,18 @@ const OpenCodeSettingsPatch = Schema.Struct({
   serverPassword: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
+const PiFamilySettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  agentDirectory: Schema.optionalKey(TrimmedString),
+  environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  launchArguments: Schema.optionalKey(Schema.Array(Schema.String)),
+  trustMode: Schema.optionalKey(PiFamilyTrustMode),
+  requestTimeoutMs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  startupTimeoutMs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  maxLineBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  maxMessageBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+});
 
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
@@ -850,6 +959,8 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      pi: Schema.optionalKey(PiFamilySettingsPatch),
+      omp: Schema.optionalKey(PiFamilySettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

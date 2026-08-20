@@ -5,6 +5,8 @@ on:
     tags:
       - "v*.*.*"
       - "!v*-nightly.*"
+      - "fork-v*.*.*"
+      - "!fork-v*-nightly.*"
   schedule:
     - cron: "0 */3 * * *"
   workflow_dispatch:
@@ -21,6 +23,27 @@ on:
         description: "Release version (for example 1.2.3 or v1.2.3)"
         required: false
         type: string
+      product_profile:
+        description: "Product profile to release"
+        required: false
+        default: upstream
+        type: choice
+        options:
+          - upstream
+          - pi-omp
+      release_repository:
+        description: "Explicit GitHub repository for this release (required for pi-omp)"
+        required: false
+        type: string
+      updater_repository:
+        description: "Explicit GitHub repository consumed by desktop updates (required for pi-omp)"
+        required: false
+        type: string
+      upstream_sync_check:
+        description: "Run the deterministic local upstream-sync check before releasing"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -35,7 +58,7 @@ jobs:
       has_changes: ${{ steps.check.outputs.has_changes }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
           sparse-checkout: |
@@ -45,10 +68,32 @@ jobs:
 
       - id: check
         name: Compare HEAD to last nightly tag
+        shell: bash
+        env:
+          SCHEDULED_PROFILE: ${{ vars.T3_RELEASE_PRODUCT_PROFILE }}
+          T3_PI_OMP_RELEASE_REPOSITORY: ${{ vars.T3_PI_OMP_RELEASE_REPOSITORY }}
         run: |
-          last_nightly_tag=$(git tag --list 'v*-nightly.*' 'nightly-v*' --sort=-creatordate | head -n 1)
+          set -euo pipefail
+          product_profile="${SCHEDULED_PROFILE:-}"
+          if [[ -z "$product_profile" && -n "${T3_PI_OMP_RELEASE_REPOSITORY:-}" ]]; then
+            product_profile="pi-omp"
+          fi
+          product_profile="${product_profile:-upstream}"
+          case "$product_profile" in
+            upstream)
+              tag_patterns=('v*-nightly.*' 'nightly-v*')
+              ;;
+            pi-omp)
+              tag_patterns=('fork-v*-nightly.*' 'fork-nightly-v*')
+              ;;
+            *)
+              echo "Unsupported product profile: $product_profile" >&2
+              exit 1
+              ;;
+          esac
+          last_nightly_tag=$(git tag --list "${tag_patterns[@]}" --sort=-creatordate | head -n 1)
           if [[ -z "$last_nightly_tag" ]]; then
-            echo "No previous nightly tag found. Proceeding with release."
+            echo "No previous nightly tag found for profile $product_profile. Proceeding with release."
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -68,10 +113,10 @@ jobs:
     name: Preflight
     needs: [check_changes]
     if: |
-      !failure() && !cancelled() &&
+      always() &&
+      !cancelled() &&
+      needs.check_changes.result != 'failure' &&
       (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
     outputs:
       release_channel: ${{ steps.release_meta.outputs.release_channel }}
       version: ${{ steps.release_meta.outputs.version }}
@@ -80,12 +125,17 @@ jobs:
       short_sha: ${{ steps.release_meta.outputs.short_sha }}
       previous_tag: ${{ steps.previous_tag.outputs.previous_tag }}
       cli_dist_tag: ${{ steps.release_meta.outputs.cli_dist_tag }}
+      cli_package_name: ${{ steps.release_meta.outputs.cli_package_name }}
+      cli_binary_name: ${{ steps.release_meta.outputs.cli_binary_name }}
+      release_repository: ${{ steps.release_meta.outputs.release_repository }}
+      updater_repository: ${{ steps.release_meta.outputs.updater_repository }}
+      product_profile: ${{ steps.release_meta.outputs.product_profile }}
       is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
       make_latest: ${{ steps.release_meta.outputs.make_latest }}
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
           sparse-checkout: |
@@ -94,14 +144,11 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
           run-install: true
-
-      - name: Ensure Electron runtime is installed
-        run: vp run --filter @t3tools/desktop ensure:electron
 
       - id: release_meta
         name: Resolve release version
@@ -109,10 +156,61 @@ jobs:
         env:
           DISPATCH_CHANNEL: ${{ github.event.inputs.channel }}
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          DISPATCH_PROFILE: ${{ github.event.inputs.product_profile }}
+          DISPATCH_RELEASE_REPOSITORY: ${{ github.event.inputs.release_repository }}
+          DISPATCH_UPDATER_REPOSITORY: ${{ github.event.inputs.updater_repository }}
+          SCHEDULED_PROFILE: ${{ vars.T3_RELEASE_PRODUCT_PROFILE }}
+          T3_PI_OMP_RELEASE_REPOSITORY: ${{ vars.T3_PI_OMP_RELEASE_REPOSITORY }}
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ vars.T3CODE_DESKTOP_UPDATE_REPOSITORY }}
           NIGHTLY_DATE: ${{ github.run_started_at }}
           NIGHTLY_SHA: ${{ github.sha }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
         run: |
+          set -euo pipefail
+
+          product_profile="${DISPATCH_PROFILE:-${SCHEDULED_PROFILE:-}}"
+          if [[ -z "$product_profile" && -n "${T3_PI_OMP_RELEASE_REPOSITORY:-}" ]]; then
+            product_profile="pi-omp"
+          fi
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_NAME}" == fork-v* ]]; then
+            product_profile="pi-omp"
+          fi
+          if [[ -z "$product_profile" ]]; then
+            if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+              echo "Scheduled releases require T3_RELEASE_PRODUCT_PROFILE or T3_PI_OMP_RELEASE_REPOSITORY to be configured." >&2
+              exit 1
+            fi
+            product_profile="upstream"
+          fi
+          case "$product_profile" in
+            upstream)
+              release_tag_prefix="v"
+              release_display_name="T3 Code"
+              cli_package_name="t3"
+              ;;
+            pi-omp)
+              release_tag_prefix="fork-v"
+              release_display_name="T3 Code Pi + OMP"
+              cli_package_name="t3-pi-omp"
+              ;;
+            *)
+              echo "Unsupported product profile: $product_profile" >&2
+              exit 1
+              ;;
+          esac
+          release_repository="${DISPATCH_RELEASE_REPOSITORY:-${T3_PI_OMP_RELEASE_REPOSITORY:-}}"
+          updater_repository="${DISPATCH_UPDATER_REPOSITORY:-${T3CODE_DESKTOP_UPDATE_REPOSITORY:-}}"
+          config_args=(--profile "$product_profile" --current-repository "$GITHUB_REPOSITORY")
+          if [[ -n "$release_repository" ]]; then
+            config_args+=(--fork-release-repository "$release_repository")
+          fi
+          if [[ -n "$updater_repository" ]]; then
+            config_args+=(--updater-repository "$updater_repository")
+          fi
+          node scripts/resolve-release-config.ts "${config_args[@]}" --github-output
+          echo "product_profile=$product_profile" >> "$GITHUB_OUTPUT"
+          echo "cli_package_name=$cli_package_name" >> "$GITHUB_OUTPUT"
+
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ) ]]; then
             nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
 
@@ -120,6 +218,7 @@ jobs:
               --date "$nightly_date" \
               --run-number "$NIGHTLY_RUN_NUMBER" \
               --sha "$NIGHTLY_SHA" \
+              --profile "$product_profile" \
               --github-output
 
             echo "release_channel=nightly" >> "$GITHUB_OUTPUT"
@@ -137,6 +236,9 @@ jobs:
               raw="${GITHUB_REF_NAME}"
             fi
 
+            if [[ "$product_profile" == "pi-omp" ]]; then
+              raw="${raw#fork-}"
+            fi
             version="${raw#v}"
             if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
               echo "Invalid release version: $raw" >&2
@@ -145,8 +247,9 @@ jobs:
 
             echo "release_channel=stable" >> "$GITHUB_OUTPUT"
             echo "version=$version" >> "$GITHUB_OUTPUT"
-            echo "tag=v$version" >> "$GITHUB_OUTPUT"
-            echo "name=T3 Code v$version" >> "$GITHUB_OUTPUT"
+            echo "tag=${release_tag_prefix}${version}" >> "$GITHUB_OUTPUT"
+            echo "name=${release_display_name} v$version" >> "$GITHUB_OUTPUT"
+
             echo "cli_dist_tag=latest" >> "$GITHUB_OUTPUT"
             if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
@@ -156,6 +259,28 @@ jobs:
               echo "make_latest=false" >> "$GITHUB_OUTPUT"
             fi
           fi
+
+      - name: Check release shell syntax and security invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/install.sh
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck --severity=warning scripts/install.sh
+          else
+            echo "shellcheck unavailable; release-security-check is the fallback gate."
+          fi
+          node scripts/release-security-check.ts
+
+      - name: Check owner-controlled upstream sync baseline
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.upstream_sync_check == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream_repository="${{ vars.T3CODE_UPSTREAM_REPOSITORY || 'pingdotgg/t3code' }}"
+          git remote add upstream "https://github.com/${upstream_repository}.git"
+          git fetch --no-tags upstream main
+          node scripts/check-upstream-sync.ts --remote upstream --ref main
 
       - name: Check
         run: vp check
@@ -172,6 +297,7 @@ jobs:
           node scripts/resolve-previous-release-tag.ts \
             --channel "${{ steps.release_meta.outputs.release_channel }}" \
             --current-tag "${{ steps.release_meta.outputs.tag }}" \
+            --profile "${{ steps.release_meta.outputs.product_profile }}" \
             --github-output
 
   relay_public_config:
@@ -181,7 +307,7 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
-      name: production
+      name: ${{ needs.preflight.outputs.product_profile == 'upstream' && 'production' || 'fork-release' }}
     outputs:
       clerk_publishable_key: ${{ steps.public_config.outputs.clerk_publishable_key }}
       clerk_jwt_template: ${{ steps.public_config.outputs.clerk_jwt_template }}
@@ -197,7 +323,7 @@ jobs:
       CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.CLERK_CLI_OAUTH_CLIENT_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -206,7 +332,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -218,14 +344,18 @@ jobs:
         name: Read production relay tracing config
         shell: bash
         run: |
-          vp run --filter t3code-relay deploy \
-            --stage prod \
-            --read-state \
-            --github-output \
-            --github-env-file "$RUNNER_TEMP/relay-client-tracing.env"
+          if [[ "${{ needs.preflight.outputs.product_profile }}" == "pi-omp" ]]; then
+            : > "$RUNNER_TEMP/relay-client-tracing.env"
+          else
+            vp run --filter t3code-relay deploy \
+              --stage prod \
+              --read-state \
+              --github-output \
+              --github-env-file "$RUNNER_TEMP/relay-client-tracing.env"
+          fi
 
       - name: Upload relay client tracing config
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing.env
@@ -237,6 +367,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "${{ needs.preflight.outputs.product_profile }}" == "pi-omp" ]]; then
+            printf 'clerk_publishable_key=\n' >> "$GITHUB_OUTPUT"
+            printf 'clerk_jwt_template=\n' >> "$GITHUB_OUTPUT"
+            printf 'clerk_cli_oauth_client_id=\n' >> "$GITHUB_OUTPUT"
+            printf 'relay_url=\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           relay_domain="${RELAY_DOMAIN:-}"
           if [[ -z "$relay_domain" && -n "${RELAY_API_ZONE_NAME:-}" ]]; then
@@ -278,7 +415,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -287,7 +424,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -310,7 +447,7 @@ jobs:
           file wsl-prebuild/pty.node
 
       - name: Upload node-pty linux-x64 prebuild
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild/pty.node
@@ -334,6 +471,8 @@ jobs:
       T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      T3_PRODUCT_PROFILE: ${{ needs.preflight.outputs.product_profile }}
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ needs.preflight.outputs.updater_repository }}
     strategy:
       fail-fast: false
       matrix:
@@ -359,6 +498,13 @@ jobs:
             arch: x64
             rust_target: x86_64-unknown-linux-gnu
             resource_key: linux-x64
+          - label: Linux arm64
+            runner: blacksmith-32vcpu-ubuntu-2404
+            platform: linux
+            target: AppImage
+            arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            resource_key: linux-arm64
           - label: Windows x64
             runner: blacksmith-32vcpu-windows-2025
             platform: win
@@ -373,7 +519,7 @@ jobs:
           #   arch: arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -382,7 +528,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -393,12 +539,12 @@ jobs:
               - --filter=@t3tools/scripts...
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           targets: ${{ matrix.rust_target }}
 
       - name: Download relay client tracing config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
@@ -416,7 +562,7 @@ jobs:
 
       - name: Download WSL node-pty prebuild
         if: matrix.platform == 'win'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild
@@ -541,6 +687,7 @@ jobs:
             --build-version "${{ needs.preflight.outputs.version }}"
             --verbose
           )
+          signed=false
 
           has_all() {
             for value in "$@"; do
@@ -570,6 +717,7 @@ jobs:
 
               echo "macOS signing enabled."
               args+=(--signed)
+              signed=true
             else
               echo "macOS signing disabled (missing one or more Apple signing secrets)."
             fi
@@ -588,15 +736,18 @@ jobs:
               "$AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"; then
               echo "Windows signing enabled (Azure Trusted Signing)."
               args+=(--signed)
+              signed=true
             else
               echo "Windows signing disabled (missing one or more Azure Trusted Signing secrets)."
             fi
           else
             echo "Signing disabled for ${{ matrix.platform }}."
+            signed=false
           fi
 
           vp run dist:desktop:artifact "${args[@]}"
 
+          printf '%s' "$signed" > "release-signing-status-${{ matrix.platform }}-${{ matrix.arch }}.txt"
       - name: Collect release assets
         shell: bash
         run: |
@@ -622,6 +773,18 @@ jobs:
               mv "$manifest" "${manifest%.yml}-${{ matrix.arch }}.yml"
             done
           fi
+          STATUS_FILE="release-signing-status-${{ matrix.platform }}-${{ matrix.arch }}.txt" \
+          BUILD_PLATFORM="${{ matrix.platform }}" \
+          BUILD_ARCH="${{ matrix.arch }}" \
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const status = fs.readFileSync(process.env.STATUS_FILE, "utf8").trim() === "true";
+            const artifacts = fs.readdirSync("release-publish").filter((name) => !name.startsWith("t3-artifact-signing-"));
+            fs.writeFileSync(
+              `release-publish/t3-artifact-signing-${process.env.BUILD_PLATFORM}-${process.env.BUILD_ARCH}.json`,
+              JSON.stringify({ signed: status, artifacts }),
+            );
+          '
 
           # Enable if Windows arm64 builds are enabled.
           # Windows updater metadata is channel-specific (for example
@@ -649,17 +812,57 @@ jobs:
           cp "$source_path" "$target_dir/$binary_name"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: release-publish/*
           if-no-files-found: error
 
       - name: Upload resource monitor
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: resource-monitor-${{ matrix.resource_key }}
           path: resource-monitor-publish/${{ matrix.resource_key }}/*
+          if-no-files-found: error
+
+  prepare_runtime_bundles:
+    name: Prepare optional Pi/OMP runtime bundles
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
+    outputs:
+      has_assets: ${{ steps.prepare.outputs.has_assets }}
+    env:
+      T3_PI_OMP_RUNTIME_BUNDLES_JSON: ${{ needs.preflight.outputs.product_profile == 'pi-omp' && vars.T3_PI_OMP_RUNTIME_BUNDLES_JSON || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            package.json
+            scripts/prepare-runtime-bundles.ts
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: package.json
+
+      - id: prepare
+        name: Download and verify configured runtime bundles
+        run: |
+          set -euo pipefail
+          node scripts/prepare-runtime-bundles.ts \
+            --output runtime-assets
+
+      - name: Upload optional runtime bundles
+        if: steps.prepare.outputs.has_assets == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-bundles
+          path: runtime-assets/*
           if-no-files-found: error
 
   publish_cli:
@@ -676,9 +879,11 @@ jobs:
       T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      T3_PRODUCT_PROFILE: ${{ needs.preflight.outputs.product_profile }}
+      T3_PI_OMP_RELEASE_REPOSITORY: ${{ needs.preflight.outputs.release_repository }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -687,7 +892,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -698,7 +903,7 @@ jobs:
               - --filter=@t3tools/scripts...
 
       - name: Download relay client tracing config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
@@ -721,7 +926,7 @@ jobs:
         run: vp run --filter t3 build
 
       - name: Download resource monitors
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: resource-monitor-*
           path: ${{ runner.temp }}/resource-monitors
@@ -739,19 +944,34 @@ jobs:
           done
 
       - name: Publish CLI package
-        run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
+        run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --profile "${{ needs.preflight.outputs.product_profile }}" --provenance --verbose
+      - name: Download profile-specific CLI package tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cli-release
+          npm pack "${{ needs.preflight.outputs.cli_package_name }}@${{ needs.preflight.outputs.version }}" --pack-destination cli-release
+
+      - name: Upload profile-specific CLI package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-package
+          path: cli-release/*.tgz
+          if-no-files-found: error
 
   release:
     name: Publish GitHub Release
-    needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    needs: [preflight, build, publish_cli, prepare_runtime_bundles]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' && needs.prepare_runtime_bundles.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -760,7 +980,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -768,11 +988,25 @@ jobs:
             args:
               - --filter=@t3tools/scripts...
 
+      - name: Align package versions for release manifest
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
       - name: Download all desktop artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: desktop-*
           merge-multiple: true
+          path: release-assets
+      - name: Download profile-specific CLI package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-package
+          path: release-assets
+      - name: Download optional runtime bundles
+        if: needs.prepare_runtime_bundles.outputs.has_assets == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: runtime-bundles
           path: release-assets
 
       - name: Merge macOS updater manifests
@@ -815,9 +1049,70 @@ jobs:
       #       exit 1
       #     fi
 
+      - name: Add secure POSIX installer
+        run: |
+          install_path="release-assets/install.sh"
+          cp scripts/install.sh "$install_path"
+          chmod 755 "$install_path"
+      - name: Generate release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/generate-release-manifest.ts \
+            --root . \
+            --assets release-assets \
+            --output release-assets/RELEASE-MANIFEST.json \
+            --profile "${{ needs.preflight.outputs.product_profile }}" \
+            --channel "${{ needs.preflight.outputs.release_channel }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --commit "${{ needs.preflight.outputs.ref }}" \
+            --repository "${{ needs.preflight.outputs.release_repository }}" \
+            --updater-repository "${{ needs.preflight.outputs.updater_repository }}"
+          rm -f release-assets/t3-artifact-signing-*.json
+
+      - name: Generate release checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd release-assets
+            find . -type f ! -name SHA256SUMS -print0 |
+              sort -z |
+              xargs -0 sha256sum > SHA256SUMS
+          )
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            release-assets/*
+      - id: release_files
+        name: Resolve release asset globs
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "files<<EOF"
+            printf '%s\n' \
+              "release-assets/*.dmg" \
+              "release-assets/*.zip" \
+              "release-assets/*.AppImage" \
+              "release-assets/*.exe" \
+              "release-assets/*.blockmap" \
+              "release-assets/*.yml" \
+              "release-assets/*.tgz" \
+              "release-assets/RELEASE-MANIFEST.json" \
+              "release-assets/install.sh" \
+              "release-assets/SHA256SUMS"
+            if compgen -G "release-assets/*-runtime-*" >/dev/null; then
+              echo "release-assets/*-runtime-*"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
@@ -826,19 +1121,13 @@ jobs:
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
-          files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.AppImage
-            release-assets/*.exe
-            release-assets/*.blockmap
-            release-assets/*.yml
+          files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
       - name: Publish first release
         if: needs.preflight.outputs.previous_tag == ''
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
@@ -846,20 +1135,14 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
-          files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.AppImage
-            release-assets/*.exe
-            release-assets/*.blockmap
-            release-assets/*.yml
+          files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
   publish_aur:
     name: Publish AUR package
     needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.product_profile == 'upstream' }}
     uses: ./.github/workflows/publish-aur.yml
     with:
       release_tag: ${{ needs.preflight.outputs.tag }}
@@ -869,7 +1152,7 @@ jobs:
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.product_profile == 'upstream' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
@@ -886,7 +1169,7 @@ jobs:
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -895,7 +1178,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -905,7 +1188,7 @@ jobs:
               - --filter=@t3tools/web...
 
       - name: Download relay client tracing config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
@@ -994,14 +1277,14 @@ jobs:
     steps:
       - id: app_token
         name: Mint release app token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: main
           fetch-depth: 0
@@ -1023,7 +1306,7 @@ jobs:
           echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
@@ -1072,13 +1355,14 @@ jobs:
       needs.relay_public_config.result == 'success' &&
       needs.release.result == 'success' &&
       needs.deploy_web.result == 'success' &&
-      (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
+      (needs.finalize.result == 'success' || needs.finalize.result == 'skipped') &&
+      needs.preflight.outputs.product_profile == 'upstream'
     needs: [preflight, relay_public_config, release, deploy_web, finalize]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -1087,7 +1371,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
           cache: true
