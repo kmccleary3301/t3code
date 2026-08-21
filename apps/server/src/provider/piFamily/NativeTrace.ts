@@ -999,6 +999,14 @@ export interface NativeTraceRedactionOptions {
  */
 const NATIVE_TRACE_CONTAINER_KEYS = new Set(["payload", "task"]);
 
+/**
+ * Correlation identifier keys collide with the sensitive `task` pattern but
+ * carry opaque identity, not secret content. Their string values survive
+ * key-based redaction (leak scan still applies) so id normalization can bind
+ * requests to their targets consistently across streams.
+ */
+const NATIVE_TRACE_IDENTITY_KEYS = new Set(["taskid", "subagentid"]);
+
 export interface NativeTraceRedactionResult {
   readonly value: unknown;
   readonly report: NativeTraceRedactionReport;
@@ -1080,6 +1088,12 @@ function scanNativeTraceStructuredByteValue(
   for (const [key, child] of Object.entries(record)) {
     const childPath = `${path}.${key}`;
     if (keyMatches(key, [DEFAULT_BYTE_SENSITIVE_KEY])) {
+      // Correlation identifiers are opaque identity: validate their string
+      // values with the leak scan instead of rejecting the key wholesale.
+      if (NATIVE_TRACE_IDENTITY_KEYS.has(key.toLowerCase()) && typeof child === "string") {
+        if (scanNativeTraceLeaks(child).length > 0) findings.add(`sensitive-key:${childPath}`);
+        continue;
+      }
       // Protocol containers carry structurally redacted task records; validate
       // their inner fields instead of rejecting the container wholesale.
       if (
@@ -1203,6 +1217,13 @@ export function redactNativeTrace(
   const redactedPaths: string[] = [];
   const unknownPaths: string[] = [];
   const redact = (input: unknown, key: string, path: string): unknown => {
+    if (key && NATIVE_TRACE_IDENTITY_KEYS.has(key.toLowerCase()) && typeof input === "string") {
+      if (scanNativeTraceLeaks(input, leakPatterns).length > 0) {
+        redactedPaths.push(path);
+        return placeholder(input, preserve);
+      }
+      return input;
+    }
     if (key && keyMatches(key, sensitiveKeys)) {
       const container = asRecord(input);
       // Protocol containers such as OMP `payload` wrap task records whose

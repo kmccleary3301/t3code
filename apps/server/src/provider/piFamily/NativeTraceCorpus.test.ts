@@ -321,11 +321,34 @@ describe("checked-in native trace corpus", () => {
           ),
           [...(expected.subagentLifecycleStatuses ?? [])],
         );
+        const cancelRequests = fixture.capture.chunks
+          .filter((chunk) => chunk.stream === "stdin")
+          .flatMap((chunk) =>
+            Buffer.from(chunk.bytesBase64, "base64")
+              .toString("utf8")
+              .split("\n")
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as Record<string, unknown>)
+              .filter((request) => request.type === "cancel_task"),
+          );
+        assert.lengthOf(cancelRequests, 1);
+        const cancelRequest = cancelRequests[0];
+        if (!cancelRequest) throw new TypeError("Expected one cancel_task stdin request");
+        const startedLifecycle = lifecycleFrames.find(
+          (frame) =>
+            typeof frame.payload === "object" &&
+            frame.payload !== null &&
+            (frame.payload as { readonly status?: unknown }).status === "started",
+        );
+        if (!startedLifecycle || typeof startedLifecycle.payload !== "object")
+          throw new TypeError("Expected a started subagent lifecycle payload");
+        assert.equal(cancelRequest.taskId, startedLifecycle.payload.id);
         const cancelResponse = frames.find(
           (frame) => frame.type === "response" && frame.command === "cancel_task",
         );
         assert.isDefined(cancelResponse);
         assert.isTrue(cancelResponse.success);
+        assert.equal(cancelResponse.id, cancelRequest.id);
         const snapshots = projector.snapshotTasks();
         assert.lengthOf(snapshots, 1);
         assert.equal(projector.diagnostics().activeTasks, 0);

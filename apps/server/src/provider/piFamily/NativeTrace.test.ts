@@ -501,6 +501,53 @@ describe("NativeTrace", () => {
     );
   });
 
+  it("preserves correlation identifiers while still redacting leak-bearing ones", () => {
+    const recorder = new BoundedNativeTraceRecorder({
+      maxBytes: 512,
+      maxEvents: 4,
+      maxDurationMs: 1000,
+      nowMs: () => 0,
+    });
+    recorder.recordBytes(
+      "stdout",
+      encoder.encode(
+        `${JSON.stringify({
+          type: "subagent_lifecycle",
+          payload: { id: "SleepOnce", status: "started" },
+        })}\n`,
+      ),
+    );
+    recorder.recordBytes(
+      "stdin",
+      encoder.encode(`${JSON.stringify({ type: "cancel_task", taskId: "SleepOnce" })}\n`),
+    );
+    recorder.recordExit(0, null);
+    const fixture = syntheticFixture(
+      "synthetic-native-identity-correlation",
+      recorder.capture().capture,
+    );
+    const stdinLine = fixture.capture.chunks
+      .filter((chunk) => chunk.stream === "stdin")
+      .map((chunk) => Buffer.from(chunk.bytesBase64, "base64").toString("utf8"))
+      .join("");
+    assert.equal(JSON.parse(stdinLine.trim()).taskId, "SleepOnce");
+    assert.throws(() => {
+      const leakRecorder = new BoundedNativeTraceRecorder({
+        maxBytes: 512,
+        maxEvents: 2,
+        maxDurationMs: 1000,
+        nowMs: () => 0,
+      });
+      leakRecorder.recordBytes(
+        "stdin",
+        encoder.encode(
+          `${JSON.stringify({ type: "cancel_task", taskId: "/Users/secret/agent" })}\n`,
+        ),
+      );
+      syntheticFixture("synthetic-native-identity-leak", leakRecorder.capture().capture);
+    }, NativeTraceRedactionError);
+  });
+
   it("rejects malformed captured JSONL instead of treating it as publication-safe", () => {
     const recorder = new BoundedNativeTraceRecorder({
       maxBytes: 128,
