@@ -1,4 +1,5 @@
 import * as NodeBuffer from "node:buffer";
+import * as Schema from "effect/Schema";
 import { assert, describe, it } from "vite-plus/test";
 
 import ompRootFixture from "./testFixtures/native/omp-17.3.7-root.json" with { type: "json" };
@@ -15,7 +16,10 @@ import { OmpChunkAssembler } from "./OmpChunkAssembler.ts";
 import { parseJsonObject, type RpcEnvelope } from "./protocol.ts";
 import { StrictJsonlDecoder } from "./StrictJsonlDecoder.ts";
 
-const fixtures = validateNativeTraceCorpus([piFixture, ompFixture, piRootFixture, ompRootFixture]);
+const committedFixtures = [piFixture, ompFixture, piRootFixture, ompRootFixture] as const;
+const fixtures = validateNativeTraceCorpus(committedFixtures);
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const MAX_COMMITTED_FIXTURE_BYTES = 1024 * 1024;
 const reviewedProvenance: Readonly<
   Record<
     string,
@@ -77,6 +81,15 @@ function replayStdout(fixture: NativeTraceCaptureEnvelope): ReadonlyArray<RpcEnv
 }
 
 describe("checked-in native trace corpus", () => {
+  it("keeps every committed fixture below the review ceiling", () => {
+    for (const fixture of committedFixtures) {
+      assert.isAtMost(
+        new TextEncoder().encode(encodeUnknownJson(fixture)).byteLength,
+        MAX_COMMITTED_FIXTURE_BYTES,
+      );
+    }
+  });
+
   it("accepts only reviewed, exact-binary Pi and OMP captures", () => {
     assert.deepEqual(
       fixtures.map((fixture) => fixture.manifest?.runtime.kind),

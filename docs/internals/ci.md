@@ -103,6 +103,39 @@ capabilities. It does not use a hidden version heuristic.
   unavailable for Pi unless its capability response explicitly provides them;
   OMP may provide them, but CI only proves the adapter fixture behavior.
 
+### Native trace replay layers and fixture governance
+
+Native trace evidence has one owner and one oracle at each boundary. A test must enter at the
+lowest layer named by its claim; parsed-object fixtures cannot prove byte framing or assembly.
+
+| Layer                                          | Owner                                             | Oracle                                                                                        |
+| ---------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Raw stdin/stdout/stderr bytes and process exit | `NativeAdapter` plus `BoundedNativeTraceRecorder` | Ordered chunk hashes, byte lengths, stream names, and one terminal exit record                |
+| Decoded JSONL envelopes                        | `StrictJsonlDecoder`                              | Explicit frame types, request IDs, malformed/truncated outcome, and decoder completion        |
+| Reassembled OMP messages                       | `OmpChunkAssembler`                               | Message identity, chunk order/count, complete payload hash, and zero pending messages         |
+| Normalized adapter events                      | `PiFamilyEventProjector`                          | Manifest-owned `adapterEventTypes` and terminal adapter status                                |
+| Canonical provider events                      | `NativeAdapter.eventForProjection`                | Manifest-owned canonical event sequence, lifecycle, output marker, and terminal status        |
+| Persisted canonical state                      | Provider runtime ingestion and projectors         | Independently declared state/task/checkpoint invariants and state hashes in their owner tests |
+| HTTP bootstrap snapshot                        | Server read-model/bootstrap services              | Existing bootstrap contract and transfer-budget fixtures                                      |
+| WebSocket update stream                        | Server update transport and client runtime        | Existing ordered update, resume, deduplication, and convergence fixtures                      |
+
+Raw captures are private temporary artifacts with mode-0700 directories and mode-0600 files. They
+must never enter git. A committed fixture is a scrubbed structural replay subject, not evidence of
+the model's real output. It must declare runtime/version/binary provenance, normalization and
+redaction schema versions, reviewed redaction status, capture mode, expected outcome hash, and
+whether it is generated or synthetic. `validateNativeTraceCorpus` rejects duplicate IDs, missing or
+inconsistent provenance, bad chunk/hash/length/sequence data, unsupported schemas, truncation,
+unreviewed redaction, leak findings, and expected outcomes bound to another fixture.
+
+The committed corpus is intentionally minimal: handshake fixtures are **minimal** and root-turn
+fixtures are **typical**. Stress and error behavior stays generated in focused tests until a
+privacy-safe exact capture is needed; generated cases must never be relabeled as native captures.
+Every committed fixture is capped at 1 MiB by `NativeTraceCorpus.test.ts`. Replace a fixture only
+when its pinned binary/protocol changes or the old case no longer covers its declared behavior.
+Replacement requires fresh provenance, deterministic scrub/review, hashes, focused replay, and
+independent review. A source protocol, projector contract, normalization schema, or redaction
+schema change invalidates the affected fixture review even when its JSON still parses.
+
 ### Release artifact targets
 
 The tag/scheduled release workflow currently builds these targets:
