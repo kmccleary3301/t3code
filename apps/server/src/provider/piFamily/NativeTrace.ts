@@ -1,5 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodePerfHooks from "node:perf_hooks";
+import { OmpChunkAssembler } from "./OmpChunkAssembler.ts";
 
 /** The capture envelope is deliberately independent of provider orchestration. */
 export const NATIVE_TRACE_SCHEMA_VERSION = 1 as const;
@@ -641,6 +642,8 @@ export function validateNativeTraceFixture(fixtureValue: unknown): NativeTraceCa
     }
     totalBytes += byteLength >= 0 ? byteLength : 0;
   }
+  const runtimeValue = asRecord(asRecord(envelope.manifest)?.runtime)?.kind;
+  const runtimeKind = typeof runtimeValue === "string" ? runtimeValue : undefined;
   const bytePartsByStream = new Map<NativeTraceStream, Uint8Array[]>();
   for (const chunk of [...decodedChunks].sort((left, right) => left.sequence - right.sequence)) {
     const streamParts = bytePartsByStream.get(chunk.stream) ?? [];
@@ -651,7 +654,7 @@ export function validateNativeTraceFixture(fixtureValue: unknown): NativeTraceCa
     const bytes = concatNativeTraceBytes(parts);
     const findings = new Set<string>();
     for (const leak of scanNativeTraceLeaks(new TextDecoder().decode(bytes))) findings.add(leak);
-    scanNativeTraceJsonlBytes(stream, bytes, findings);
+    scanNativeTraceJsonlBytes(stream, bytes, findings, runtimeKind);
     if (findings.size > 0) issues.push(`fixture.capture.${stream}: sensitive byte patterns remain`);
   }
   let previousExitSequence = -1;
@@ -975,7 +978,7 @@ const DEFAULT_LEAK_PATTERNS: readonly RegExp[] = [
   /(?:\/private\/(?:var|tmp)\/|\/var\/folders\/|\/tmp\/)[^\s"']+/u,
   /\bgit@[A-Za-z0-9.-]+:[^\s"']+\.git\b/u,
   /https?:\/\/[^\s/"']+:[^@\s"']+@[^\s"']+/u,
-  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/u,
+  /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}\b/u,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/u,
 ];
 
@@ -1081,6 +1084,7 @@ function scanNativeTraceJsonlBytes(
   stream: NativeTraceStream,
   bytes: Uint8Array,
   findings: Set<string>,
+  runtimeKind: string | undefined,
 ): void {
   let text: string;
   try {
@@ -1091,6 +1095,8 @@ function scanNativeTraceJsonlBytes(
   }
   const lines = text.split("\n");
   if (text.endsWith("\n")) lines.pop();
+  const chunkAssembler =
+    stream === "stdout" && runtimeKind === "omp" ? new OmpChunkAssembler() : undefined;
   lines.forEach((rawLine, index) => {
     const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.length === 0) return;
@@ -1114,11 +1120,36 @@ function scanNativeTraceJsonlBytes(
       findings.add(`${stream}:invalid-envelope:${index}`);
       return;
     }
-    scanNativeTraceStructuredByteValue(frame, `${stream}[${index}]`, findings);
+    const record = frame as Record<string, unknown>;
+    if (chunkAssembler && record.type === "rpc_chunk") {
+      const { data: _encodedPayload, ...metadata } = record;
+      scanNativeTraceStructuredByteValue(metadata, `${stream}[${index}]`, findings);
+      try {
+        const assembled = chunkAssembler.accept(record);
+        if (assembled) {
+          for (const leak of scanNativeTraceLeaks(assembled))
+            findings.add(`${stream}[${index}].assembled:${leak}`);
+          scanNativeTraceStructuredByteValue(assembled, `${stream}[${index}].assembled`, findings);
+        }
+      } catch {
+        findings.add(`${stream}:invalid-rpc-chunk:${index}`);
+        chunkAssembler.clear();
+      }
+      return;
+    }
+    if (chunkAssembler?.pendingMessageCount) {
+      findings.add(`${stream}:rpc-chunk-interrupted:${index}`);
+      chunkAssembler.clear();
+    }
+    scanNativeTraceStructuredByteValue(record, `${stream}[${index}]`, findings);
   });
+  if (chunkAssembler?.pendingMessageCount) findings.add(`${stream}:rpc-chunk-incomplete`);
 }
 
-function scanNativeTraceCaptureByteLeaks(capture: NativeTraceCapture): readonly string[] {
+function scanNativeTraceCaptureByteLeaks(
+  capture: NativeTraceCapture,
+  runtimeKind: string,
+): readonly string[] {
   const bytePartsByStream = new Map<NativeTraceStream, Uint8Array[]>();
   const findings = new Set<string>();
   for (const chunk of [...capture.chunks].sort((left, right) => left.sequence - right.sequence)) {
@@ -1136,7 +1167,7 @@ function scanNativeTraceCaptureByteLeaks(capture: NativeTraceCapture): readonly 
     for (const finding of scanNativeTraceLeaks(new TextDecoder().decode(bytes))) {
       findings.add(`${stream}:${finding}`);
     }
-    scanNativeTraceJsonlBytes(stream, bytes, findings);
+    scanNativeTraceJsonlBytes(stream, bytes, findings, runtimeKind);
   }
   return [...findings];
 }
@@ -1328,7 +1359,7 @@ export function createNativeTraceManifest(input: {
       `Native trace fixture still contains sensitive patterns: ${subjectLeaks.join(", ")}`,
     );
   }
-  const captureByteLeaks = scanNativeTraceCaptureByteLeaks(input.capture);
+  const captureByteLeaks = scanNativeTraceCaptureByteLeaks(input.capture, input.runtime.kind);
   if (captureByteLeaks.length > 0) {
     throw new NativeTraceRedactionError(
       `Native trace capture bytes are not publication-safe: ${captureByteLeaks.join(", ")}`,

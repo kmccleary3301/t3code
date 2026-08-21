@@ -46,10 +46,52 @@ function syntheticCapture(): NativeTraceCapture {
   recorder.recordExit(0, null);
   return recorder.toEnvelope().capture;
 }
+function syntheticChunkedCapture(
+  data: string,
+  incomplete = false,
+  additionalFields: Readonly<Record<string, unknown>> = {},
+): NativeTraceCapture {
+  const logical = encoder.encode(
+    JSON.stringify({
+      type: "response",
+      command: "get_available_models",
+      success: true,
+      ...additionalFields,
+      data,
+    }),
+  );
+  const split = Math.ceil(logical.byteLength / 2);
+  const payloads = [logical.subarray(0, split), logical.subarray(split)];
+  const recorder = new BoundedNativeTraceRecorder({
+    maxBytes: 4096,
+    maxEvents: 4,
+    maxDurationMs: 1000,
+    nowMs: () => 0,
+  });
+  for (const [index, payload] of payloads.entries()) {
+    if (incomplete && index === payloads.length - 1) break;
+    recorder.recordBytes(
+      "stdout",
+      encoder.encode(
+        `${JSON.stringify({
+          type: "rpc_chunk",
+          chunkId: "rpc-1",
+          index,
+          count: payloads.length,
+          byteLength: logical.byteLength,
+          data: NodeBuffer.Buffer.from(payload).toString("base64"),
+        })}\n`,
+      ),
+    );
+  }
+  recorder.recordExit(0, null);
+  return recorder.capture().capture;
+}
 
 function syntheticFixture(
   id = "synthetic-native-1",
   capture = syntheticCapture(),
+  runtimeKind: "pi" | "omp" = "pi",
 ): ReturnType<typeof createNativeTraceFixture> {
   const fixture = { id, label: "synthetic non-native trace", synthetic: true };
   const provenance = {
@@ -57,7 +99,7 @@ function syntheticFixture(
     sourceSha256: sha256NativeTraceValue("synthetic-source"),
   };
   const runtime = {
-    kind: "pi",
+    kind: runtimeKind,
     version: "synthetic-runtime",
     revision: "synthetic-revision",
   };
@@ -275,6 +317,7 @@ describe("NativeTrace", () => {
       "git@example.test:private/repository.git",
       "/private/var/folders/secret/capture.jsonl",
       "https://user:password@example.test/private.git",
+      "owner@example.test",
     ]) {
       assert.isAbove(scanNativeTraceLeaks({ status: value }).length, 0, value);
     }
@@ -347,6 +390,61 @@ describe("NativeTrace", () => {
       );
     },
   );
+  it("scans reassembled OMP chunks while leaving Pi unknown events in their native dialect", () => {
+    const fixture = syntheticFixture(
+      "synthetic-native-safe-rpc-chunks",
+      syntheticChunkedCapture("[REDACTED]"),
+      "omp",
+    );
+    assert.equal(fixture.capture.chunks.length, 2);
+
+    const piRecorder = new BoundedNativeTraceRecorder({
+      maxBytes: 256,
+      maxEvents: 2,
+      maxDurationMs: 1000,
+      nowMs: () => 0,
+    });
+    piRecorder.recordBytes(
+      "stdout",
+      encoder.encode(`${JSON.stringify({ type: "rpc_chunk", data: "[REDACTED]" })}\n`),
+    );
+    piRecorder.recordExit(0, null);
+    assert.equal(
+      syntheticFixture("synthetic-pi-rpc-chunk-unknown-event", piRecorder.capture().capture)
+        .manifest?.runtime.kind,
+      "pi",
+    );
+  });
+
+  it("rejects sensitive values and incomplete sequences inside OMP transport chunks", () => {
+    assert.throws(
+      () =>
+        syntheticFixture(
+          "synthetic-native-rpc-chunk-leak",
+          syntheticChunkedCapture("opaque-canary"),
+          "omp",
+        ),
+      NativeTraceRedactionError,
+    );
+    assert.throws(
+      () =>
+        syntheticFixture(
+          "synthetic-native-rpc-chunk-generic-leak",
+          syntheticChunkedCapture("[REDACTED]", false, { label: "owner@example.test" }),
+          "omp",
+        ),
+      NativeTraceRedactionError,
+    );
+    assert.throws(
+      () =>
+        syntheticFixture(
+          "synthetic-native-rpc-chunk-incomplete",
+          syntheticChunkedCapture("[REDACTED]", true),
+          "omp",
+        ),
+      NativeTraceRedactionError,
+    );
+  });
 
   it("rejects malformed captured JSONL instead of treating it as publication-safe", () => {
     const recorder = new BoundedNativeTraceRecorder({
