@@ -358,10 +358,13 @@ export class PiFamilyEventProjector {
     const payload = asRecord(event.payload);
     const data = asRecord(event.data);
     const nestedTask = asRecord(payload?.task) ?? asRecord(data?.task) ?? asRecord(event.task);
+    const nestedProgress =
+      asRecord(payload?.progress) ?? asRecord(data?.progress) ?? asRecord(event.progress);
     const source: JsonRecord = {
       ...event,
       ...data,
       ...payload,
+      ...nestedProgress,
       ...nestedTask,
     };
     const id =
@@ -413,26 +416,42 @@ export class PiFamilyEventProjector {
     const cachedInputTokens = usage
       ? (asNumber(usage.cachedInputTokens) ?? asNumber(usage.cacheRead))
       : undefined;
-    const contextTokens = usage
-      ? (asNumber(usage.contextTokens) ?? asNumber(usage.context))
-      : undefined;
-    const costUsd = usage ? (asNumber(usage.costUsd) ?? asNumber(usage.cost)) : undefined;
-    const durationMs = usage ? (asNumber(usage.durationMs) ?? asNumber(usage.duration)) : undefined;
-    const toolCalls = usage ? asNumber(usage.toolCalls) : undefined;
-    const usageSnapshot = usage
-      ? {
-          ...(inputTokens === undefined ? {} : { inputTokens }),
-          ...(outputTokens === undefined ? {} : { outputTokens }),
-          ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
-          ...(contextTokens === undefined ? {} : { contextTokens }),
-          ...(costUsd === undefined ? {} : { costUsd }),
-          ...(durationMs === undefined ? {} : { durationMs }),
-          ...(toolCalls === undefined ? {} : { toolCalls }),
-        }
-      : undefined;
+    const contextTokens =
+      (usage ? (asNumber(usage.contextTokens) ?? asNumber(usage.context)) : undefined) ??
+      asNumber(source.contextTokens);
+    const costUsd =
+      (usage ? (asNumber(usage.costUsd) ?? asNumber(usage.cost)) : undefined) ??
+      asNumber(source.costUsd) ??
+      asNumber(source.cost);
+    const durationMs =
+      (usage ? (asNumber(usage.durationMs) ?? asNumber(usage.duration)) : undefined) ??
+      asNumber(source.durationMs);
+    const toolCalls = (usage ? asNumber(usage.toolCalls) : undefined) ?? asNumber(source.toolCount);
+    const usageSnapshot =
+      inputTokens !== undefined ||
+      outputTokens !== undefined ||
+      cachedInputTokens !== undefined ||
+      contextTokens !== undefined ||
+      costUsd !== undefined ||
+      durationMs !== undefined ||
+      toolCalls !== undefined
+        ? {
+            ...(inputTokens === undefined ? {} : { inputTokens }),
+            ...(outputTokens === undefined ? {} : { outputTokens }),
+            ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+            ...(contextTokens === undefined ? {} : { contextTokens }),
+            ...(costUsd === undefined ? {} : { costUsd }),
+            ...(durationMs === undefined ? {} : { durationMs }),
+            ...(toolCalls === undefined ? {} : { toolCalls }),
+          }
+        : undefined;
     const nextUsage = usageSnapshot ?? previous?.usage;
     const role = asString(source.role) ?? asString(source.agent) ?? previous?.role;
-    const description = asString(source.description) ?? previous?.description;
+    const description =
+      asString(source.description) ??
+      asString(source.assignment) ??
+      asString(source.task) ??
+      previous?.description;
     const currentActivity =
       asString(source.currentActivity) ?? asString(source.activity) ?? previous?.currentActivity;
     const lastToolName =
@@ -463,8 +482,54 @@ export class PiFamilyEventProjector {
         ...(agentIndex === undefined ? {} : { agentIndex }),
       } as NonNullable<NativeTaskSnapshot["workflow"]>;
     })();
-    const runHandles =
-      asRecord(source.runHandles) ?? asRecord(source.execution) ?? previous?.runHandles;
+    const explicitRunHandles = asRecord(source.runHandles) ?? asRecord(source.execution);
+    const runHandles = (() => {
+      const sessionFile =
+        asString(source.sessionFile) ??
+        asString(explicitRunHandles?.sessionFile) ??
+        previous?.runHandles?.sessionFile;
+      const outputPath =
+        asString(source.outputPath) ??
+        asString(explicitRunHandles?.outputPath) ??
+        previous?.runHandles?.outputPath;
+      const patchPath =
+        asString(source.patchPath) ??
+        asString(explicitRunHandles?.patchPath) ??
+        previous?.runHandles?.patchPath;
+      const worktreePath =
+        asString(source.worktreePath) ??
+        asString(explicitRunHandles?.worktreePath) ??
+        previous?.runHandles?.worktreePath;
+      const branch =
+        asString(source.branchName) ??
+        asString(source.branch) ??
+        asString(explicitRunHandles?.branch) ??
+        previous?.runHandles?.branch;
+      const jobId =
+        asString(source.jobId) ??
+        asString(explicitRunHandles?.jobId) ??
+        previous?.runHandles?.jobId;
+      if (
+        explicitRunHandles === undefined &&
+        sessionFile === undefined &&
+        outputPath === undefined &&
+        patchPath === undefined &&
+        worktreePath === undefined &&
+        branch === undefined &&
+        jobId === undefined
+      )
+        return previous?.runHandles;
+      return {
+        ...previous?.runHandles,
+        ...explicitRunHandles,
+        ...(sessionFile === undefined ? {} : { sessionFile }),
+        ...(outputPath === undefined ? {} : { outputPath }),
+        ...(patchPath === undefined ? {} : { patchPath }),
+        ...(worktreePath === undefined ? {} : { worktreePath }),
+        ...(branch === undefined ? {} : { branch }),
+        ...(jobId === undefined ? {} : { jobId }),
+      };
+    })();
     const summary = asString(source.summary) ?? asString(source.result) ?? previous?.summary;
     const error =
       asString(source.error) ?? asString(asRecord(source.error)?.message) ?? previous?.error;

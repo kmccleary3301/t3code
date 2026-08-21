@@ -323,6 +323,39 @@ describe("NativeTrace", () => {
     }
   });
 
+  it("structurally redacts protocol payload containers while wholesale redacting other sensitive objects", () => {
+    const payloadResult = redactNativeTrace(
+      {
+        type: "subagent_lifecycle",
+        payload: {
+          id: "child-1",
+          status: "running",
+          task: "delegated prompt text",
+          sessionFile: "/private/var/folders/secret/session.jsonl",
+        },
+      },
+      { reviewed: true, allowedKeys: ["type", "payload", "id", "status", "task", "sessionFile"] },
+    );
+    assert.deepEqual(payloadResult.value, {
+      type: "subagent_lifecycle",
+      payload: {
+        id: "child-1",
+        status: "running",
+        task: "[REDACTED]",
+        sessionFile: "[REDACTED]",
+      },
+    });
+    assert.deepEqual(payloadResult.report.redactedPaths, ["payload.sessionFile", "payload.task"]);
+    const argsResult = redactNativeTrace(
+      { type: "tool_execution_start", args: { command: "list", count: 2 } },
+      { reviewed: true, allowedKeys: ["type", "args", "command", "count"] },
+    );
+    assert.deepEqual(argsResult.value, {
+      type: "tool_execution_start",
+      args: "[REDACTED]",
+    });
+  });
+
   it("requires the reviewed redaction report to cover the complete fixture subject", () => {
     const capture = syntheticCapture();
     const unrelated = redactNativeTrace({ status: "synthetic-complete" }, { reviewed: true });
@@ -442,6 +475,28 @@ describe("NativeTrace", () => {
           syntheticChunkedCapture("[REDACTED]", true),
           "omp",
         ),
+      NativeTraceRedactionError,
+    );
+  });
+  it("rejects raw prompt-bearing task fields inside captured payload bytes", () => {
+    const recorder = new BoundedNativeTraceRecorder({
+      maxBytes: 256,
+      maxEvents: 2,
+      maxDurationMs: 1000,
+      nowMs: () => 0,
+    });
+    recorder.recordBytes(
+      "stdout",
+      encoder.encode(
+        `${JSON.stringify({
+          type: "subagent_progress",
+          payload: { task: "raw delegated prompt text" },
+        })}\n`,
+      ),
+    );
+    recorder.recordExit(0, null);
+    assert.throws(
+      () => syntheticFixture("synthetic-native-payload-task-leak", recorder.capture().capture),
       NativeTraceRedactionError,
     );
   });

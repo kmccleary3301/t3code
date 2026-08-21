@@ -963,9 +963,9 @@ const DEFAULT_ALLOWED_KEYS = new Set([
   "compatibility",
 ]);
 const DEFAULT_SENSITIVE_KEY =
-  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process/i;
+  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process|task|assignment|summary|recentOutput|extractedToolData/i;
 const DEFAULT_BYTE_SENSITIVE_KEY =
-  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|command|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process/i;
+  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|command|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process|task|assignment|summary|recentOutput|extractedToolData/i;
 const DEFAULT_LEAK_PATTERNS: readonly RegExp[] = [
   /\bbearer\s+[A-Za-z0-9._~+\-/=]{8,}/iu,
   /\b(?:authorization|auth|cookie|credential|password|secret|token|api[-_ ]?key)["']?\s*[:=]\s*["']?(?!\[REDACTED\])[^\s"',;}\]]+/iu,
@@ -990,6 +990,14 @@ export interface NativeTraceRedactionOptions {
   readonly reviewed?: boolean;
   readonly failClosed?: boolean;
 }
+
+/**
+ * Sensitive-keyed values are wholesale redacted, except these protocol
+ * containers whose record shape carries durable task identity. Their inner
+ * fields still receive full key-based and leak-scan redaction, while
+ * prompt-bearing scalar values under the same keys stay wholesale redacted.
+ */
+const NATIVE_TRACE_CONTAINER_KEYS = new Set(["payload", "task"]);
 
 export interface NativeTraceRedactionResult {
   readonly value: unknown;
@@ -1072,6 +1080,17 @@ function scanNativeTraceStructuredByteValue(
   for (const [key, child] of Object.entries(record)) {
     const childPath = `${path}.${key}`;
     if (keyMatches(key, [DEFAULT_BYTE_SENSITIVE_KEY])) {
+      // Protocol containers carry structurally redacted task records; validate
+      // their inner fields instead of rejecting the container wholesale.
+      if (
+        NATIVE_TRACE_CONTAINER_KEYS.has(key.toLowerCase()) &&
+        typeof child === "object" &&
+        child !== null &&
+        !Array.isArray(child)
+      ) {
+        scanNativeTraceStructuredByteValue(child, childPath, findings);
+        continue;
+      }
       if (!isPublicationSafeSensitiveValue(key, child, record))
         findings.add(`sensitive-key:${childPath}`);
       continue;
@@ -1185,6 +1204,13 @@ export function redactNativeTrace(
   const unknownPaths: string[] = [];
   const redact = (input: unknown, key: string, path: string): unknown => {
     if (key && keyMatches(key, sensitiveKeys)) {
+      const container = asRecord(input);
+      // Protocol containers such as OMP `payload` wrap task records whose
+      // identity/status/hierarchy must survive redaction. Their sensitive
+      // inner fields are still redacted by key and by leak scan below.
+      if (container && NATIVE_TRACE_CONTAINER_KEYS.has(key)) {
+        return redact(container, "", path);
+      }
       redactedPaths.push(path);
       return typeof input === "string" ? placeholder(input, preserve) : "[REDACTED]";
     }

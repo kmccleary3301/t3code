@@ -271,6 +271,101 @@ describe("Pi/OMP native event projection", () => {
     assert.deepEqual(snapshot?.runHandles, { jobId: "job-1", outputPath: "/tmp/out" });
   });
 
+  it("correlates actual OMP nested progress frames with one durable subagent", () => {
+    const projector = new PiFamilyEventProjector("omp");
+    const started = projector.project({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "child",
+        index: 0,
+        agent: "sonic",
+        agentSource: "built-in",
+        status: "running",
+        parentToolCallId: "spawn-1",
+        sessionFile: "[normalized:path:1]",
+        detached: false,
+      },
+    });
+    const progress = projector.project({
+      type: "subagent_progress",
+      payload: {
+        index: 0,
+        agent: "sonic",
+        agentSource: "built-in",
+        assignment: "Return the marker",
+        task: "Return the marker",
+        parentToolCallId: "spawn-1",
+        sessionFile: "[normalized:path:1]",
+        detached: false,
+        progress: {
+          id: "child",
+          index: 0,
+          agent: "sonic",
+          agentSource: "built-in",
+          assignment: "Return the marker",
+          task: "Return the marker",
+          status: "running",
+          resolvedModel: "openai-codex/gpt-5.4",
+          contextTokens: 123,
+          cost: 0.01,
+          durationMs: 42,
+          toolCount: 2,
+        },
+      },
+    });
+    const nestedEvent = projector.project({
+      type: "subagent_event",
+      payload: { id: "child", event: { type: "message_update" } },
+    });
+    const completed = projector.project({
+      type: "subagent_progress",
+      payload: {
+        index: 0,
+        agent: "sonic",
+        agentSource: "built-in",
+        parentToolCallId: "spawn-1",
+        sessionFile: "[normalized:path:1]",
+        progress: {
+          id: "child",
+          index: 0,
+          agent: "sonic",
+          agentSource: "built-in",
+          status: "completed",
+          resolvedModel: "openai-codex/gpt-5.4",
+          contextTokens: 144,
+          cost: 0.02,
+          durationMs: 84,
+          toolCount: 2,
+        },
+      },
+    });
+
+    assert.equal(started[0]?.kind, "task.started");
+    assert.equal(progress[0]?.kind, "task.progress");
+    assert.equal(nestedEvent[0]?.kind, "task.progress");
+    assert.equal(completed[0]?.kind, "task.completed");
+    assert.lengthOf(projector.snapshotTasks(), 1);
+    assert.equal(projector.diagnostics().activeTasks, 0);
+    assert.deepEqual(projector.snapshotTasks()[0], {
+      id: "child",
+      kind: "subagent",
+      title: "Return the marker",
+      status: "completed",
+      parentToolCallId: "spawn-1",
+      role: "sonic",
+      description: "Return the marker",
+      model: "openai-codex/gpt-5.4",
+      usage: {
+        contextTokens: 144,
+        costUsd: 0.02,
+        durationMs: 84,
+        toolCalls: 2,
+      },
+      runHandles: { sessionFile: "[normalized:path:1]" },
+      detached: false,
+    });
+  });
+
   it("holds parent settlement until every child is terminal", () => {
     const projector = new PiFamilyEventProjector("omp");
     projector.project({

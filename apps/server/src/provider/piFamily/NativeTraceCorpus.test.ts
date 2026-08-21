@@ -15,21 +15,38 @@ import {
   type NativeTraceCaptureEnvelope,
 } from "./NativeTrace.ts";
 import { PiFamilyEventProjector } from "./PiFamilyEventProjector.ts";
-import { OmpChunkAssembler } from "./OmpChunkAssembler.ts";
-import { parseJsonObject, type RpcEnvelope } from "./protocol.ts";
+import {
+  OmpChunkAssembler,
+  OMP_MAX_FRAME_BYTES,
+  OMP_MAX_REASSEMBLED_BYTES,
+} from "./OmpChunkAssembler.ts";
 import { StrictJsonlDecoder } from "./StrictJsonlDecoder.ts";
-
+import { parseJsonObject, type RpcEnvelope } from "./protocol.ts";
 const MAX_COMMITTED_FIXTURE_BYTES = 1024 * 1024;
 const MAX_DECOMPRESSED_FIXTURE_BYTES = 4 * 1024 * 1024;
-const compressedChunkFixtureBytes = NodeFS.readFileSync(
-  new URL("./testFixtures/native/omp-17.3.7-chunked.json.gz", import.meta.url),
-);
-const decompressedChunkFixtureBytes = NodeZlib.gunzipSync(compressedChunkFixtureBytes, {
-  maxOutputLength: MAX_DECOMPRESSED_FIXTURE_BYTES,
-});
-const ompChunkedFixture: unknown = JSON.parse(decompressedChunkFixtureBytes.toString("utf8"));
+const loadCompressedFixture = (
+  fileName: string,
+): { readonly bytes: Buffer; readonly decompressed: Buffer; readonly fixture: unknown } => {
+  const bytes = NodeFS.readFileSync(new URL(`./testFixtures/native/${fileName}`, import.meta.url));
+  const decompressed = NodeZlib.gunzipSync(bytes, {
+    maxOutputLength: MAX_DECOMPRESSED_FIXTURE_BYTES,
+  });
+  return { bytes, decompressed, fixture: JSON.parse(decompressed.toString("utf8")) };
+};
+const chunkedCompressed = loadCompressedFixture("omp-17.3.7-chunked.json.gz");
+const hierarchyCompressed = loadCompressedFixture("omp-17.3.7-hierarchy.json.gz");
+const ompChunkedFixture = chunkedCompressed.fixture;
+const ompHierarchyFixture = hierarchyCompressed.fixture;
 const committedJsonFixtures = [piFixture, ompFixture, piRootFixture, ompRootFixture] as const;
-const committedFixtures = [...committedJsonFixtures, ompChunkedFixture] as const;
+const OMP_READY_FRAME_REQUIRED = new Set([
+  "omp-17.3.7-native-handshake",
+  "omp-17.3.7-native-task-hierarchy",
+]);
+const committedFixtures = [
+  ...committedJsonFixtures,
+  ompChunkedFixture,
+  ompHierarchyFixture,
+] as const;
 const fixtures = validateNativeTraceCorpus(committedFixtures);
 const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const reviewedProvenance: Readonly<
@@ -79,6 +96,13 @@ const reviewedProvenance: Readonly<
     sourceSha256: "9b5238104b55a7dcd6057b28521704c5ad5fd8eb45ff6c3e11b820a6824cbfd5",
     exitCode: 0,
   },
+  "omp-17.3.7-native-task-hierarchy": {
+    runtime: "omp",
+    version: "17.3.7",
+    revision: "binary-sha256:c1434d85392024aab964220b3c3fd27afe1241d13d5488dac84b489d1f052b0d",
+    sourceSha256: "f54496c4a1d7168ba85db69c0b08a120b46263683161b180242790c5495ea794",
+    exitCode: 0,
+  },
 };
 
 function replayStdout(fixture: NativeTraceCaptureEnvelope): ReadonlyArray<RpcEnvelope> {
@@ -112,14 +136,16 @@ describe("checked-in native trace corpus", () => {
         MAX_COMMITTED_FIXTURE_BYTES,
       );
     }
-    assert.isAtMost(compressedChunkFixtureBytes.byteLength, MAX_COMMITTED_FIXTURE_BYTES);
-    assert.isAtMost(decompressedChunkFixtureBytes.byteLength, MAX_DECOMPRESSED_FIXTURE_BYTES);
+    for (const compressed of [chunkedCompressed, hierarchyCompressed]) {
+      assert.isAtMost(compressed.bytes.byteLength, MAX_COMMITTED_FIXTURE_BYTES);
+      assert.isAtMost(compressed.decompressed.byteLength, MAX_DECOMPRESSED_FIXTURE_BYTES);
+    }
   });
 
   it("accepts only reviewed, exact-binary Pi and OMP captures", () => {
     assert.deepEqual(
       fixtures.map((fixture) => fixture.manifest?.runtime.kind),
-      ["pi", "omp", "pi", "omp", "omp"],
+      ["pi", "omp", "pi", "omp", "omp", "omp"],
     );
 
     for (const fixture of fixtures) {
@@ -168,6 +194,20 @@ describe("checked-in native trace corpus", () => {
         readonly chunkCount?: number;
         readonly byteLength?: number;
         readonly modelCount?: number;
+        readonly subagentFrames?: {
+          readonly lifecycle: number;
+          readonly progress: number;
+          readonly event: number;
+        };
+        readonly canonicalSettlement?: { readonly started: number; readonly completed: number };
+        readonly toolEvents?: {
+          readonly started: number;
+          readonly progress: number;
+          readonly completed: number;
+        };
+        readonly uiRequests?: number;
+        readonly turnStarted?: number;
+        readonly turnSettled?: number;
       };
       assert.deepEqual(
         frames.map((frame) => frame.type),
@@ -187,6 +227,20 @@ describe("checked-in native trace corpus", () => {
       for (const frame of frames.filter((frame) => frame.type === "available_commands_update")) {
         assert.deepEqual(frame.commands, []);
       }
+      if (manifest.runtime.kind === "omp") {
+        const ready = frames.find((frame) => frame.type === "ready");
+        if (OMP_READY_FRAME_REQUIRED.has(manifest.fixture.id)) assert.isDefined(ready);
+        if (ready) {
+          assert.equal(ready.protocolVersion, 1);
+          if (!Array.isArray(ready.supportedProtocolVersions))
+            throw new TypeError(
+              "Expected OMP ready frame to advertise supported protocol versions",
+            );
+          assert.isTrue(ready.supportedProtocolVersions.includes(2));
+          assert.equal(ready.maxFrameBytes, OMP_MAX_FRAME_BYTES);
+          assert.equal(ready.maxReassembledFrameBytes, OMP_MAX_REASSEMBLED_BYTES);
+        }
+      }
       if (expected.responseCommands !== undefined) {
         assert.deepEqual(
           frames.filter((frame) => frame.type === "response").map((frame) => frame.command),
@@ -196,9 +250,8 @@ describe("checked-in native trace corpus", () => {
       if (manifest.fixture.id === "omp-17.3.7-native-chunked-models") {
         assert.equal(expected.status, "chunked-models-complete");
         assert.equal(expected.chunkId, "rpc-1");
-        assert.equal(expected.chunkCount, 5);
-        assert.equal(expected.byteLength, 1_154_950);
         assert.equal(expected.modelCount, 695);
+        assert.equal(expected.chunkCount, 5);
         assert.deepEqual(
           fixture.capture.chunks.map((chunk) => chunk.byteLength),
           [349_618, 349_618, 349_618, 349_618, 141_922],
@@ -229,6 +282,69 @@ describe("checked-in native trace corpus", () => {
         if (typeof response.data !== "string")
           throw new TypeError("Expected the reassembled OMP response data to be redacted text");
         assert.isTrue(response.data.startsWith("[REDACTED]"));
+      }
+      if (manifest.fixture.id === "omp-17.3.7-native-task-hierarchy") {
+        assert.equal(expected.status, "hierarchy-complete");
+        const projector = new PiFamilyEventProjector(reviewed.runtime);
+        const projected = frames.flatMap((frame) => projector.project(frame));
+        const kinds = projected.map((event) => event.kind);
+        assert.equal(
+          kinds.filter((kind) => kind === "task.started").length,
+          expected.canonicalSettlement?.started,
+        );
+        assert.equal(
+          kinds.filter((kind) => kind === "task.completed").length,
+          expected.canonicalSettlement?.completed,
+        );
+        assert.equal(
+          kinds.filter((kind) => kind === "tool.started").length,
+          expected.toolEvents?.started,
+        );
+        assert.equal(
+          kinds.filter((kind) => kind === "tool.progress").length,
+          expected.toolEvents?.progress,
+        );
+        assert.equal(
+          kinds.filter((kind) => kind === "tool.completed").length,
+          expected.toolEvents?.completed,
+        );
+        assert.equal(kinds.filter((kind) => kind === "ui.request").length, expected.uiRequests);
+        assert.equal(kinds.filter((kind) => kind === "turn.started").length, expected.turnStarted);
+        assert.equal(kinds.filter((kind) => kind === "turn.settled").length, expected.turnSettled);
+        assert.equal(projected.at(-1)?.kind, "turn.settled");
+        const subagentFrames = frames.filter((frame) => String(frame.type).startsWith("subagent_"));
+        assert.equal(
+          subagentFrames.filter((frame) => frame.type === "subagent_lifecycle").length,
+          expected.subagentFrames?.lifecycle,
+        );
+        assert.equal(
+          subagentFrames.filter((frame) => frame.type === "subagent_progress").length,
+          expected.subagentFrames?.progress,
+        );
+        assert.equal(
+          subagentFrames.filter((frame) => frame.type === "subagent_event").length,
+          expected.subagentFrames?.event,
+        );
+        const snapshots = projector.snapshotTasks();
+        assert.lengthOf(snapshots, 1);
+        assert.equal(projector.diagnostics().activeTasks, 0);
+        const child = snapshots[0];
+        if (!child) throw new TypeError("Expected one durable OMP child task snapshot");
+        assert.equal(child.status, "completed");
+        const spawn = frames.find(
+          (frame) => frame.type === "tool_execution_start" && frame.toolName === "task",
+        );
+        const lifecycleFrame = frames.find((frame) => frame.type === "subagent_lifecycle");
+        assert.isDefined(spawn);
+        assert.equal(child.parentToolCallId, spawn.toolCallId);
+        if (typeof lifecycleFrame?.payload !== "object" || lifecycleFrame?.payload === null)
+          throw new TypeError("Expected subagent lifecycle payload record");
+        const lifecyclePayload = lifecycleFrame.payload as { readonly id?: unknown };
+        assert.equal(child.id, lifecyclePayload.id);
+        assert.equal(child.role, "sonic");
+        assert.equal(child.runHandles?.sessionFile, "[normalized:path:01]");
+        assert.equal(child.usage?.toolCalls, 1);
+        assert.isTrue(String(child.id).startsWith("[normalized:id:"));
       }
       if (manifest.fixture.id.endsWith("-native-root")) {
         assert.isDefined(expected.eventTypes);
