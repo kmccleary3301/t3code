@@ -104,11 +104,13 @@ interface NativeSession {
   readonly stdoutDrained: Deferred.Deferred<void, never>;
   readonly stderrDrained: Deferred.Deferred<void, never>;
   exitRecorded: boolean;
+  traceInvalidated: boolean;
   traceFinalized: boolean;
+  startupComplete: boolean;
   stopped: boolean;
   nativeSessionId?: string;
   capabilities: RuntimeCapabilities;
-  stderrText: string;
+  stderrBytes: Uint8Array;
   readonly eventOccurrenceBuckets: Float64Array;
 }
 
@@ -123,6 +125,23 @@ const decodeText = (value: unknown): string =>
     : value instanceof Uint8Array
       ? new TextDecoder().decode(value)
       : String(value);
+
+function appendBoundedUtf8Tail(
+  current: Uint8Array,
+  chunk: Uint8Array,
+  maxBytes: number,
+): Uint8Array {
+  if (maxBytes <= 0) return new Uint8Array();
+  const currentBytesToKeep = Math.max(0, maxBytes - chunk.byteLength);
+  const currentTail = current.subarray(Math.max(0, current.byteLength - currentBytesToKeep));
+  const chunkTail = chunk.subarray(Math.max(0, chunk.byteLength - maxBytes));
+  const combined = new Uint8Array(currentTail.byteLength + chunkTail.byteLength);
+  combined.set(currentTail);
+  combined.set(chunkTail, currentTail.byteLength);
+  let start = Math.max(0, combined.byteLength - maxBytes);
+  while (start < combined.byteLength && (combined[start]! & 0xc0) === 0x80) start += 1;
+  return combined.slice(start);
+}
 
 let idCounter = 0;
 
@@ -240,7 +259,7 @@ const MAX_PERSISTED_NATIVE_EVENT_DEPTH = 5;
 const MAX_PERSISTED_NATIVE_EVENT_ENTRIES = 64;
 const MAX_PERSISTED_NATIVE_EVENT_STRING = 512;
 const REDACTED_NATIVE_EVENT_KEY =
-  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|content|text|message|delta|args|result|data|payload/i;
+  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|command|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process/i;
 
 function redactNativeEventValue(value: unknown, key: string, depth: number): unknown {
   if (REDACTED_NATIVE_EVENT_KEY.test(key)) return "[redacted]";
@@ -467,7 +486,7 @@ function eventForProjection(
         ...base,
         type: "session.exited",
         payload: {
-          ...(projected.stderr ? { reason: projected.stderr } : {}),
+          ...(projected.stderr ? { reason: "Native runtime emitted diagnostics on stderr." } : {}),
           exitKind: projected.code === 0 ? "graceful" : "error",
           recoverable: false,
         },
@@ -867,7 +886,10 @@ export const makePiFamilyAdapter = (
       const traceSink = session.traceSink;
       if (traceSink === undefined) return Effect.void;
       return Effect.try({
-        try: () => traceSink.recordBytes(stream, new Uint8Array(bytes)),
+        try: () => {
+          if (session.traceInvalidated || session.traceFinalized) return;
+          traceSink.recordBytes(stream, new Uint8Array(bytes));
+        },
         catch: () =>
           processError(
             config.provider,
@@ -883,10 +905,13 @@ export const makePiFamilyAdapter = (
       signal: string | null,
     ): Effect.Effect<void, ProviderAdapterProcessError> => {
       const traceSink = session.traceSink;
-      if (traceSink === undefined || session.exitRecorded) return Effect.void;
-      session.exitRecorded = true;
+      if (traceSink === undefined) return Effect.void;
       return Effect.try({
-        try: () => traceSink.recordExit(code, signal),
+        try: () => {
+          if (session.traceInvalidated || session.traceFinalized || session.exitRecorded) return;
+          session.exitRecorded = true;
+          traceSink.recordExit(code, signal);
+        },
         catch: () =>
           processError(
             config.provider,
@@ -900,7 +925,12 @@ export const makePiFamilyAdapter = (
       session: NativeSession,
     ): Effect.Effect<void, ProviderAdapterProcessError> => {
       const traceSink = session.traceSink;
-      if (traceSink === undefined || traceSink.finalize === undefined || session.traceFinalized) {
+      if (
+        traceSink === undefined ||
+        traceSink.finalize === undefined ||
+        session.traceFinalized ||
+        session.traceInvalidated
+      ) {
         return Effect.void;
       }
       session.traceFinalized = true;
@@ -924,8 +954,10 @@ export const makePiFamilyAdapter = (
         error: failure,
       });
 
-    const invalidateTrace = (session: NativeSession): Effect.Effect<void> =>
-      Effect.try({
+    const invalidateTrace = (session: NativeSession): Effect.Effect<void> => {
+      if (session.traceInvalidated) return Effect.void;
+      session.traceInvalidated = true;
+      return Effect.try({
         try: () => session.traceSink?.invalidate(),
         catch: (cause) =>
           processError(
@@ -935,6 +967,7 @@ export const makePiFamilyAdapter = (
             cause,
           ),
       }).pipe(Effect.catch((failure) => reportTraceFailure(session, failure)));
+    };
 
     const awaitTraceDrain = (session: NativeSession): Effect.Effect<boolean> =>
       Effect.all([Deferred.await(session.stdoutDrained), Deferred.await(session.stderrDrained)], {
@@ -984,7 +1017,7 @@ export const makePiFamilyAdapter = (
                 signal: exitSignalFromCause(Cause.squash(observedExit.cause)),
               };
           const exitObserved = Exit.isSuccess(observedExit) || traceExit.signal !== null;
-          let captureComplete = exitObserved;
+          let captureComplete = exitObserved && !session.traceInvalidated;
           if (captureComplete && awaitDrain && !(yield* awaitTraceDrain(session))) {
             captureComplete = false;
             yield* invalidateTrace(session);
@@ -1010,12 +1043,16 @@ export const makePiFamilyAdapter = (
             );
           } else if (captureComplete) {
             yield* recordExit(session, traceExit.code, traceExit.signal).pipe(
+              Effect.catch((failure) =>
+                invalidateTrace(session).pipe(Effect.andThen(reportTraceFailure(session, failure))),
+              ),
+            );
+          }
+          if (!session.traceInvalidated) {
+            yield* finalizeTrace(session).pipe(
               Effect.catch((failure) => reportTraceFailure(session, failure)),
             );
           }
-          yield* finalizeTrace(session).pipe(
-            Effect.catch((failure) => reportTraceFailure(session, failure)),
-          );
         }
         if (closeScope) {
           yield* Effect.forkDetach(
@@ -1029,6 +1066,7 @@ export const makePiFamilyAdapter = (
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         if (session.stopped) return;
+        yield* invalidateTrace(session);
         yield* reportTraceFailure(session, failure);
         yield* stopSession(session.threadId, false, false);
         yield* Effect.forkDetach(
@@ -1264,8 +1302,10 @@ export const makePiFamilyAdapter = (
 
     const startSession = (
       input: ProviderSessionStartInput,
-    ): Effect.Effect<ProviderSession, ProviderAdapterError> =>
-      Effect.gen(function* () {
+    ): Effect.Effect<ProviderSession, ProviderAdapterError> => {
+      let createdTraceSink: NativeTraceSink | undefined;
+      let sessionInstalled = false;
+      return Effect.gen(function* () {
         if (input.provider !== undefined && input.provider !== config.provider) {
           return yield* new ProviderAdapterValidationError({
             provider: config.provider,
@@ -1293,6 +1333,7 @@ export const makePiFamilyAdapter = (
                   traceSinkFactory.create({
                     threadId: input.threadId,
                     provider: config.provider,
+                    providerInstanceId: config.instanceId,
                     runtime: config.runtime,
                   }),
                 catch: () =>
@@ -1302,6 +1343,7 @@ export const makePiFamilyAdapter = (
                     "Native trace sink factory failed while starting the session.",
                   ),
               });
+        createdTraceSink = traceSink;
         const sessionScope = yield* Scope.make("sequential");
         const environment = {
           ...config.environment,
@@ -1327,6 +1369,9 @@ export const makePiFamilyAdapter = (
             Effect.mapError((cause) =>
               processError(config.provider, input.threadId, String(cause), cause),
             ),
+            Effect.onError(() =>
+              Scope.close(sessionScope, Exit.succeed(undefined)).pipe(Effect.ignore),
+            ),
           );
         const inputQueue = yield* Queue.bounded<Uint8Array>(NATIVE_INPUT_QUEUE_CAPACITY);
         const startedAt = nowIso();
@@ -1351,7 +1396,9 @@ export const makePiFamilyAdapter = (
           stdoutDrained,
           stderrDrained,
           exitRecorded: false,
+          traceInvalidated: false,
           traceFinalized: false,
+          startupComplete: false,
           ...(ready ? { ready } : {}),
           session: {
             provider: config.provider,
@@ -1366,10 +1413,11 @@ export const makePiFamilyAdapter = (
           },
           stopped: false,
           capabilities: absentRuntimeCapabilities(config.runtime),
-          stderrText: "",
+          stderrBytes: new Uint8Array(),
           eventOccurrenceBuckets: new Float64Array(EVENT_OCCURRENCE_BUCKET_COUNT),
         };
         sessions.set(input.threadId, session);
+        sessionInstalled = true;
 
         yield* Stream.fromEffectRepeat(Queue.take(inputQueue)).pipe(
           Stream.runForEach((bytes) =>
@@ -1429,8 +1477,10 @@ export const makePiFamilyAdapter = (
           recordBytes(session, "stderr", chunk).pipe(
             Effect.andThen(
               Effect.sync(() => {
-                session.stderrText = `${session.stderrText}${decodeText(chunk)}`.slice(
-                  -config.stderrLimitBytes,
+                session.stderrBytes = appendBoundedUtf8Tail(
+                  session.stderrBytes,
+                  chunk,
+                  config.stderrLimitBytes,
                 );
               }),
             ),
@@ -1475,6 +1525,7 @@ export const makePiFamilyAdapter = (
             );
             return;
           }
+          if (!session.startupComplete) yield* invalidateTrace(session);
           yield* recordExit(session, code, signal).pipe(
             Effect.catch((failure) => failSession(session, failure)),
           );
@@ -1500,7 +1551,7 @@ export const makePiFamilyAdapter = (
             kind: "runtime.exit",
             code,
             signal,
-            stderr: session.stderrText,
+            stderr: new TextDecoder().decode(session.stderrBytes),
           });
           yield* Effect.forkDetach(
             Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore),
@@ -1609,6 +1660,7 @@ export const makePiFamilyAdapter = (
             });
           }
         }
+        session.startupComplete = true;
         yield* offer({
           ...makeBase(
             config,
@@ -1622,8 +1674,18 @@ export const makePiFamilyAdapter = (
         });
         return session.session;
       }).pipe(
-        Effect.onError(() => stopSession(input.threadId).pipe(Effect.catch(() => Effect.void))),
+        Effect.onError(() => {
+          const session = sessions.get(input.threadId);
+          const invalidate =
+            session !== undefined
+              ? invalidateTrace(session)
+              : sessionInstalled || createdTraceSink === undefined
+                ? Effect.void
+                : Effect.sync(() => createdTraceSink?.invalidate()).pipe(Effect.ignore);
+          return invalidate.pipe(Effect.andThen(stopSession(input.threadId)));
+        }),
       );
+    };
     const sendTurn = (
       input: ProviderSendTurnInput,
     ): Effect.Effect<ProviderTurnStartResult, ProviderAdapterError> =>

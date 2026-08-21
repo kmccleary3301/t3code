@@ -1,3 +1,4 @@
+import * as NodeBuffer from "node:buffer";
 import { assert, describe, it } from "vite-plus/test";
 
 import {
@@ -34,13 +35,13 @@ function collectNativeTraceKeys(value: unknown, keys = new Set<string>()): Set<s
 
 function syntheticCapture(): NativeTraceCapture {
   const recorder = new BoundedNativeTraceRecorder({
-    maxBytes: 64,
+    maxBytes: 256,
     maxEvents: 8,
     maxDurationMs: 1000,
     nowMs: () => 0,
   });
-  recorder.recordBytes("stdin", encoder.encode("synthetic input"));
-  recorder.recordBytes("stdout", encoder.encode("synthetic output"));
+  recorder.recordBytes("stdin", encoder.encode('{"type":"synthetic_input"}\n'));
+  recorder.recordBytes("stdout", encoder.encode('{"type":"synthetic_output"}\n'));
   recorder.recordBytes("stderr", encoder.encode("synthetic diagnostic"));
   recorder.recordExit(0, null);
   return recorder.toEnvelope().capture;
@@ -323,6 +324,85 @@ describe("NativeTrace", () => {
     recorder.recordExit(0, null);
     assert.throws(
       () => syntheticFixture("synthetic-native-leak", recorder.capture().capture),
+      NativeTraceRedactionError,
+    );
+  });
+  it.each(["password", "token", "credential", "authorization"])(
+    "rejects generic %s values hidden in captured JSONL bytes",
+    (key) => {
+      const recorder = new BoundedNativeTraceRecorder({
+        maxBytes: 256,
+        maxEvents: 2,
+        maxDurationMs: 1000,
+        nowMs: () => 0,
+      });
+      recorder.recordBytes(
+        "stdout",
+        encoder.encode(`${JSON.stringify({ type: "response", [key]: "opaque-canary" })}\n`),
+      );
+      recorder.recordExit(0, null);
+      assert.throws(
+        () => syntheticFixture(`synthetic-native-${key}-leak`, recorder.capture().capture),
+        NativeTraceRedactionError,
+      );
+    },
+  );
+
+  it("rejects malformed captured JSONL instead of treating it as publication-safe", () => {
+    const recorder = new BoundedNativeTraceRecorder({
+      maxBytes: 128,
+      maxEvents: 2,
+      maxDurationMs: 1000,
+      nowMs: () => 0,
+    });
+    recorder.recordBytes("stdout", encoder.encode('{"type":"response"'));
+    recorder.recordExit(0, null);
+    assert.throws(
+      () => syntheticFixture("synthetic-native-malformed-jsonl", recorder.capture().capture),
+      NativeTraceRedactionError,
+    );
+  });
+  it.each(["stdout", "stderr"] as const)(
+    "rejects generic secrets in imported %s fixture bytes",
+    (stream) => {
+      const fixture = syntheticFixture(`synthetic-imported-${stream}-leak`);
+      const bytes = encoder.encode(
+        `${JSON.stringify({ type: "response", password: "opaque-canary" })}\n`,
+      );
+      const capture = {
+        ...fixture.capture,
+        chunks: fixture.capture.chunks.map((chunk) =>
+          chunk.stream === stream
+            ? {
+                ...chunk,
+                byteLength: bytes.byteLength,
+                bytesBase64: NodeBuffer.Buffer.from(bytes).toString("base64"),
+              }
+            : chunk,
+        ),
+      };
+      expectFixtureError(
+        () => validateNativeTraceFixture({ ...fixture, capture }),
+        `fixture.capture.${stream}: sensitive byte patterns remain`,
+      );
+    },
+  );
+  it.each([
+    "password=opaque-canary",
+    "Authorization: opaque-canary",
+    "password=x",
+    "Authorization: no",
+  ])("rejects generic credential diagnostics in non-JSON stderr: %s", (diagnostic) => {
+    const recorder = new BoundedNativeTraceRecorder({
+      maxBytes: 128,
+      maxEvents: 2,
+      maxDurationMs: 1000,
+      nowMs: () => 0,
+    });
+    recorder.recordBytes("stderr", encoder.encode(diagnostic));
+    recorder.recordExit(0, null);
+    assert.throws(
+      () => syntheticFixture("synthetic-native-stderr-diagnostic-leak", recorder.capture().capture),
       NativeTraceRedactionError,
     );
   });

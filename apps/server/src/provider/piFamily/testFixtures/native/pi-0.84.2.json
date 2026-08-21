@@ -59,13 +59,13 @@
       "version": 1
     },
     "redaction": {
-      "version": 1,
+      "version": 2,
       "reviewed": true,
       "leakScanPassed": true,
-      "reportHash": "ba034c44b5f35a203fa7c482818e03688cbbde60bd65373976e6b0b2a5af6067",
+      "reportHash": "4bd5eedad86793465a969355568c40af0deb7b980a02cc5466807846b8fc88cc",
       "unknownPaths": [],
       "report": {
-        "version": 1,
+        "version": 2,
         "reviewed": true,
         "leakScanPassed": true,
         "failedClosed": false,
@@ -73,7 +73,7 @@
         "unknownPaths": [],
         "sourceSha256": "21f48437f2aae4f5c6bbf3379df5397bb80621a85ac9e446d81e4b0c0ce29e0b",
         "outputSha256": "21f48437f2aae4f5c6bbf3379df5397bb80621a85ac9e446d81e4b0c0ce29e0b",
-        "reportHash": "ba034c44b5f35a203fa7c482818e03688cbbde60bd65373976e6b0b2a5af6067"
+        "reportHash": "4bd5eedad86793465a969355568c40af0deb7b980a02cc5466807846b8fc88cc"
       }
     },
     "expectedOutcome": {
@@ -99,16 +99,16 @@
   "capture": {
     "chunks": [
       {
-        "byteLength": 53,
-        "bytesBase64": "eyJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwidHlwZSI6ImdldF9jYXBhYmlsaXRpZXMifQo=",
         "sequence": 0,
-        "stream": "stdin"
+        "stream": "stdin",
+        "byteLength": 53,
+        "bytesBase64": "eyJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwidHlwZSI6ImdldF9jYXBhYmlsaXRpZXMifQo="
       },
       {
-        "byteLength": 109,
-        "bytesBase64": "eyJjb21tYW5kIjoiZ2V0X2NhcGFiaWxpdGllcyIsImRhdGEiOiJbUkVEQUNURURdIiwiaWQiOiJbbm9ybWFsaXplZDppZDoxXSIsInN1Y2Nlc3MiOnRydWUsInR5cGUiOiJyZXNwb25zZSJ9Cg==",
         "sequence": 1,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 109,
+        "bytesBase64": "eyJjb21tYW5kIjoiZ2V0X2NhcGFiaWxpdGllcyIsImRhdGEiOiJbUkVEQUNURURdIiwiaWQiOiJbbm9ybWFsaXplZDppZDoxXSIsInN1Y2Nlc3MiOnRydWUsInR5cGUiOiJyZXNwb25zZSJ9Cg=="
       }
     ],
     "exits": [

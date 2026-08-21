@@ -120,7 +120,7 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     "    }",
     '    out({ id: command.id, type: "response", command: "prompt", success: true });',
     '    if (command.message === "unknown-events") {',
-    '      out({ type: "future_native_event", requestId: "corr-1", token: "secret-token", content: "secret body", status: "pending" });',
+    '      out({ type: "future_native_event", requestId: "corr-1", token: "secret-token", content: "secret body", prompt: "private prompt", input: "private input", output: "private output", query: "private query", description: "private description", command: "private command", cwd: "/Users/private", home: "/Users/private", path: "/tmp/private", email: "private@example.com", username: "private-user", env: { AUTH_TOKEN: "opaque-canary" }, usage: { inputTokens: 1 }, pid: 1234, extra: { path: "/tmp/nested-private", command: "nested-private-command" }, status: "pending" });',
     '      out({ type: "future_native_large_" + "t".repeat(20_000), id: "i".repeat(20_000), requestId: "r".repeat(20_000), taskId: "k".repeat(20_000), items: Array.from({ length: 64 }, () => "x".repeat(600)) });',
     ...(runtime === "omp"
       ? ['      out({ type: "agent_end", isTerminal: true });']
@@ -301,7 +301,9 @@ describe("Pi-family native adapter", () => {
       const turn = yield* adapter.sendTurn({ threadId, input: "trace" });
       const exited = yield* nextEvent(adapter.streamEvents);
       assert.equal(Option.getOrUndefined(exited)?.type, "session.exited");
-      assert.deepEqual(identities, [{ threadId, provider, runtime: "pi" }]);
+      assert.deepEqual(identities, [
+        { threadId, provider, providerInstanceId: instanceId, runtime: "pi" },
+      ]);
 
       const byteRecords = records.filter(
         (record): record is Extract<TraceRecord, { readonly kind: "bytes" }> =>
@@ -442,6 +444,8 @@ describe("Pi-family native adapter", () => {
       const threadId = ThreadId.make("pi-trace-failure-thread");
       const instanceId = ProviderInstanceId.make("pi-trace-failure-instance");
       const records: TraceRecord[] = [];
+      let invalidations = 0;
+      let finalizations = 0;
       const adapter = yield* makePiFamilyAdapter({
         provider,
         runtime: "pi",
@@ -454,10 +458,17 @@ describe("Pi-family native adapter", () => {
         maxMessageBytes: 67_108_864,
         stderrLimitBytes: 16_384,
         traceSinkFactory: {
-          create: () =>
-            makeTraceSink(records, (stream) => {
+          create: () => ({
+            ...makeTraceSink(records, (stream) => {
               if (stream === "stdout") throw new Error("trace sink failure");
             }),
+            invalidate: () => {
+              invalidations += 1;
+            },
+            finalize: () => {
+              finalizations += 1;
+            },
+          }),
         },
         instanceId,
       });
@@ -478,6 +489,169 @@ describe("Pi-family native adapter", () => {
           .some((record) => record.stream === "stdout"),
         false,
       );
+      assert.equal(invalidations, 1);
+      assert.equal(finalizations, 0);
+      assert.lengthOf(
+        records.filter((record) => record.kind === "exit"),
+        0,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.effect("invalidates a trace sink when the native process cannot spawn", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("pi");
+      const threadId = ThreadId.make("pi-trace-spawn-failure-thread");
+      const instanceId = ProviderInstanceId.make("pi-trace-spawn-failure-instance");
+      const recorder = new BoundedNativeTraceRecorder();
+      let invalidations = 0;
+      let finalizations = 0;
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "pi",
+        binaryPath: "/definitely/missing/t3-native-runtime",
+        cwd: process.cwd(),
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        traceSinkFactory: {
+          create: () => ({
+            recordBytes: (stream, bytes) => recorder.recordBytes(stream, bytes),
+            recordExit: (code, signal) => recorder.recordExit(code, signal),
+            invalidate: () => {
+              invalidations += 1;
+              recorder.invalidate();
+            },
+            finalize: () => {
+              finalizations += 1;
+              recorder.finalize();
+            },
+          }),
+        },
+        instanceId,
+      });
+      const result = yield* Effect.exit(
+        adapter.startSession({
+          threadId,
+          provider,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access",
+        }),
+      );
+      assert.isTrue(Exit.isFailure(result));
+      assert.equal(invalidations, 1);
+      assert.equal(finalizations, 0);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      const capture = recorder.snapshot().capture;
+      assert.isTrue(capture.truncated);
+      assert.equal(capture.truncationReason, "lifecycle-error");
+      assert.deepEqual(capture.exits, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("invalidates a partial OMP trace when startup negotiation fails", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("omp");
+      const threadId = ThreadId.make("omp-trace-negotiation-failure-thread");
+      const instanceId = ProviderInstanceId.make("omp-trace-negotiation-failure-instance");
+      const recorder = new BoundedNativeTraceRecorder();
+      let invalidations = 0;
+      let finalizations = 0;
+      const script = [
+        'const readline = require("node:readline");',
+        'const out = value => process.stdout.write(JSON.stringify(value) + "\\n");',
+        'out({ type: "ready", protocolVersion: 1, supportedProtocolVersions: [1, 2], maxFrameBytes: 1048576, maxReassembledFrameBytes: 67108864 });',
+        "const rl = readline.createInterface({ input: process.stdin });",
+        'rl.on("line", line => {',
+        "  const command = JSON.parse(line);",
+        '  if (command.type === "negotiate_protocol") out({ id: command.id, type: "response", command: "negotiate_protocol", success: false, error: "unsupported" });',
+        "});",
+      ].join("\n");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "omp",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", script, "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        traceSinkFactory: {
+          create: () => ({
+            recordBytes: (stream, bytes) => recorder.recordBytes(stream, bytes),
+            recordExit: (code, signal) => recorder.recordExit(code, signal),
+            invalidate: () => {
+              invalidations += 1;
+              recorder.invalidate();
+            },
+            finalize: () => {
+              finalizations += 1;
+              recorder.finalize();
+            },
+          }),
+        },
+        instanceId,
+      });
+      const result = yield* Effect.exit(
+        adapter.startSession({
+          threadId,
+          provider,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access",
+        }),
+      );
+      assert.isTrue(Exit.isFailure(result));
+      assert.equal(invalidations, 1);
+      assert.equal(finalizations, 0);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      const capture = recorder.snapshot().capture;
+      assert.isTrue(capture.truncated);
+      assert.equal(capture.truncationReason, "lifecycle-error");
+      assert.isAbove(capture.chunks.length, 0);
+      assert.deepEqual(capture.exits, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not expose native stderr in exit events", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("pi");
+      const threadId = ThreadId.make("pi-stderr-secrecy-thread");
+      const instanceId = ProviderInstanceId.make("pi-stderr-secrecy-instance");
+      const script = `${makeNativeScript("pi")}\nsetTimeout(() => { process.stderr.write("password=opaque-canary /Users/private"); process.exit(9); }, 500);`;
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "pi",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", script, "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      const exited = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "session.exited"),
+        Stream.runHead,
+        Effect.timeout("2 seconds"),
+      );
+      assert.isTrue(Option.isSome(exited));
+      const event = Option.getOrUndefined(exited);
+      assert.equal(event?.type, "session.exited");
+      if (event?.type === "session.exited") {
+        assert.equal(event.payload.reason, "Native runtime emitted diagnostics on stderr.");
+        assert.notInclude(encodeUnknownJson(event), "opaque-canary");
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
   for (const runtime of ["pi", "omp"] as const) {
@@ -673,9 +847,32 @@ describe("Pi-family native adapter", () => {
         bounded?.type === "runtime.warning" && typeof bounded.payload.detail === "object"
           ? (bounded.payload.detail as Record<string, unknown>)
           : undefined;
-      assert.equal(redactedDetail?.token, "[redacted]");
-      assert.equal(redactedDetail?.content, "[redacted]");
+      for (const key of [
+        "token",
+        "content",
+        "prompt",
+        "input",
+        "output",
+        "query",
+        "description",
+        "command",
+        "cwd",
+        "home",
+        "path",
+        "email",
+        "username",
+        "env",
+        "usage",
+        "pid",
+      ]) {
+        assert.equal(redactedDetail?.[key], "[redacted]");
+      }
+      assert.deepEqual(redactedDetail?.extra, {
+        path: "[redacted]",
+        command: "[redacted]",
+      });
       assert.equal(redactedDetail?.status, "pending");
+      assert.notInclude(encodeUnknownJson(redacted), "opaque-canary");
       assert.equal(redacted?.raw, undefined);
       assert.equal(boundedDetail?.truncated, true);
       assert.equal("items" in (boundedDetail ?? {}), false);

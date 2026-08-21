@@ -4,7 +4,7 @@ import * as NodePerfHooks from "node:perf_hooks";
 /** The capture envelope is deliberately independent of provider orchestration. */
 export const NATIVE_TRACE_SCHEMA_VERSION = 1 as const;
 export const NATIVE_TRACE_NORMALIZATION_VERSION = 1 as const;
-export const NATIVE_TRACE_REDACTION_VERSION = 1 as const;
+export const NATIVE_TRACE_REDACTION_VERSION = 2 as const;
 
 export type NativeTraceStream = "stdin" | "stdout" | "stderr";
 export type NativeTraceRuntimeKind = "pi" | "omp" | (string & {});
@@ -19,6 +19,7 @@ export interface NativeTraceSink {
 export interface NativeTraceSessionIdentity {
   readonly threadId: string;
   readonly provider: string;
+  readonly providerInstanceId: string;
   readonly runtime: NativeTraceRuntimeKind;
 }
 
@@ -647,8 +648,11 @@ export function validateNativeTraceFixture(fixtureValue: unknown): NativeTraceCa
     bytePartsByStream.set(chunk.stream, streamParts);
   }
   for (const [stream, parts] of bytePartsByStream) {
-    const leaks = scanNativeTraceLeaks(new TextDecoder().decode(concatNativeTraceBytes(parts)));
-    if (leaks.length > 0) issues.push(`fixture.capture.${stream}: sensitive byte patterns remain`);
+    const bytes = concatNativeTraceBytes(parts);
+    const findings = new Set<string>();
+    for (const leak of scanNativeTraceLeaks(new TextDecoder().decode(bytes))) findings.add(leak);
+    scanNativeTraceJsonlBytes(stream, bytes, findings);
+    if (findings.size > 0) issues.push(`fixture.capture.${stream}: sensitive byte patterns remain`);
   }
   let previousExitSequence = -1;
   if (exits.length !== 1) issues.push("fixture.capture.exits: required exactly one");
@@ -956,9 +960,12 @@ const DEFAULT_ALLOWED_KEYS = new Set([
   "compatibility",
 ]);
 const DEFAULT_SENSITIVE_KEY =
-  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process/i;
+  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process/i;
+const DEFAULT_BYTE_SENSITIVE_KEY =
+  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|command|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process/i;
 const DEFAULT_LEAK_PATTERNS: readonly RegExp[] = [
   /\bbearer\s+[A-Za-z0-9._~+\-/=]{8,}/iu,
+  /\b(?:authorization|auth|cookie|credential|password|secret|token|api[-_ ]?key)["']?\s*[:=]\s*["']?(?!\[REDACTED\])[^\s"',;}\]]+/iu,
   /\b(?:sk|rk|xox[baprs])-[A-Za-z0-9_-]{8,}\b/iu,
   /\bgh[pousr]_[A-Za-z0-9_]{12,}\b/iu,
   /\b(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA)[A-Z0-9]{16}\b/u,
@@ -1025,6 +1032,92 @@ export function scanNativeTraceLeaks(
   return findings;
 }
 
+function isPublicationSafeSensitiveValue(
+  key: string,
+  value: unknown,
+  parent: Readonly<Record<string, unknown>>,
+): boolean {
+  if (
+    key.toLowerCase() === "command" &&
+    parent.type === "response" &&
+    typeof value === "string" &&
+    /^[a-z][a-z0-9_]{0,63}$/u.test(value)
+  ) {
+    return true;
+  }
+  if (value === null || value === undefined || value === false) return true;
+  if (typeof value === "string") {
+    return value.length === 0 || value.startsWith("[REDACTED]") || value.startsWith("[normalized:");
+  }
+  if (Array.isArray(value)) return value.length === 0;
+  return typeof value === "object" && Object.keys(value).length === 0;
+}
+
+function scanNativeTraceStructuredByteValue(
+  value: unknown,
+  path: string,
+  findings: Set<string>,
+): void {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      scanNativeTraceStructuredByteValue(entry, `${path}[${index}]`, findings),
+    );
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  const record = value as Readonly<Record<string, unknown>>;
+  for (const [key, child] of Object.entries(record)) {
+    const childPath = `${path}.${key}`;
+    if (keyMatches(key, [DEFAULT_BYTE_SENSITIVE_KEY])) {
+      if (!isPublicationSafeSensitiveValue(key, child, record))
+        findings.add(`sensitive-key:${childPath}`);
+      continue;
+    }
+    scanNativeTraceStructuredByteValue(child, childPath, findings);
+  }
+}
+
+function scanNativeTraceJsonlBytes(
+  stream: NativeTraceStream,
+  bytes: Uint8Array,
+  findings: Set<string>,
+): void {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    findings.add(`${stream}:invalid-utf8`);
+    return;
+  }
+  const lines = text.split("\n");
+  if (text.endsWith("\n")) lines.pop();
+  lines.forEach((rawLine, index) => {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (line.length === 0) return;
+    let frame: unknown;
+    try {
+      frame = JSON.parse(line);
+    } catch {
+      if (stream !== "stderr") findings.add(`${stream}:invalid-jsonl:${index}`);
+      return;
+    }
+    if (stream === "stderr") {
+      scanNativeTraceStructuredByteValue(frame, `${stream}[${index}]`, findings);
+      return;
+    }
+    if (
+      typeof frame !== "object" ||
+      frame === null ||
+      Array.isArray(frame) ||
+      typeof (frame as Record<string, unknown>).type !== "string"
+    ) {
+      findings.add(`${stream}:invalid-envelope:${index}`);
+      return;
+    }
+    scanNativeTraceStructuredByteValue(frame, `${stream}[${index}]`, findings);
+  });
+}
+
 function scanNativeTraceCaptureByteLeaks(capture: NativeTraceCapture): readonly string[] {
   const bytePartsByStream = new Map<NativeTraceStream, Uint8Array[]>();
   const findings = new Set<string>();
@@ -1039,11 +1132,11 @@ function scanNativeTraceCaptureByteLeaks(capture: NativeTraceCapture): readonly 
     bytePartsByStream.set(chunk.stream, streamParts);
   }
   for (const [stream, parts] of bytePartsByStream) {
-    for (const finding of scanNativeTraceLeaks(
-      new TextDecoder().decode(concatNativeTraceBytes(parts)),
-    )) {
+    const bytes = concatNativeTraceBytes(parts);
+    for (const finding of scanNativeTraceLeaks(new TextDecoder().decode(bytes))) {
       findings.add(`${stream}:${finding}`);
     }
+    scanNativeTraceJsonlBytes(stream, bytes, findings);
   }
   return [...findings];
 }

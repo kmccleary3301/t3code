@@ -143,17 +143,23 @@
       "version": 1
     },
     "redaction": {
-      "version": 1,
+      "version": 2,
       "reviewed": true,
       "leakScanPassed": true,
-      "reportHash": "44104ee9568d367ce246ad705964996d88e8d89d73a37d509fffb19d1d18f368",
+      "reportHash": "08c5b32e417f5c3e765d7d07f3f9f1d8b7655742c377384c1c5e059712088dd8",
       "unknownPaths": [],
       "report": {
-        "version": 1,
+        "version": 2,
         "reviewed": true,
         "leakScanPassed": true,
         "failedClosed": false,
         "redactedPaths": [
+          "capture.chunks[10].bytesBase64",
+          "capture.chunks[11].bytesBase64",
+          "capture.chunks[12].bytesBase64",
+          "capture.chunks[13].bytesBase64",
+          "capture.chunks[14].bytesBase64",
+          "capture.chunks[15].bytesBase64",
           "capture.chunks[1].bytesBase64",
           "capture.chunks[2].bytesBase64",
           "capture.chunks[4].bytesBase64",
@@ -161,41 +167,38 @@
           "capture.chunks[6].bytesBase64",
           "capture.chunks[7].bytesBase64",
           "capture.chunks[8].bytesBase64",
-          "capture.chunks[9].bytesBase64",
-          "capture.chunks[10].bytesBase64",
-          "capture.chunks[11].bytesBase64",
-          "capture.chunks[12].bytesBase64",
-          "capture.chunks[13].bytesBase64",
-          "capture.chunks[14].bytesBase64",
-          "capture.chunks[15].bytesBase64"
+          "capture.chunks[9].bytesBase64"
         ],
         "unknownPaths": [],
         "sourceSha256": "71a1c940c7893fea200496573ceb788278432e3dfffbcb4df1c0eb403089752d",
-        "outputSha256": "2fb5b578f82a5578975f4745ed79e055d843106f6bc9386d17882b15da07ddce",
-        "reportHash": "44104ee9568d367ce246ad705964996d88e8d89d73a37d509fffb19d1d18f368"
+        "outputSha256": "2194d7831a58cc77d8674ebadc22ac48379ae2f9b911eefdd126fc20f5d0a8e4",
+        "reportHash": "08c5b32e417f5c3e765d7d07f3f9f1d8b7655742c377384c1c5e059712088dd8"
       }
     },
     "expectedOutcome": {
       "value": {
         "eventTypes": [
-          "runtime.warning",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
           "turn.started",
-          "runtime.warning",
-          "runtime.warning",
-          "runtime.warning",
-          "runtime.warning",
-          "runtime.warning",
-          "runtime.warning",
-          "content.delta",
-          "content.delta",
-          "content.delta",
-          "content.delta",
-          "content.delta",
-          "content.delta",
-          "content.delta",
-          "runtime.warning",
-          "item.completed",
-          "turn.completed"
+          "turn.started",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "runtime.raw",
+          "turn.settled"
         ],
         "exit": {
           "code": 143,
@@ -228,10 +231,32 @@
           "agent_end",
           "agent_settled"
         ],
-        "status": "turn.completed"
+        "status": "turn.completed",
+        "canonicalLifecycle": ["turn.started", "turn.started", "turn.settled"],
+        "adapterEventTypes": [
+          "runtime.warning",
+          "turn.started",
+          "runtime.warning",
+          "runtime.warning",
+          "runtime.warning",
+          "runtime.warning",
+          "runtime.warning",
+          "runtime.warning",
+          "content.delta",
+          "content.delta",
+          "content.delta",
+          "content.delta",
+          "content.delta",
+          "content.delta",
+          "content.delta",
+          "runtime.warning",
+          "item.completed",
+          "turn.completed"
+        ],
+        "teardownObservation": "terminal process receipt follows authoritative turn.completed"
       },
       "fixtureId": "pi-0.84.2-native-root",
-      "sha256": "a0d1f06608ad015626a80b379d5722a377461d2928d2e7f425b6556168f3fb83"
+      "sha256": "301d4fef8ef50e663e35ff9495d9ec506ff4f1fef42751ba52d1464ea8f90090"
     },
     "compatibility": {
       "maxSchemaVersion": 1,
@@ -242,100 +267,100 @@
   "capture": {
     "chunks": [
       {
-        "byteLength": 53,
-        "bytesBase64": "eyJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwidHlwZSI6ImdldF9jYXBhYmlsaXRpZXMifQo=",
         "sequence": 0,
-        "stream": "stdin"
+        "stream": "stdin",
+        "byteLength": 53,
+        "bytesBase64": "eyJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwidHlwZSI6ImdldF9jYXBhYmlsaXRpZXMifQo="
       },
       {
-        "byteLength": 109,
-        "bytesBase64": "eyJjb21tYW5kIjoiZ2V0X2NhcGFiaWxpdGllcyIsImRhdGEiOiJbUkVEQUNURURdIiwiaWQiOiJbbm9ybWFsaXplZDppZDoxXSIsInN1Y2Nlc3MiOnRydWUsInR5cGUiOiJyZXNwb25zZSJ9Cg==",
         "sequence": 1,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 109,
+        "bytesBase64": "eyJjb21tYW5kIjoiZ2V0X2NhcGFiaWxpdGllcyIsImRhdGEiOiJbUkVEQUNURURdIiwiaWQiOiJbbm9ybWFsaXplZDppZDoxXSIsInN1Y2Nlc3MiOnRydWUsInR5cGUiOiJyZXNwb25zZSJ9Cg=="
       },
       {
-        "byteLength": 66,
-        "bytesBase64": "eyJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwibWVzc2FnZSI6IltSRURBQ1RFRF0iLCJ0eXBlIjoicHJvbXB0In0K",
         "sequence": 2,
-        "stream": "stdin"
+        "stream": "stdin",
+        "byteLength": 66,
+        "bytesBase64": "eyJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwibWVzc2FnZSI6IltSRURBQ1RFRF0iLCJ0eXBlIjoicHJvbXB0In0K"
       },
       {
-        "byteLength": 106,
-        "bytesBase64": "eyJhY2NlcHRlZCI6dHJ1ZSwiYWdlbnRJbnZva2VkIjp0cnVlLCJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwib3V0Y29tZSI6InN0YXJ0ZWQiLCJ0eXBlIjoicHJvbXB0X3Jlc3VsdCJ9Cg==",
         "sequence": 3,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 106,
+        "bytesBase64": "eyJhY2NlcHRlZCI6dHJ1ZSwiYWdlbnRJbnZva2VkIjp0cnVlLCJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwib3V0Y29tZSI6InN0YXJ0ZWQiLCJ0eXBlIjoicHJvbXB0X3Jlc3VsdCJ9Cg=="
       },
       {
-        "byteLength": 238,
-        "bytesBase64": "eyJjb21tYW5kIjoicHJvbXB0IiwiZGF0YSI6IltSRURBQ1RFRF0iLCJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwic3VjY2VzcyI6dHJ1ZSwidHlwZSI6InJlc3BvbnNlIn0KeyJ0eXBlIjoiYWdlbnRfc3RhcnQifQp7InR5cGUiOiJ0dXJuX3N0YXJ0In0KeyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInR5cGUiOiJtZXNzYWdlX3N0YXJ0In0KeyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInR5cGUiOiJtZXNzYWdlX2VuZCJ9Cg==",
         "sequence": 4,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 238,
+        "bytesBase64": "eyJjb21tYW5kIjoicHJvbXB0IiwiZGF0YSI6IltSRURBQ1RFRF0iLCJpZCI6Iltub3JtYWxpemVkOmlkOjFdIiwic3VjY2VzcyI6dHJ1ZSwidHlwZSI6InJlc3BvbnNlIn0KeyJ0eXBlIjoiYWdlbnRfc3RhcnQifQp7InR5cGUiOiJ0dXJuX3N0YXJ0In0KeyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInR5cGUiOiJtZXNzYWdlX3N0YXJ0In0KeyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInR5cGUiOiJtZXNzYWdlX2VuZCJ9Cg=="
       },
       {
-        "byteLength": 48,
-        "bytesBase64": "eyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInR5cGUiOiJtZXNzYWdlX3N0YXJ0In0K",
         "sequence": 5,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 48,
+        "bytesBase64": "eyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInR5cGUiOiJtZXNzYWdlX3N0YXJ0In0K"
       },
       {
-        "byteLength": 84,
-        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K",
         "sequence": 6,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 84,
+        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K"
       },
       {
-        "byteLength": 84,
-        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K",
         "sequence": 7,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 84,
+        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K"
       },
       {
-        "byteLength": 84,
-        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K",
         "sequence": 8,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 84,
+        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K"
       },
       {
-        "byteLength": 84,
-        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K",
         "sequence": 9,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 84,
+        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K"
       },
       {
-        "byteLength": 168,
-        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0KeyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K",
         "sequence": 10,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 168,
+        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0KeyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K"
       },
       {
-        "byteLength": 84,
-        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K",
         "sequence": 11,
-        "stream": "stdout"
-      },
-      {
-        "byteLength": 252,
-        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0KeyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0KeyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K",
-        "sequence": 12,
-        "stream": "stdout"
-      },
-      {
+        "stream": "stdout",
         "byteLength": 84,
-        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K",
+        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K"
+      },
+      {
+        "sequence": 12,
+        "stream": "stdout",
+        "byteLength": 252,
+        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0KeyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0KeyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K"
+      },
+      {
         "sequence": 13,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 84,
+        "bytesBase64": "eyJhc3Npc3RhbnRNZXNzYWdlRXZlbnQiOiJbUkVEQUNURURdIiwidHlwZSI6Im1lc3NhZ2VfdXBkYXRlIiwidXNhZ2UiOiJbUkVEQUNURURdIn0K"
       },
       {
-        "byteLength": 46,
-        "bytesBase64": "eyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInR5cGUiOiJtZXNzYWdlX2VuZCJ9Cg==",
         "sequence": 14,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 46,
+        "bytesBase64": "eyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInR5cGUiOiJtZXNzYWdlX2VuZCJ9Cg=="
       },
       {
-        "byteLength": 158,
-        "bytesBase64": "eyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInRvb2xSZXN1bHRzIjoiW1JFREFDVEVEXSIsInR5cGUiOiJ0dXJuX2VuZCJ9CnsibWVzc2FnZXMiOiJbUkVEQUNURURdIiwidHlwZSI6ImFnZW50X2VuZCIsIndpbGxSZXRyeSI6ZmFsc2V9CnsidHlwZSI6ImFnZW50X3NldHRsZWQifQo=",
         "sequence": 15,
-        "stream": "stdout"
+        "stream": "stdout",
+        "byteLength": 158,
+        "bytesBase64": "eyJtZXNzYWdlIjoiW1JFREFDVEVEXSIsInRvb2xSZXN1bHRzIjoiW1JFREFDVEVEXSIsInR5cGUiOiJ0dXJuX2VuZCJ9CnsibWVzc2FnZXMiOiJbUkVEQUNURURdIiwidHlwZSI6ImFnZW50X2VuZCIsIndpbGxSZXRyeSI6ZmFsc2V9CnsidHlwZSI6ImFnZW50X3NldHRsZWQifQo="
       }
     ],
     "exits": [

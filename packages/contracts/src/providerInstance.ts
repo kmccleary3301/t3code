@@ -114,13 +114,13 @@ export type ProviderInstanceEnvironment = typeof ProviderInstanceEnvironment.Typ
 
 const PI_FAMILY_DRIVERS = new Set(["pi", "omp"]);
 const CREDENTIAL_ARGUMENT =
-  /^--(?:[a-z0-9]+[-_])?(?:api[-_]?key|access[-_]?key(?:[-_]?id)?|application[-_]?credentials?|auth(?:entication)?[-_]?token|access[-_]?token|client[-_]?secret|credentials?|password|private[-_]?key|secret|token)(?:[-_]?file)?(?:=|$)/i;
+  /^--(?:[a-z0-9]+[-_])?(?:api[-_]?key|access[-_]?key(?:[-_]?id)?|application[-_]?credentials?|auth(?:entication)?(?:[-_]?token)?|authorization|bearer|cookie|access[-_]?token|client[-_]?secret|credentials?|password|private[-_]?key|secret|token)(?:[-_]?(?:file|header))?(?:=|$)/i;
 const CREDENTIAL_ENVIRONMENT_NAME =
-  /(?:^|_)(?:api_?key|access_?key(?:_?id)?|application_?credentials?|auth(?:entication)?_?token|bearer|client_?secret|cookie|credentials?|password|private_?key|secret|token)(?:$|_)/i;
+  /(?:^|_)(?:api_?key|access_?key(?:_?id)?|application_?credentials?|auth(?:entication)?(?:_?token)?|authorization|bearer|client_?secret|cookie|credentials?|password|private_?key|secret|token)(?:$|_)/i;
 const NON_CREDENTIAL_ARGUMENT =
   /^--(?:max[-_]?tokens?|token[-_]?budget|context[-_]?(?:token[-_]?)?(?:limit|window))(?:=|$)/i;
 const NON_CREDENTIAL_ENVIRONMENT_NAME =
-  /(?:^|_)(?:max_?tokens?|token_?budget|context_?(?:token_?)?(?:limit|window))(?:$|_)/i;
+  /(?:^|_)(?:max_?tokens?|token_?budget|context_?(?:token_?)?(?:limit|window)|auth(?:entication)?_?(?:mode|method|provider|strategy|type|url|endpoint|enabled)|authorization_?(?:mode|method|provider|strategy|type|url|endpoint|enabled)|cookie_?(?:domain|path|same_?site|secure|http_?only|max_?age))(?:$|_)/i;
 
 export function isCredentialLaunchArgument(argument: string): boolean {
   const normalized = argument.trim();
@@ -145,7 +145,13 @@ function asUnknownRecord(value: unknown): Readonly<Record<string, unknown>> | un
 }
 
 const ENVIRONMENT_CONTAINER = /^(?:environment|env|envVars)$/iu;
-const ARGUMENT_CONTAINER = /^(?:launchArguments|args|argv)$/iu;
+function stringContainsCredentialMarker(value: string): boolean {
+  return value.split(/[\s,]+/u).some((entry) => {
+    if (isCredentialLaunchArgument(entry)) return true;
+    const separator = entry.indexOf("=");
+    return separator > 0 && isCredentialEnvironmentVariableName(entry.slice(0, separator));
+  });
+}
 
 function containsStoredPiFamilyCredential(
   value: unknown,
@@ -153,16 +159,7 @@ function containsStoredPiFamilyCredential(
   seen: Set<object> = new Set(),
 ): boolean {
   if (typeof value === "string") {
-    if (ARGUMENT_CONTAINER.test(parentKey)) {
-      return value.split(/\s+/u).some(isCredentialLaunchArgument);
-    }
-    if (ENVIRONMENT_CONTAINER.test(parentKey)) {
-      return value
-        .split(/[\s,]+/u)
-        .map((entry) => entry.split("=", 1)[0] ?? "")
-        .some(isCredentialEnvironmentVariableName);
-    }
-    return false;
+    return stringContainsCredentialMarker(value);
   }
   if (Array.isArray(value)) {
     return value.some((entry) => containsStoredPiFamilyCredential(entry, parentKey, seen));
@@ -177,6 +174,7 @@ function containsStoredPiFamilyCredential(
     Object.entries(record).some(
       ([key, child]) =>
         isCredentialEnvironmentVariableName(key) ||
+        isCredentialLaunchArgument(key) ||
         containsStoredPiFamilyCredential(child, key, seen),
     );
   seen.delete(record);

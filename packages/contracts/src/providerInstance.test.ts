@@ -160,6 +160,10 @@ describe("ProviderInstanceConfig", () => {
     "AWS_SECRET_ACCESS_KEY",
     "CLIENT_SECRET",
     "SSH_PRIVATE_KEY",
+    "AUTHORIZATION",
+    "AUTH",
+    "AUTH_HEADER",
+    "SESSION_COOKIE",
   ])("classifies credential environment name %s", (name) => {
     expect(isCredentialEnvironmentVariableName(name)).toBe(true);
   });
@@ -172,32 +176,59 @@ describe("ProviderInstanceConfig", () => {
     "--access-token",
     "--client-secret=canary",
     "--google-application-credentials=/tmp/canary",
+    "--authorization",
+    "--authorization-header=canary",
+    "--auth",
+    "--auth-header",
+    "--cookie=canary",
+    "--api-key-header",
   ])("classifies credential launch argument %s", (argument) => {
     expect(isCredentialLaunchArgument(argument)).toBe(true);
   });
 
-  it.each(["accessToken", "refreshToken", "tokenFile", "apiToken"])(
-    "rejects camelCase credential config key %s",
-    (key) => {
-      expect(() =>
-        decodeProviderInstanceConfig({
-          driver: "pi",
-          config: { nested: { [key]: "canary" } },
-        }),
-      ).toThrow();
-    },
-  );
+  it.each([
+    "accessToken",
+    "refreshToken",
+    "tokenFile",
+    "apiToken",
+    "authorization",
+    "auth",
+    "cookie",
+    "apiKeyHeader",
+  ])("rejects camelCase credential config key %s", (key) => {
+    expect(() =>
+      decodeProviderInstanceConfig({
+        driver: "pi",
+        config: { nested: { [key]: "canary" } },
+      }),
+    ).toThrow();
+  });
 
-  it.each(["OMP_PROFILE", "PI_PACKAGE_DIR", "--profile", "--token-budget"])(
-    "retains non-credential profile setting %s",
-    (value) => {
-      expect(
-        value.startsWith("--")
-          ? isCredentialLaunchArgument(value)
-          : isCredentialEnvironmentVariableName(value),
-      ).toBe(false);
-    },
-  );
+  it.each([
+    { runtime: { args: { "--api-key": "canary" } } },
+    { runtime: { custom: "AUTHORIZATION=opaque-canary" } },
+    { runtime: { custom: "--cookie=opaque-canary" } },
+  ])("rejects credential markers in opaque Pi config %#", (config) => {
+    expect(() => decodeProviderInstanceConfig({ driver: "pi", config })).toThrow();
+  });
+
+  it.each([
+    "OMP_PROFILE",
+    "PI_PACKAGE_DIR",
+    "AUTH_MODE",
+    "AUTH_PROVIDER",
+    "COOKIE_DOMAIN",
+    "--profile",
+    "--auth-mode",
+    "--cookie-domain",
+    "--token-budget",
+  ])("retains non-credential profile setting %s", (value) => {
+    expect(
+      value.startsWith("--")
+        ? isCredentialLaunchArgument(value)
+        : isCredentialEnvironmentVariableName(value),
+    ).toBe(false);
+  });
 
   it("decodes envelopes that name an unknown driver and preserves their config opaquely", () => {
     const opaqueConfig = { someUnknownKnob: 42, model: "llama3" };
