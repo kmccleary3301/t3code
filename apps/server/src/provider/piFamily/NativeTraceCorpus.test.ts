@@ -35,17 +35,21 @@ const loadCompressedFixture = (
 };
 const chunkedCompressed = loadCompressedFixture("omp-17.3.7-chunked.json.gz");
 const hierarchyCompressed = loadCompressedFixture("omp-17.3.7-hierarchy.json.gz");
+const cancellationCompressed = loadCompressedFixture("omp-17.3.7-cancellation.json.gz");
 const ompChunkedFixture = chunkedCompressed.fixture;
 const ompHierarchyFixture = hierarchyCompressed.fixture;
+const ompCancellationFixture = cancellationCompressed.fixture;
 const committedJsonFixtures = [piFixture, ompFixture, piRootFixture, ompRootFixture] as const;
 const OMP_READY_FRAME_REQUIRED = new Set([
   "omp-17.3.7-native-handshake",
   "omp-17.3.7-native-task-hierarchy",
+  "omp-17.3.7-native-task-cancellation",
 ]);
 const committedFixtures = [
   ...committedJsonFixtures,
   ompChunkedFixture,
   ompHierarchyFixture,
+  ompCancellationFixture,
 ] as const;
 const fixtures = validateNativeTraceCorpus(committedFixtures);
 const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -103,6 +107,13 @@ const reviewedProvenance: Readonly<
     sourceSha256: "f54496c4a1d7168ba85db69c0b08a120b46263683161b180242790c5495ea794",
     exitCode: 0,
   },
+  "omp-17.3.7-native-task-cancellation": {
+    runtime: "omp",
+    version: "17.3.7",
+    revision: "binary-sha256:c1434d85392024aab964220b3c3fd27afe1241d13d5488dac84b489d1f052b0d",
+    sourceSha256: "bcdef2efc96d2e78c97b12c4da61e301d5a246ed5967a24beba6f0f92ecd33c5",
+    exitCode: 0,
+  },
 };
 
 function replayStdout(fixture: NativeTraceCaptureEnvelope): ReadonlyArray<RpcEnvelope> {
@@ -136,7 +147,7 @@ describe("checked-in native trace corpus", () => {
         MAX_COMMITTED_FIXTURE_BYTES,
       );
     }
-    for (const compressed of [chunkedCompressed, hierarchyCompressed]) {
+    for (const compressed of [chunkedCompressed, hierarchyCompressed, cancellationCompressed]) {
       assert.isAtMost(compressed.bytes.byteLength, MAX_COMMITTED_FIXTURE_BYTES);
       assert.isAtMost(compressed.decompressed.byteLength, MAX_DECOMPRESSED_FIXTURE_BYTES);
     }
@@ -145,7 +156,7 @@ describe("checked-in native trace corpus", () => {
   it("accepts only reviewed, exact-binary Pi and OMP captures", () => {
     assert.deepEqual(
       fixtures.map((fixture) => fixture.manifest?.runtime.kind),
-      ["pi", "omp", "pi", "omp", "omp", "omp"],
+      ["pi", "omp", "pi", "omp", "omp", "omp", "omp"],
     );
 
     for (const fixture of fixtures) {
@@ -208,6 +219,8 @@ describe("checked-in native trace corpus", () => {
         readonly uiRequests?: number;
         readonly turnStarted?: number;
         readonly turnSettled?: number;
+        readonly subagentLifecycleStatuses?: ReadonlyArray<string>;
+        readonly cancelResponse?: { readonly success: boolean; readonly cancelled: boolean };
       };
       assert.deepEqual(
         frames.map((frame) => frame.type),
@@ -282,6 +295,48 @@ describe("checked-in native trace corpus", () => {
         if (typeof response.data !== "string")
           throw new TypeError("Expected the reassembled OMP response data to be redacted text");
         assert.isTrue(response.data.startsWith("[REDACTED]"));
+      }
+      if (manifest.fixture.id === "omp-17.3.7-native-task-cancellation") {
+        assert.equal(expected.status, "cancellation-complete");
+        const projector = new PiFamilyEventProjector(reviewed.runtime);
+        const projected = frames.flatMap((frame) => projector.project(frame));
+        const kinds = projected.map((event) => event.kind);
+        assert.equal(
+          kinds.filter((kind) => kind === "task.started").length,
+          expected.canonicalSettlement?.started,
+        );
+        assert.equal(
+          kinds.filter((kind) => kind === "task.completed").length,
+          expected.canonicalSettlement?.completed,
+        );
+        assert.equal(kinds.filter((kind) => kind === "turn.started").length, expected.turnStarted);
+        assert.equal(kinds.filter((kind) => kind === "turn.settled").length, expected.turnSettled);
+        assert.equal(projected.at(-1)?.kind, "turn.settled");
+        const lifecycleFrames = frames.filter((frame) => frame.type === "subagent_lifecycle");
+        assert.deepEqual(
+          lifecycleFrames.map((frame) =>
+            typeof frame.payload === "object" && frame.payload !== null
+              ? (frame.payload as { readonly status?: unknown }).status
+              : undefined,
+          ),
+          [...(expected.subagentLifecycleStatuses ?? [])],
+        );
+        const cancelResponse = frames.find(
+          (frame) => frame.type === "response" && frame.command === "cancel_task",
+        );
+        assert.isDefined(cancelResponse);
+        assert.isTrue(cancelResponse.success);
+        const snapshots = projector.snapshotTasks();
+        assert.lengthOf(snapshots, 1);
+        assert.equal(projector.diagnostics().activeTasks, 0);
+        const cancelledChild = snapshots[0];
+        if (!cancelledChild) throw new TypeError("Expected one cancelled OMP child task snapshot");
+        assert.equal(cancelledChild.status, "cancelled");
+        const spawnFrame = frames.find(
+          (frame) => frame.type === "tool_execution_start" && frame.toolName === "task",
+        );
+        assert.isDefined(spawnFrame);
+        assert.equal(cancelledChild.parentToolCallId, spawnFrame.toolCallId);
       }
       if (manifest.fixture.id === "omp-17.3.7-native-task-hierarchy") {
         assert.equal(expected.status, "hierarchy-complete");
