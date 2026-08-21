@@ -37,21 +37,21 @@ curl -fsSL https://github.com/kmccleary3301/t3code/releases/latest/download/inst
 ```
 
 Do not point the private installer at the official T3 release repository. For a pinned,
-auditable install of the published `fork-v0.0.37` release, download the verification files
+auditable install of the published `fork-v0.0.38` release, download the verification files
 from that exact release, verify the installer, then run it locally:
 
 ```sh
-base=https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.37
+base=https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.38
 curl -fsSLO "$base/install.sh"
 curl -fsSLO "$base/RELEASE-MANIFEST.json"
 curl -fsSLO "$base/SHA256SUMS"
 expected=$(awk '$2 == "install.sh" { print $1 }' SHA256SUMS)
 actual=$(shasum -a 256 install.sh | awk '{ print $1 }') # use sha256sum on Linux
 test "$actual" = "$expected"
-sh install.sh --profile pi-omp --repository kmccleary3301/t3code --version 0.0.37
+sh install.sh --profile pi-omp --repository kmccleary3301/t3code --version 0.0.38
 ```
 
-The recorded `fork-v0.0.37` installer SHA-256 is
+The recorded `fork-v0.0.38` installer SHA-256 is
 `452ff311eaff06ce1794be9950a2b0327e8000bb332a65e2641f1a7373069f93`; treat the release's
 `SHA256SUMS` as authoritative if this documentation and the release ever disagree.
 
@@ -77,11 +77,11 @@ Download the latest release from
 registry.
 
 The verified private Pi + OMP
-[`fork-v0.0.37`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.37)
+[`fork-v0.0.38`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.38)
 release includes macOS arm64/x64, Linux arm64/x64, and Windows x64 desktop artifacts. Verify them
 against `SHA256SUMS`; the release also carries GitHub build provenance attestations. Platform
 code-signing credentials were not configured, so the installers are unsigned and the
-[macOS arm64 DMG](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.37/T3-Code-Pi-OMP-0.0.37-arm64.dmg)
+[macOS arm64 DMG](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.38/T3-Code-Pi-OMP-0.0.38-arm64.dmg)
 is not notarized. The fork installs side by side with upstream under a distinct bundle ID and URL
 scheme.
 
