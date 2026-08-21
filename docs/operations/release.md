@@ -59,15 +59,15 @@ build provenance attestations. Fork npm publication is an explicit opt-in.
 ### Published private release
 
 The current owner-controlled stable release is
-[`fork-v0.0.38`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.38), built from
-`a49301bf8b6e53b07290138ccbbfd310bf7b9826`. Its installer SHA-256 is
-`452ff311eaff06ce1794be9950a2b0327e8000bb332a65e2641f1a7373069f93`, its release-manifest
-SHA-256 is `8be4e8b1f2f0a0ce4a68b5d98c2e044780556db208deffe0533e3e9567cabcb5`, and its
-`t3-pi-omp-0.0.38.tgz` SHA-256 is
-`4afb13dce2d740d3a18f5b1359b095b2a06c43187f4b789fb1c35bcdf6e71eb2`.
+[`fork-v0.0.40`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.40), built from
+`325c909d73d59dcfd912449a90d7987268aa3b29`. Its installer SHA-256 is
+`ff5b3bbceacd7196b3bb06e75aa2a1afa010ce38bea88574182fc9043537ef3e`, its release-manifest
+SHA-256 is `8f2f35cf08589da827951db2b10b9f203bcf9cfdc7a40a37134c5d926e2f622d`, and its
+`t3-pi-omp-0.0.40.tgz` SHA-256 is
+`4e48b1a3ab947c20443a8ad19c2a044d840bab82c766e91012546e1df1bdb85d`.
 
 Release workflow run
-[`32435481957`](https://github.com/kmccleary3301/t3code/actions/runs/32435481957) passed preflight,
+[`32443000151`](https://github.com/kmccleary3301/t3code/actions/runs/32443000151) passed preflight,
 all five desktop builds, local fork CLI packaging, provenance attestation, and GitHub publication.
 The release contains macOS arm64/x64 DMG and ZIP artifacts, Linux arm64/x64 AppImages, a Windows
 x64 NSIS installer, the CLI tarball, updater metadata, the installer, manifest, and checksums. No
@@ -76,6 +76,10 @@ optional Pi/OMP runtime bundles were configured.
 GitHub attests the published release assets, but platform signing credentials were not configured.
 The desktop artifacts are therefore unsigned and the macOS artifacts are unnotarized. Fork npm
 publication remains disabled; the checksummed GitHub tarball is the authoritative CLI package.
+
+`fork-v0.0.39` is superseded: its published installer could not infer the platform from
+Electron-style desktop asset names that omitted `darwin` or `linux`. `fork-v0.0.40` records explicit
+platform and architecture metadata and keeps a filename-compatible selector for older manifests.
 
 ### Optional Pi/OMP runtime bundles
 

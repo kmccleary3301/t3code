@@ -73,9 +73,9 @@ name when `T3_PRODUCT_PROFILE` is absent. Neither path infers behavior from a pr
   Node declaration used by root CI.
 - The POSIX installer does not install Node.js. It requires Node.js and npm for the
   profile-specific CLI package path. Routine CI uses a fake release server/package; the published
-  `fork-v0.0.38` path was separately exercised through GitHub on an isolated prefix, including
-  manifest/checksum verification, binary execution, uninstall, and confirmation that the discovered Pi
-  and OMP installations remained unchanged.
+  `fork-v0.0.40` path was separately exercised through GitHub on isolated prefixes, including
+  manifest/checksum verification, desktop selection, binary execution, update, rollback, uninstall,
+  and confirmation that the discovered Pi and OMP installations remained unchanged.
 
 ### Pi and OMP runtime protocol baseline
 
@@ -151,8 +151,8 @@ evidence until a release matrix enables them. macOS signing/passkey and Windows 
 depend on release-only credentials. Missing credentials produce unsigned artifacts where the release
 workflow allows that; pull-request CI does not test signing.
 
-The published `fork-v0.0.38` release contains every target in the matrix above plus the
-profile-specific CLI/web tarball. Release workflow run `32435481957` built Linux arm64 on the
+The published `fork-v0.0.40` release contains every target in the matrix above plus the
+profile-specific CLI/web tarball. Release workflow run `32443000151` built Linux arm64 on the
 native `ubuntu-24.04-arm` runner and built the other four targets on their matching GitHub-hosted
 runners. GitHub provenance attestations cover the release assets. Platform-signing credentials
 were not configured, so the desktop artifacts are unsigned and the macOS artifacts are
