@@ -177,6 +177,120 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
       }),
     ).toThrow();
   });
+
+  it("keeps non-secret Pi/OMP profile environment variables", () => {
+    const decoded = decodeServerSettings({
+      providers: {
+        pi: { environment: { PI_PACKAGE_DIR: "/opt/pi" } },
+        omp: { environment: { OMP_PROFILE: "isolated" } },
+      },
+      providerInstances: {
+        omp_isolated: {
+          driver: "omp",
+          environment: [
+            {
+              name: "OMP_PROFILE",
+              value: "isolated",
+              sensitive: false,
+              valueRedacted: false,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(decoded.providers.pi.environment).toEqual({ PI_PACKAGE_DIR: "/opt/pi" });
+    expect(decoded.providers.omp.environment).toEqual({ OMP_PROFILE: "isolated" });
+  });
+
+  it("rejects Pi/OMP credentials before they can enter settings", () => {
+    expect(() =>
+      decodeServerSettingsPatch({
+        providers: { pi: { environment: { OPENROUTER_API_KEY: "canary" } } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        providers: { omp: { launchArguments: ["--api-key", "canary"] } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        providers: { pi: { environment: { " openai_api_key ": "canary" } } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        providers: { omp: { launchArguments: [" --api-key ", "canary"] } },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        providerInstances: {
+          omp_isolated: {
+            driver: "omp",
+            environment: [
+              {
+                name: "PRIVATE_VALUE",
+                value: "canary",
+                sensitive: true,
+                valueRedacted: false,
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        providerInstances: {
+          pi_isolated: {
+            driver: "pi",
+            config: { environment: { ANTHROPIC_AUTH_TOKEN: "canary" } },
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        providerInstances: {
+          omp_nested: {
+            driver: "omp",
+            config: {
+              runtime: {
+                envVars: [{ name: "AWS_SECRET_ACCESS_KEY", value: "canary" }],
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        providerInstances: {
+          pi_nested: {
+            driver: "pi",
+            config: { runtime: { argv: "--client-secret canary" } },
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        providerInstances: {
+          pi_non_secret: {
+            driver: "pi",
+            config: {
+              runtime: {
+                env: { PI_PACKAGE_DIR: "/opt/pi" },
+                args: ["--token-budget", "8192"],
+              },
+            },
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("provider enabled defaults", () => {

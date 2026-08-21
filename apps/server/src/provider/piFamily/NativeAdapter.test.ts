@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -13,9 +15,23 @@ import {
 } from "@t3tools/contracts";
 
 import { makePiFamilyAdapter } from "./NativeAdapter.ts";
+import {
+  BoundedNativeTraceRecorder,
+  type NativeTraceSessionIdentity,
+  type NativeTraceSink,
+} from "./NativeTrace.ts";
 
 type Runtime = "pi" | "omp";
 const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeUnknownJson = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
+
+function decodeTraceFrame(bytes: Uint8Array): Readonly<Record<string, unknown>> {
+  const value = decodeUnknownJson(new TextDecoder().decode(bytes));
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("Expected a JSON object trace frame");
+  }
+  return value as Readonly<Record<string, unknown>>;
+}
 
 const capabilities = (runtime: Runtime, modelSwitch = true) => ({
   runtime,
@@ -186,10 +202,284 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
   return lines.join("\n");
 };
 
+type TraceRecord =
+  | {
+      readonly kind: "bytes";
+      readonly stream: "stdin" | "stdout" | "stderr";
+      readonly bytes: Uint8Array;
+    }
+  | {
+      readonly kind: "exit";
+      readonly code: number | null;
+      readonly signal: string | null;
+    };
+
+const makeTraceNativeScript = (): string =>
+  [
+    'const readline = require("node:readline");',
+    `const capabilities = ${JSON.stringify(capabilities("pi"))};`,
+    'const out = value => process.stdout.write(JSON.stringify(value) + "\\n");',
+    "const rl = readline.createInterface({ input: process.stdin });",
+    'rl.on("line", line => {',
+    "  const command = JSON.parse(line);",
+    '  if (command.type === "get_capabilities") out({ id: command.id, type: "response", command: "get_capabilities", success: true, data: capabilities });',
+    '  if (command.type === "prompt") {',
+    "    process.stderr.write(Buffer.from([128, 0, 65]));",
+    '    out({ id: command.id, type: "response", command: "prompt", success: true });',
+    '    setTimeout(() => process.stdout.write("TAIL", () => process.stderr.write(Buffer.from([66]), () => process.exit(7))), 25);',
+    "  }",
+    "});",
+  ].join("\n");
+
+const makeTraceSink = (
+  records: TraceRecord[],
+  onBytes?: (stream: "stdin" | "stdout" | "stderr") => void,
+): NativeTraceSink => ({
+  recordBytes: (stream, bytes) => {
+    onBytes?.(stream);
+    records.push({ kind: "bytes", stream, bytes: new Uint8Array(bytes) });
+  },
+  recordExit: (code, signal) => {
+    records.push({ kind: "exit", code, signal });
+  },
+  invalidate: () => {},
+});
+
+const concatTraceBytes = (
+  records: ReadonlyArray<Extract<TraceRecord, { readonly kind: "bytes" }>>,
+): Uint8Array => {
+  const result = new Uint8Array(
+    records.reduce((total, record) => total + record.bytes.byteLength, 0),
+  );
+  let offset = 0;
+  for (const record of records) {
+    result.set(record.bytes, offset);
+    offset += record.bytes.byteLength;
+  }
+  return result;
+};
+
 const nextEvent = (stream: Stream.Stream<ProviderRuntimeEvent>) =>
   Stream.runHead(stream).pipe(Effect.timeout("2 seconds"));
 
 describe("Pi-family native adapter", () => {
+  it.effect("records native boundary bytes in channel order and captures process exit", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("pi");
+      const threadId = ThreadId.make("pi-trace-thread");
+      const instanceId = ProviderInstanceId.make("pi-trace-instance");
+      const records: TraceRecord[] = [];
+      const identities: NativeTraceSessionIdentity[] = [];
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "pi",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeTraceNativeScript(), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        traceSinkFactory: {
+          create: (identity) => {
+            identities.push(identity);
+            return makeTraceSink(records);
+          },
+        },
+        instanceId,
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      const started = yield* nextEvent(adapter.streamEvents);
+      assert.equal(Option.getOrUndefined(started)?.type, "session.started");
+      const turn = yield* adapter.sendTurn({ threadId, input: "trace" });
+      const exited = yield* nextEvent(adapter.streamEvents);
+      assert.equal(Option.getOrUndefined(exited)?.type, "session.exited");
+      assert.deepEqual(identities, [{ threadId, provider, runtime: "pi" }]);
+
+      const byteRecords = records.filter(
+        (record): record is Extract<TraceRecord, { readonly kind: "bytes" }> =>
+          record.kind === "bytes",
+      );
+      assert.deepEqual(
+        byteRecords.slice(0, 3).map((record) => record.stream),
+        ["stdin", "stdout", "stdin"],
+      );
+      assert.isTrue(byteRecords.some((record) => record.stream === "stderr"));
+      const promptRecord = byteRecords.find(
+        (record) => record.stream === "stdin" && decodeTraceFrame(record.bytes).type === "prompt",
+      );
+      assert.isDefined(promptRecord);
+      if (promptRecord === undefined) return;
+      const promptEnvelope = decodeTraceFrame(promptRecord.bytes) as {
+        readonly id: string;
+        readonly type: string;
+      };
+      assert.equal(promptEnvelope.id, turn.turnId);
+      assert.deepEqual(
+        Array.from(promptRecord.bytes),
+        Array.from(new TextEncoder().encode(`${encodeUnknownJson(promptEnvelope)}\n`)),
+      );
+
+      const stderrBytes = concatTraceBytes(
+        byteRecords.filter((record) => record.stream === "stderr"),
+      );
+      assert.deepEqual(Array.from(stderrBytes), [128, 0, 65, 66]);
+      const stdoutText = new TextDecoder().decode(
+        concatTraceBytes(byteRecords.filter((record) => record.stream === "stdout")),
+      );
+      assert.include(
+        stdoutText,
+        `${encodeUnknownJson({ id: turn.turnId, type: "response", command: "prompt", success: true })}\n`,
+      );
+      assert.include(stdoutText, "TAIL");
+      const exit = records.find((record) => record.kind === "exit");
+      assert.deepEqual(exit, { kind: "exit", code: 7, signal: null });
+      assert.equal(records.at(-1)?.kind, "exit");
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("records and finalizes one intentional exit for a stopped owned session", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("pi");
+      const threadId = ThreadId.make("pi-trace-stop-thread");
+      const instanceId = ProviderInstanceId.make("pi-trace-stop-instance");
+      const records: TraceRecord[] = [];
+      let finalizations = 0;
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "pi",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript("pi"), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        traceSinkFactory: {
+          create: () => ({
+            ...makeTraceSink(records),
+            finalize: () => {
+              finalizations += 1;
+            },
+          }),
+        },
+        instanceId,
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      const started = yield* nextEvent(adapter.streamEvents);
+      assert.equal(Option.getOrUndefined(started)?.type, "session.started");
+
+      yield* adapter.stopSession(threadId);
+
+      assert.equal(yield* adapter.hasSession(threadId), false);
+      const exits = records.filter(
+        (record): record is Extract<TraceRecord, { readonly kind: "exit" }> =>
+          record.kind === "exit",
+      );
+      assert.lengthOf(exits, 1);
+      assert.equal(exits[0]?.signal, "SIGTERM");
+      assert.equal(finalizations, 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("bounds teardown when a native process ignores graceful termination", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("pi");
+      const threadId = ThreadId.make("pi-trace-force-stop-thread");
+      const instanceId = ProviderInstanceId.make("pi-trace-force-stop-instance");
+      const recorder = new BoundedNativeTraceRecorder({ maxDurationMs: 20_000 });
+      const script = `${makeNativeScript("pi")}\nprocess.on("SIGTERM", () => {});\nsetTimeout(() => process.exit(0), 5_000);`;
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "pi",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", script, "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        traceSinkFactory: { create: () => recorder },
+        instanceId,
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextEvent(adapter.streamEvents);
+
+      const startedAt = yield* Clock.currentTimeMillis;
+      yield* adapter.stopSession(threadId);
+      assert.isBelow((yield* Clock.currentTimeMillis) - startedAt, 4_500);
+      const capture = recorder.snapshot().capture;
+      assert.deepEqual(capture.exits, [{ sequence: 2, code: null, signal: "SIGKILL" }]);
+      assert.equal(capture.truncated, false);
+      assert.equal(capture.truncationReason, undefined);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails and cleans up the owned session when tracing throws", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("pi");
+      const threadId = ThreadId.make("pi-trace-failure-thread");
+      const instanceId = ProviderInstanceId.make("pi-trace-failure-instance");
+      const records: TraceRecord[] = [];
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "pi",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeTraceNativeScript(), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        traceSinkFactory: {
+          create: () =>
+            makeTraceSink(records, (stream) => {
+              if (stream === "stdout") throw new Error("trace sink failure");
+            }),
+        },
+        instanceId,
+      });
+
+      const result = yield* Effect.exit(
+        adapter.startSession({
+          threadId,
+          provider,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access",
+        }),
+      );
+      assert.equal(Exit.isFailure(result), true);
+      assert.equal(yield* adapter.hasSession(threadId), false);
+      assert.equal(
+        records
+          .filter((record) => record.kind === "bytes")
+          .some((record) => record.stream === "stdout"),
+        false,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   for (const runtime of ["pi", "omp"] as const) {
     it.effect(`starts ${runtime}, negotiates capabilities, and completes a prompt`, () =>
       Effect.gen(function* () {
@@ -229,6 +519,7 @@ describe("Pi-family native adapter", () => {
 
         const turnStarted = yield* nextEvent(adapter.streamEvents);
         const content = yield* nextEvent(adapter.streamEvents);
+
         const assistantCompleted = yield* nextEvent(adapter.streamEvents);
         const turnCompleted = yield* nextEvent(adapter.streamEvents);
         assert.equal(Option.isSome(turnStarted), true);

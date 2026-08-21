@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  isCredentialEnvironmentVariableName,
+  isCredentialLaunchArgument,
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceConfigMap,
@@ -150,6 +152,52 @@ describe("ProviderInstanceConfig", () => {
       }),
     ).toThrow();
   });
+
+  it.each([
+    "OPENROUTER_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "CLIENT_SECRET",
+    "SSH_PRIVATE_KEY",
+  ])("classifies credential environment name %s", (name) => {
+    expect(isCredentialEnvironmentVariableName(name)).toBe(true);
+  });
+
+  it.each([
+    "--api-key",
+    "--api-key=canary",
+    "--api-key-file",
+    "--auth-token-file",
+    "--access-token",
+    "--client-secret=canary",
+    "--google-application-credentials=/tmp/canary",
+  ])("classifies credential launch argument %s", (argument) => {
+    expect(isCredentialLaunchArgument(argument)).toBe(true);
+  });
+
+  it.each(["accessToken", "refreshToken", "tokenFile", "apiToken"])(
+    "rejects camelCase credential config key %s",
+    (key) => {
+      expect(() =>
+        decodeProviderInstanceConfig({
+          driver: "pi",
+          config: { nested: { [key]: "canary" } },
+        }),
+      ).toThrow();
+    },
+  );
+
+  it.each(["OMP_PROFILE", "PI_PACKAGE_DIR", "--profile", "--token-budget"])(
+    "retains non-credential profile setting %s",
+    (value) => {
+      expect(
+        value.startsWith("--")
+          ? isCredentialLaunchArgument(value)
+          : isCredentialEnvironmentVariableName(value),
+      ).toBe(false);
+    },
+  );
 
   it("decodes envelopes that name an unknown driver and preserves their config opaquely", () => {
     const opaqueConfig = { someUnknownKnob: 42, model: "llama3" };

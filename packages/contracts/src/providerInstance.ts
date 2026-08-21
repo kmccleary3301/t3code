@@ -112,6 +112,77 @@ export type ProviderInstanceEnvironmentVariable = typeof ProviderInstanceEnviron
 export const ProviderInstanceEnvironment = Schema.Array(ProviderInstanceEnvironmentVariable);
 export type ProviderInstanceEnvironment = typeof ProviderInstanceEnvironment.Type;
 
+const PI_FAMILY_DRIVERS = new Set(["pi", "omp"]);
+const CREDENTIAL_ARGUMENT =
+  /^--(?:[a-z0-9]+[-_])?(?:api[-_]?key|access[-_]?key(?:[-_]?id)?|application[-_]?credentials?|auth(?:entication)?[-_]?token|access[-_]?token|client[-_]?secret|credentials?|password|private[-_]?key|secret|token)(?:[-_]?file)?(?:=|$)/i;
+const CREDENTIAL_ENVIRONMENT_NAME =
+  /(?:^|_)(?:api_?key|access_?key(?:_?id)?|application_?credentials?|auth(?:entication)?_?token|bearer|client_?secret|cookie|credentials?|password|private_?key|secret|token)(?:$|_)/i;
+const NON_CREDENTIAL_ARGUMENT =
+  /^--(?:max[-_]?tokens?|token[-_]?budget|context[-_]?(?:token[-_]?)?(?:limit|window))(?:=|$)/i;
+const NON_CREDENTIAL_ENVIRONMENT_NAME =
+  /(?:^|_)(?:max_?tokens?|token_?budget|context_?(?:token_?)?(?:limit|window))(?:$|_)/i;
+
+export function isCredentialLaunchArgument(argument: string): boolean {
+  const normalized = argument.trim();
+  return !NON_CREDENTIAL_ARGUMENT.test(normalized) && CREDENTIAL_ARGUMENT.test(normalized);
+}
+
+export function isCredentialEnvironmentVariableName(name: string): boolean {
+  const normalized = name
+    .trim()
+    .replaceAll(/([a-z0-9])([A-Z])/gu, "$1_$2")
+    .replaceAll(/[-.\s]+/gu, "_");
+  return (
+    !NON_CREDENTIAL_ENVIRONMENT_NAME.test(normalized) &&
+    CREDENTIAL_ENVIRONMENT_NAME.test(normalized)
+  );
+}
+
+function asUnknownRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+}
+
+const ENVIRONMENT_CONTAINER = /^(?:environment|env|envVars)$/iu;
+const ARGUMENT_CONTAINER = /^(?:launchArguments|args|argv)$/iu;
+
+function containsStoredPiFamilyCredential(
+  value: unknown,
+  parentKey = "",
+  seen: Set<object> = new Set(),
+): boolean {
+  if (typeof value === "string") {
+    if (ARGUMENT_CONTAINER.test(parentKey)) {
+      return value.split(/\s+/u).some(isCredentialLaunchArgument);
+    }
+    if (ENVIRONMENT_CONTAINER.test(parentKey)) {
+      return value
+        .split(/[\s,]+/u)
+        .map((entry) => entry.split("=", 1)[0] ?? "")
+        .some(isCredentialEnvironmentVariableName);
+    }
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsStoredPiFamilyCredential(entry, parentKey, seen));
+  }
+  const record = asUnknownRecord(value);
+  if (!record || seen.has(record)) return false;
+  seen.add(record);
+  const containsCredential =
+    (ENVIRONMENT_CONTAINER.test(parentKey) &&
+      typeof record.name === "string" &&
+      isCredentialEnvironmentVariableName(record.name)) ||
+    Object.entries(record).some(
+      ([key, child]) =>
+        isCredentialEnvironmentVariableName(key) ||
+        containsStoredPiFamilyCredential(child, key, seen),
+    );
+  seen.delete(record);
+  return containsCredential;
+}
+
 /**
  * Envelope shape for a provider instance configuration in `ServerSettings`.
  *
@@ -128,7 +199,20 @@ export const ProviderInstanceConfig = Schema.Struct({
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
-});
+}).check(
+  Schema.makeFilter((input) => {
+    if (!PI_FAMILY_DRIVERS.has(input.driver)) return true;
+    if (
+      input.environment?.some(
+        (variable) => variable.sensitive || isCredentialEnvironmentVariableName(variable.name),
+      ) ||
+      containsStoredPiFamilyCredential(input.config)
+    ) {
+      return "Pi and OMP credentials and credential flags belong in native profiles, not T3 settings.";
+    }
+    return true;
+  }),
+);
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
 
 /**

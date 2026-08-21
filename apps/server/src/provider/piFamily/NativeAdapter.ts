@@ -21,11 +21,13 @@ import {
   type ProviderUserInputAnswers,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -63,7 +65,7 @@ import {
   type RuntimeCapabilities,
 } from "./protocol.ts";
 import { resolvePiFamilyLaunchArguments } from "./ModelDiscovery.ts";
-
+import type { NativeTraceSink, NativeTraceSinkFactory } from "./NativeTrace.ts";
 export interface PiFamilyNativeConfig {
   readonly provider: ProviderDriverKind;
   readonly runtime: PiFamilyRuntimeKind;
@@ -79,6 +81,7 @@ export interface PiFamilyNativeConfig {
   readonly maxLineBytes: number;
   readonly maxMessageBytes: number;
   readonly stderrLimitBytes: number;
+  readonly traceSinkFactory?: NativeTraceSinkFactory;
   readonly instanceId: ProviderInstanceId;
 }
 interface NativeSession {
@@ -97,6 +100,11 @@ interface NativeSession {
   readonly startedAt: string;
   readonly session: ProviderSession;
   readonly ready?: Deferred.Deferred<void, never>;
+  readonly traceSink?: NativeTraceSink;
+  readonly stdoutDrained: Deferred.Deferred<void, never>;
+  readonly stderrDrained: Deferred.Deferred<void, never>;
+  exitRecorded: boolean;
+  traceFinalized: boolean;
   stopped: boolean;
   nativeSessionId?: string;
   capabilities: RuntimeCapabilities;
@@ -159,6 +167,24 @@ const processError = (
     detail,
     ...(cause === undefined ? {} : { cause }),
   });
+const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
+
+function exitSignalFromCause(cause: unknown): string | null {
+  const pending: unknown[] = [cause];
+  const seen = new Set<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current instanceof Error) {
+      const match = /receipt of signal: '([A-Z0-9]+)'/u.exec(current.message);
+      if (match?.[1]) return match[1];
+    }
+    if (typeof current !== "object" || current === null || seen.has(current)) continue;
+    seen.add(current);
+    if ("cause" in current) pending.push(current.cause);
+    if ("reason" in current) pending.push(current.reason);
+  }
+  return null;
+}
 function nativeInputValue(answers: ProviderUserInputAnswers): string {
   const first = Object.values(answers)[0];
   if (typeof first === "string") return first;
@@ -833,7 +859,98 @@ export const makePiFamilyAdapter = (
         },
       );
 
-    const stopSession = (threadId: ThreadId): Effect.Effect<void> =>
+    const recordBytes = (
+      session: NativeSession,
+      stream: "stdin" | "stdout" | "stderr",
+      bytes: Uint8Array,
+    ): Effect.Effect<void, ProviderAdapterProcessError> => {
+      const traceSink = session.traceSink;
+      if (traceSink === undefined) return Effect.void;
+      return Effect.try({
+        try: () => traceSink.recordBytes(stream, new Uint8Array(bytes)),
+        catch: () =>
+          processError(
+            config.provider,
+            session.threadId,
+            `Native trace sink failed while recording ${stream}.`,
+          ),
+      });
+    };
+
+    const recordExit = (
+      session: NativeSession,
+      code: number | null,
+      signal: string | null,
+    ): Effect.Effect<void, ProviderAdapterProcessError> => {
+      const traceSink = session.traceSink;
+      if (traceSink === undefined || session.exitRecorded) return Effect.void;
+      session.exitRecorded = true;
+      return Effect.try({
+        try: () => traceSink.recordExit(code, signal),
+        catch: () =>
+          processError(
+            config.provider,
+            session.threadId,
+            "Native trace sink failed while recording process exit.",
+          ),
+      });
+    };
+
+    const finalizeTrace = (
+      session: NativeSession,
+    ): Effect.Effect<void, ProviderAdapterProcessError> => {
+      const traceSink = session.traceSink;
+      if (traceSink === undefined || traceSink.finalize === undefined || session.traceFinalized) {
+        return Effect.void;
+      }
+      session.traceFinalized = true;
+      return Effect.try({
+        try: () => traceSink.finalize?.(),
+        catch: () =>
+          processError(
+            config.provider,
+            session.threadId,
+            "Native trace sink failed while finalizing the session.",
+          ),
+      });
+    };
+
+    const reportTraceFailure = (
+      session: NativeSession,
+      failure: ProviderAdapterProcessError,
+    ): Effect.Effect<void> =>
+      offerProjection(session, {
+        kind: "runtime.error",
+        error: failure,
+      });
+
+    const invalidateTrace = (session: NativeSession): Effect.Effect<void> =>
+      Effect.try({
+        try: () => session.traceSink?.invalidate(),
+        catch: (cause) =>
+          processError(
+            config.provider,
+            session.threadId,
+            "Native trace sink failed while invalidating an incomplete capture.",
+            cause,
+          ),
+      }).pipe(Effect.catch((failure) => reportTraceFailure(session, failure)));
+
+    const awaitTraceDrain = (session: NativeSession): Effect.Effect<boolean> =>
+      Effect.all([Deferred.await(session.stdoutDrained), Deferred.await(session.stderrDrained)], {
+        concurrency: "unbounded",
+        discard: true,
+      }).pipe(
+        Effect.timeout("3 seconds"),
+        Effect.as(true),
+        Effect.catch(() => Effect.succeed(false)),
+      );
+
+    const stopSession = (
+      threadId: ThreadId,
+      closeScope = true,
+      awaitDrain = true,
+    ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const session = sessions.get(threadId);
         if (!session) return;
@@ -842,14 +959,87 @@ export const makePiFamilyAdapter = (
         const error = nativeError(config.provider, "session", "Native session stopped");
         yield* failPending(session, error);
         yield* Queue.shutdown(session.input);
-        yield* session.child
-          .kill({ killSignal: "SIGTERM", forceKillAfter: "2 seconds" })
-          .pipe(Effect.ignore);
-        yield* Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore);
+        yield* Effect.forkDetach(
+          session.child
+            .kill({ killSignal: "SIGTERM", forceKillAfter: "2 seconds" })
+            .pipe(Effect.ignore),
+        );
+        if (session.traceSink !== undefined) {
+          const observedExitDeferred = yield* Deferred.make<Exit.Exit<number, unknown>>();
+          yield* Effect.forkDetach(
+            Effect.exit(session.child.exitCode).pipe(
+              Effect.flatMap((result) => Deferred.succeed(observedExitDeferred, result)),
+            ),
+          );
+          const boundedExit = yield* Effect.exit(
+            Deferred.await(observedExitDeferred).pipe(Effect.timeout("3 seconds")),
+          );
+          const observedExit: Exit.Exit<number, unknown> = Exit.isSuccess(boundedExit)
+            ? boundedExit.value
+            : Exit.failCause(boundedExit.cause);
+          const traceExit = Exit.isSuccess(observedExit)
+            ? { code: Number(observedExit.value), signal: null }
+            : {
+                code: null,
+                signal: exitSignalFromCause(Cause.squash(observedExit.cause)),
+              };
+          const exitObserved = Exit.isSuccess(observedExit) || traceExit.signal !== null;
+          let captureComplete = exitObserved;
+          if (captureComplete && awaitDrain && !(yield* awaitTraceDrain(session))) {
+            captureComplete = false;
+            yield* invalidateTrace(session);
+            yield* reportTraceFailure(
+              session,
+              processError(
+                config.provider,
+                session.threadId,
+                "Native trace output streams did not drain before the lifecycle deadline.",
+              ),
+            );
+          }
+          if (!exitObserved) {
+            yield* invalidateTrace(session);
+            yield* reportTraceFailure(
+              session,
+              processError(
+                config.provider,
+                session.threadId,
+                "Native process termination signal could not be observed before the lifecycle deadline.",
+                Exit.isFailure(observedExit) ? observedExit.cause : undefined,
+              ),
+            );
+          } else if (captureComplete) {
+            yield* recordExit(session, traceExit.code, traceExit.signal).pipe(
+              Effect.catch((failure) => reportTraceFailure(session, failure)),
+            );
+          }
+          yield* finalizeTrace(session).pipe(
+            Effect.catch((failure) => reportTraceFailure(session, failure)),
+          );
+        }
+        if (closeScope) {
+          yield* Effect.forkDetach(
+            Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore),
+          );
+        }
+      });
+    const failSession = (
+      session: NativeSession,
+      failure: ProviderAdapterProcessError,
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        if (session.stopped) return;
+        yield* reportTraceFailure(session, failure);
+        yield* stopSession(session.threadId, false, false);
+        yield* Effect.forkDetach(
+          Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore),
+        );
       });
 
     const stopAll = (): Effect.Effect<void> =>
-      Effect.forEach([...sessions.keys()], stopSession, { discard: true }).pipe(Effect.asVoid);
+      Effect.forEach([...sessions.keys()], (threadId) => stopSession(threadId), {
+        discard: true,
+      }).pipe(Effect.asVoid);
 
     const requireSession = (
       threadId: ThreadId,
@@ -872,15 +1062,15 @@ export const makePiFamilyAdapter = (
       session: NativeSession,
       envelope: RpcEnvelope,
     ): Effect.Effect<void, ProviderAdapterRequestError> =>
-      Queue.offer(session.input, encode(envelope)).pipe(
-        Effect.flatMap((accepted) =>
-          accepted
-            ? Effect.void
-            : Effect.fail(
-                nativeError(config.provider, envelope.type, "Native session input is closed"),
-              ),
-        ),
-      );
+      Effect.gen(function* () {
+        const bytes = encode(envelope);
+        const accepted = yield* Queue.offer(session.input, bytes);
+        if (!accepted) {
+          return yield* Effect.fail(
+            nativeError(config.provider, envelope.type, "Native session input is closed"),
+          );
+        }
+      });
 
     const request = (
       session: NativeSession,
@@ -1094,7 +1284,24 @@ export const makePiFamilyAdapter = (
           });
         }
         if (sessions.has(input.threadId)) yield* stopSession(input.threadId);
-
+        const traceSinkFactory = config.traceSinkFactory;
+        const traceSink =
+          traceSinkFactory === undefined
+            ? undefined
+            : yield* Effect.try({
+                try: () =>
+                  traceSinkFactory.create({
+                    threadId: input.threadId,
+                    provider: config.provider,
+                    runtime: config.runtime,
+                  }),
+                catch: () =>
+                  processError(
+                    config.provider,
+                    input.threadId,
+                    "Native trace sink factory failed while starting the session.",
+                  ),
+              });
         const sessionScope = yield* Scope.make("sequential");
         const environment = {
           ...config.environment,
@@ -1124,6 +1331,8 @@ export const makePiFamilyAdapter = (
         const inputQueue = yield* Queue.bounded<Uint8Array>(NATIVE_INPUT_QUEUE_CAPACITY);
         const startedAt = nowIso();
         const ready = config.runtime === "omp" ? yield* Deferred.make<void>() : undefined;
+        const stdoutDrained = yield* Deferred.make<void>();
+        const stderrDrained = yield* Deferred.make<void>();
         const session: NativeSession = {
           threadId: input.threadId,
           child,
@@ -1138,6 +1347,11 @@ export const makePiFamilyAdapter = (
           activeTasks: new Set(),
           turns: [],
           startedAt,
+          ...(traceSink === undefined ? {} : { traceSink }),
+          stdoutDrained,
+          stderrDrained,
+          exitRecorded: false,
+          traceFinalized: false,
           ...(ready ? { ready } : {}),
           session: {
             provider: config.provider,
@@ -1158,8 +1372,15 @@ export const makePiFamilyAdapter = (
         sessions.set(input.threadId, session);
 
         yield* Stream.fromEffectRepeat(Queue.take(inputQueue)).pipe(
-          Stream.run(child.stdin),
-          Effect.catch(() => Effect.void),
+          Stream.runForEach((bytes) =>
+            Stream.make(bytes).pipe(
+              Stream.run(child.stdin),
+              Effect.andThen(recordBytes(session, "stdin", bytes)),
+            ),
+          ),
+          Effect.catch((cause) =>
+            isProviderAdapterProcessError(cause) ? failSession(session, cause) : Effect.void,
+          ),
           Effect.forkIn(sessionScope),
         );
 
@@ -1182,54 +1403,109 @@ export const makePiFamilyAdapter = (
             Effect.catch(reportDecodeError),
           );
         const readStdout = Stream.runForEach(child.stdout, (chunk) =>
-          Effect.try({
-            try: () => decoder.push(chunk),
-            catch: (cause) => nativeError(config.provider, "decode", cause),
-          }).pipe(
-            Effect.catch((cause) => {
-              decoder.reset();
-              return reportDecodeError(cause).pipe(Effect.as<string[]>([]));
-            }),
-            Effect.flatMap((lines) => Effect.forEach(lines, processLine, { discard: true })),
+          recordBytes(session, "stdout", chunk).pipe(
+            Effect.andThen(
+              Effect.try({
+                try: () => decoder.push(chunk),
+                catch: (cause) => nativeError(config.provider, "decode", cause),
+              }).pipe(
+                Effect.catch((cause) => {
+                  decoder.reset();
+                  return reportDecodeError(cause).pipe(Effect.as<string[]>([]));
+                }),
+                Effect.flatMap((lines) => Effect.forEach(lines, processLine, { discard: true })),
+              ),
+            ),
           ),
-        ).pipe(Effect.forkIn(sessionScope));
+        ).pipe(
+          Effect.catch((cause) =>
+            isProviderAdapterProcessError(cause) ? failSession(session, cause) : Effect.void,
+          ),
+          Effect.ensuring(Deferred.succeed(session.stdoutDrained, undefined)),
+          Effect.forkIn(sessionScope),
+        );
         yield* readStdout;
         const readStderr = Stream.runForEach(child.stderr, (chunk) =>
-          Effect.sync(() => {
-            session.stderrText = `${session.stderrText}${decodeText(chunk)}`.slice(
-              -config.stderrLimitBytes,
-            );
-          }),
+          recordBytes(session, "stderr", chunk).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                session.stderrText = `${session.stderrText}${decodeText(chunk)}`.slice(
+                  -config.stderrLimitBytes,
+                );
+              }),
+            ),
+          ),
         ).pipe(
-          Effect.catch(() => Effect.void),
+          Effect.catch((cause) =>
+            isProviderAdapterProcessError(cause) ? failSession(session, cause) : Effect.void,
+          ),
+          Effect.ensuring(Deferred.succeed(session.stderrDrained, undefined)),
           Effect.forkIn(sessionScope),
         );
         yield* readStderr;
 
-        const watchExit = child.exitCode.pipe(
-          Effect.map(Number),
-          Effect.flatMap((code) =>
-            Effect.gen(function* () {
-              if (session.stopped) return;
-              session.stopped = true;
-              sessions.delete(input.threadId);
-              yield* Queue.shutdown(session.input);
-              yield* failPending(
-                session,
-                nativeError(config.provider, "process", `Native process exited with code ${code}`),
-              );
-              yield* offerProjection(session, {
-                kind: "runtime.exit",
-                code,
-                signal: null,
-                stderr: session.stderrText,
-              });
-            }),
-          ),
-          Effect.catch(() => Effect.void),
-          Effect.forkIn(sessionScope),
-        );
-        yield* watchExit;
+        yield* Effect.gen(function* () {
+          const observedExit = yield* Effect.exit(child.exitCode);
+          if (session.traceSink !== undefined && !(yield* awaitTraceDrain(session))) {
+            yield* invalidateTrace(session);
+            yield* failSession(
+              session,
+              processError(
+                config.provider,
+                session.threadId,
+                "Native trace output streams did not drain before the lifecycle deadline.",
+              ),
+            );
+            return;
+          }
+          if (session.stopped) return;
+          const code = Exit.isSuccess(observedExit) ? Number(observedExit.value) : null;
+          const signal = Exit.isFailure(observedExit)
+            ? exitSignalFromCause(Cause.squash(observedExit.cause))
+            : null;
+          if (Exit.isFailure(observedExit) && signal === null) {
+            yield* failSession(
+              session,
+              processError(
+                config.provider,
+                session.threadId,
+                "Native process termination signal could not be observed.",
+                observedExit.cause,
+              ),
+            );
+            return;
+          }
+          yield* recordExit(session, code, signal).pipe(
+            Effect.catch((failure) => failSession(session, failure)),
+          );
+          if (session.stopped) return;
+          yield* finalizeTrace(session).pipe(
+            Effect.catch((failure) => failSession(session, failure)),
+          );
+          if (session.stopped) return;
+          session.stopped = true;
+          sessions.delete(input.threadId);
+          yield* Queue.shutdown(session.input);
+          yield* failPending(
+            session,
+            nativeError(
+              config.provider,
+              "process",
+              code === null
+                ? `Native process exited after signal ${signal}`
+                : `Native process exited with code ${code}`,
+            ),
+          );
+          yield* offerProjection(session, {
+            kind: "runtime.exit",
+            code,
+            signal,
+            stderr: session.stderrText,
+          });
+          yield* Effect.forkDetach(
+            Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore),
+          );
+        }).pipe(Effect.forkIn(sessionScope));
 
         if (ready) {
           yield* Deferred.await(ready).pipe(
@@ -1271,6 +1547,13 @@ export const makePiFamilyAdapter = (
           { type: "get_capabilities" },
           "get_capabilities",
         ).pipe(Effect.catch(() => Effect.succeed(undefined)));
+        if (session.stopped) {
+          return yield* processError(
+            config.provider,
+            input.threadId,
+            "Native session stopped during startup.",
+          );
+        }
         if (capabilitiesResponse) {
           const maxFrameBytes = session.capabilities.transport.maxFrameBytes;
           const maxReassembledFrameBytes = session.capabilities.transport.maxReassembledFrameBytes;

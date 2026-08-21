@@ -19,6 +19,8 @@ import {
   PreviewZoomFactor,
 } from "./preview.ts";
 import {
+  isCredentialEnvironmentVariableName,
+  isCredentialLaunchArgument,
   ProviderInstanceConfig,
   ProviderInstanceId,
   type ProviderDriverKind,
@@ -532,6 +534,14 @@ export const PiFamilyTrustMode = Schema.Literals([
 ]);
 export type PiFamilyTrustMode = typeof PiFamilyTrustMode.Type;
 
+const PiFamilyLaunchArguments = Schema.Array(Schema.String).check(
+  Schema.makeFilter(
+    (arguments_) =>
+      !arguments_.some(isCredentialLaunchArgument) ||
+      "Pi and OMP credential flags are not allowed in T3 launch arguments.",
+  ),
+);
+
 const makePiFamilySettingsFields = (binaryFallback: string) => ({
   enabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -568,7 +578,7 @@ const makePiFamilySettingsFields = (binaryFallback: string) => ({
       },
     }),
   ),
-  launchArguments: Schema.Array(Schema.String).pipe(
+  launchArguments: PiFamilyLaunchArguments.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
     Schema.annotateKey({
       title: "Launch arguments",
@@ -607,12 +617,24 @@ const makePiFamilySettingsFields = (binaryFallback: string) => ({
 });
 export const PiSettings = makeProviderSettingsSchema(makePiFamilySettingsFields("pi"), {
   order: ["binaryPath", "agentDirectory", "environment", "launchArguments", "trustMode"],
-});
+}).check(
+  Schema.makeFilter(
+    (settings) =>
+      !Object.keys(settings.environment).some(isCredentialEnvironmentVariableName) ||
+      "Pi credentials belong in the native profile, not T3 environment settings.",
+  ),
+);
 export type PiSettings = typeof PiSettings.Type;
 
 export const OmpSettings = makeProviderSettingsSchema(makePiFamilySettingsFields("omp"), {
   order: ["binaryPath", "agentDirectory", "environment", "launchArguments", "trustMode"],
-});
+}).check(
+  Schema.makeFilter(
+    (settings) =>
+      !Object.keys(settings.environment).some(isCredentialEnvironmentVariableName) ||
+      "OMP credentials belong in the native profile, not T3 environment settings.",
+  ),
+);
 export type OmpSettings = typeof OmpSettings.Type;
 
 export const ObservabilitySettings = Schema.Struct({
@@ -910,13 +932,19 @@ const PiFamilySettingsPatch = Schema.Struct({
   binaryPath: Schema.optionalKey(TrimmedString),
   agentDirectory: Schema.optionalKey(TrimmedString),
   environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  launchArguments: Schema.optionalKey(Schema.Array(Schema.String)),
+  launchArguments: Schema.optionalKey(PiFamilyLaunchArguments),
   trustMode: Schema.optionalKey(PiFamilyTrustMode),
   requestTimeoutMs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   startupTimeoutMs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   maxLineBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   maxMessageBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
-});
+}).check(
+  Schema.makeFilter(
+    (settings) =>
+      !Object.keys(settings.environment ?? {}).some(isCredentialEnvironmentVariableName) ||
+      "Pi and OMP credentials belong in native profiles, not T3 environment settings.",
+  ),
+);
 
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
