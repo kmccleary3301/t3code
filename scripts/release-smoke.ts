@@ -399,7 +399,10 @@ try {
   const manifestAssets = NodePath.resolve(tempRoot, "manifest-assets");
   NodeFS.mkdirSync(manifestAssets, { recursive: true });
   NodeFS.writeFileSync(NodePath.join(manifestAssets, "t3-pi-omp-9.9.9-smoke.0.tgz"), "cli");
-  NodeFS.writeFileSync(NodePath.join(manifestAssets, "T3-Code-9.9.9-smoke.0.AppImage"), "desktop");
+  NodeFS.writeFileSync(
+    NodePath.join(manifestAssets, "T3-Code-Pi-OMP-9.9.9-smoke.0-arm64.dmg"),
+    "desktop",
+  );
   NodeFS.writeFileSync(NodePath.join(manifestAssets, "install.sh"), "#!/usr/bin/env bash\\n");
   NodeFS.writeFileSync(
     NodePath.join(manifestAssets, "pi-runtime-darwin-arm64.tar.gz"),
@@ -471,6 +474,10 @@ try {
     )
   ) {
     throw new Error("Release manifest is missing hashed CLI artifact metadata.");
+  }
+  const desktopArtifact = manifest.artifacts.find((artifact) => artifact.kind === "desktop");
+  if (desktopArtifact?.platform !== "darwin" || desktopArtifact.arch !== "arm64") {
+    throw new Error("Release manifest is missing desktop platform metadata.");
   }
   for (const [runtime, artifact] of [
     ["pi", manifest.artifacts.find((candidate) => candidate.runtime === "pi")],

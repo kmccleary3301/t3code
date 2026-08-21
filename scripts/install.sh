@@ -430,7 +430,11 @@ function add(v, context) {
   const provider = text(v.runtime || v.provider || v.name || "");
   const name = v.path || v.file || v.filename || v.asset || v.archive || v.tarball || (typeof v.name === "string" && !v.kind ? v.name : "");
   const nameText = text(name);
-  const p = text(v.platform || v.os || v.target || context.platform || (wanted === "cli" ? "" : nameText));
+  if (wanted === "desktop" && nameText.endsWith(".blockmap")) return;
+  const desktopPlatform = nameText.endsWith(".appimage") ? "linux" :
+    (nameText.endsWith(".dmg") || nameText.endsWith(".zip")) ? "darwin" :
+    nameText.endsWith(".exe") ? "windows" : nameText;
+  const p = text(v.platform || v.os || v.target || context.platform || (wanted === "cli" ? "" : wanted === "desktop" ? desktopPlatform : nameText));
   const a = text(v.arch || v.architecture || context.arch || (wanted === "cli" ? "" : nameText));
   const k = wanted === "runtime" ? (kind.includes("runtime") || kind.includes("provider") || provider === runtime || kind === runtime) :
     aliases[wanted].some((x) => kind.includes(x));

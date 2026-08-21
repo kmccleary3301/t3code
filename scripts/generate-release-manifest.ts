@@ -21,7 +21,7 @@ export interface ReleaseArtifact {
   readonly sha256: string;
   readonly kind: "cli" | "desktop" | "installer" | "update-metadata" | "runtime" | "other";
   readonly runtime?: "pi" | "omp";
-  readonly platform?: "darwin" | "linux";
+  readonly platform?: "darwin" | "linux" | "windows";
   readonly arch?: "arm64" | "x64";
   readonly signed: boolean;
 }
@@ -90,6 +90,22 @@ function runtimeDetails(name: string):
     runtime: match[1]!.toLowerCase() as "pi" | "omp",
     platform: match[2]!.toLowerCase() as "darwin" | "linux",
     arch: match[3]!.toLowerCase() as "arm64" | "x64",
+  };
+}
+
+function desktopDetails(name: string):
+  | {
+      readonly platform: "darwin" | "linux" | "windows";
+      readonly arch: "arm64" | "x64";
+    }
+  | undefined {
+  const match = /-(arm64|x64|x86_64)\.(dmg|zip|appimage|exe)(?:\.blockmap)?$/iu.exec(name);
+  if (!match) return undefined;
+  const extension = match[2]!.toLowerCase();
+  const platform = extension === "appimage" ? "linux" : extension === "exe" ? "windows" : "darwin";
+  return {
+    platform,
+    arch: match[1]!.toLowerCase() === "arm64" ? "arm64" : "x64",
   };
 }
 
@@ -173,13 +189,15 @@ export function generateReleaseManifest(input: {
     const stat = NodeFS.statSync(path);
     if (!stat.isFile()) throw new Error(`Release asset is not a regular file: ${name}`);
     const runtime = runtimeDetails(name);
+    const kind = artifactKind(name);
+    const desktop = kind === "desktop" ? desktopDetails(name) : undefined;
     return {
       name,
       path: name,
       size: stat.size,
       sha256: NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(path)).digest("hex"),
-      kind: artifactKind(name),
-      ...(runtime ?? {}),
+      kind,
+      ...(runtime ?? desktop),
       signed: signedForArtifact(name, records),
     };
   });

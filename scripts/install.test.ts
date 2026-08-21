@@ -48,7 +48,7 @@ esac
   const checksums: string[] = [];
   const addAsset = (name: string, kind: string, extra?: Record<string, string>) => {
     const asset = NodePath.join(release, name);
-    artifacts.push({ kind, path: name, sha256: sha256(asset), ...(extra ?? {}) });
+    artifacts.push({ kind, path: name, sha256: sha256(asset), ...extra });
     checksums.push(`${sha256(asset)}  ${name}`);
   };
   addAsset(cliName, "cli");
@@ -57,9 +57,9 @@ esac
     const platform = NodeProcess.platform === "darwin" ? "darwin" : "linux";
     const arch = NodeProcess.arch === "arm64" ? "arm64" : "x64";
     const extension = platform === "darwin" ? "dmg" : "AppImage";
-    const desktopName = `T3-Code-${version}-${platform}-${arch}.${extension}`;
+    const desktopName = `T3-Code-Pi-OMP-${version}-${arch}.${extension}`;
     NodeFS.writeFileSync(NodePath.join(release, desktopName), "desktop fixture\n");
-    addAsset(desktopName, "desktop", { platform, arch });
+    addAsset(desktopName, "desktop");
   }
 
   if (options?.runtimes) {
@@ -436,7 +436,7 @@ it("selects and verifies desktop and pinned Pi/OMP runtime assets", () => {
     );
     assert.equal(result.status, 0, result.stderr);
     assert.include(result.stdout, "Desktop artifact:");
-    const expectedDesktopName = `T3-Code-1.0.0-${NodeProcess.platform === "darwin" ? "darwin" : "linux"}-${NodeProcess.arch === "arm64" ? "arm64" : "x64"}.${NodeProcess.platform === "darwin" ? "dmg" : "AppImage"}`;
+    const expectedDesktopName = `T3-Code-Pi-OMP-1.0.0-${NodeProcess.arch === "arm64" ? "arm64" : "x64"}.${NodeProcess.platform === "darwin" ? "dmg" : "AppImage"}`;
     assert.isTrue(
       NodeFS.existsSync(NodePath.join(prefix, "active", "desktop", expectedDesktopName)),
     );
