@@ -477,6 +477,7 @@ export class PiFamilyEventProjector {
         asString(source.kind) ??
         asString(source.taskType) ??
         asString(source.task_type) ??
+        previous?.kind ??
         "subagent",
       title: asString(source.title) ?? description ?? previous?.title ?? id,
       status,

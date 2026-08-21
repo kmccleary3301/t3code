@@ -3,12 +3,14 @@ import { assert, describe, it } from "vite-plus/test";
 import {
   OmpChunkAssembler,
   type JsonRecord,
+  type NativeTaskSnapshot,
   type RpcEnvelope,
   type PiFamilyProjectedEvent,
   type PiFamilyRuntimeKind,
   parseJsonObject,
 } from "./index.ts";
 import { nativeEventId, PiFamilyEventProjector } from "./PiFamilyEventProjector.ts";
+import { scanNativeTraceLeaks, sha256NativeTraceValue } from "./NativeTrace.ts";
 import {
   nativeTraceProvenance,
   ompNativeChunkedTraceJsonl,
@@ -20,6 +22,8 @@ import {
   piRecordedNativeTrace,
   piRecordedNativeTraceJsonl,
 } from "./nativeTraceFixtures.ts";
+import ompCanonicalOracleJson from "./testFixtures/native/omp-edge-canonical-oracle.json" with { type: "json" };
+import piCanonicalOracleJson from "./testFixtures/native/pi-edge-canonical-oracle.json" with { type: "json" };
 import { StrictJsonlDecoder } from "./StrictJsonlDecoder.ts";
 
 interface ReplayResult {
@@ -27,6 +31,91 @@ interface ReplayResult {
   readonly projected: readonly PiFamilyProjectedEvent[];
   readonly identities: readonly string[];
   readonly projector: PiFamilyEventProjector;
+}
+
+interface CanonicalOracle {
+  readonly schemaVersion: 1;
+  readonly fixtureId: string;
+  readonly sourceTrace: string;
+  readonly sourceSha256: string;
+  readonly runtime: PiFamilyRuntimeKind;
+  readonly authorship: "hand-authored";
+  readonly events: readonly JsonRecord[];
+  readonly identities: readonly string[];
+  readonly tasks: readonly NativeTaskSnapshot[];
+  readonly unknownEvents: readonly RpcEnvelope[];
+  readonly diagnostics: {
+    readonly retainedUnknownEvents: number;
+    readonly droppedUnknownEvents: number;
+    readonly taskSnapshots: number;
+    readonly activeTasks: number;
+  };
+  readonly state: {
+    readonly turn: "active" | "settled";
+    readonly retainedUnknownEvents: number;
+    readonly activeTasks: number;
+  };
+  readonly checkpoints: readonly JsonRecord[];
+  readonly invariants: {
+    readonly sourceEventCount: number;
+    readonly projectedEventCount: number;
+    readonly uniqueIdentityCount: number;
+    readonly terminalEventKind: string;
+  };
+}
+
+const piCanonicalOracle = piCanonicalOracleJson as CanonicalOracle;
+const ompCanonicalOracle = ompCanonicalOracleJson as CanonicalOracle;
+
+function canonicalEvent(event: PiFamilyProjectedEvent): JsonRecord {
+  const normalized = { ...event } as JsonRecord;
+  delete normalized.raw;
+  return normalized;
+}
+
+function assertCanonicalOracle(
+  replay: ReplayResult,
+  oracle: CanonicalOracle,
+  sourceTrace: readonly JsonRecord[],
+): void {
+  assert.equal(oracle.schemaVersion, 1);
+  assert.equal(oracle.authorship, "hand-authored");
+  assert.match(oracle.fixtureId, new RegExp(`^${oracle.runtime}-`));
+  assert.equal(oracle.sourceTrace, oracle.runtime === "pi" ? "piNativeTrace" : "ompNativeTrace");
+  assert.isTrue(oracle.identities.every((identity) => identity.startsWith(`${oracle.runtime}:`)));
+  assert.deepEqual(scanNativeTraceLeaks(oracle), []);
+  assert.isAtMost(new TextEncoder().encode(JSON.stringify(oracle)).byteLength, 64 * 1024);
+  assert.deepEqual(replay.projected.map(canonicalEvent), oracle.events);
+  assert.equal(sha256NativeTraceValue(sourceTrace), oracle.sourceSha256);
+  for (const event of replay.projected) {
+    if ("raw" in event && event.raw !== undefined) {
+      assert.isTrue(replay.events.some((source) => source === event.raw));
+    }
+  }
+  assert.deepEqual(replay.identities, oracle.identities);
+  assert.deepEqual(oracle.tasks, replay.projector.snapshotTasks());
+  assert.deepEqual(oracle.unknownEvents, replay.projector.snapshotUnknownEvents());
+  const diagnostics = replay.projector.diagnostics();
+  assert.deepEqual(diagnostics, oracle.diagnostics);
+  const terminalEventKind = replay.projected.at(-1)?.kind ?? "";
+  assert.deepEqual(
+    {
+      turn: terminalEventKind === "turn.settled" ? "settled" : "active",
+      retainedUnknownEvents: diagnostics.retainedUnknownEvents,
+      activeTasks: diagnostics.activeTasks,
+    },
+    oracle.state,
+  );
+  assert.deepEqual(oracle.checkpoints, []);
+  assert.deepEqual(
+    {
+      sourceEventCount: replay.events.length,
+      projectedEventCount: replay.projected.length,
+      uniqueIdentityCount: new Set(replay.identities).size,
+      terminalEventKind,
+    },
+    oracle.invariants,
+  );
 }
 
 function replayTrace(trace: string, runtime: PiFamilyRuntimeKind, chunked: boolean): ReplayResult {
@@ -204,6 +293,7 @@ describe("Pi/OMP native trace replay", () => {
       "pi-request",
       "future_pi_event",
     );
+    assertCanonicalOracle(first, piCanonicalOracle, piNativeTrace);
   });
 
   it("reassembles and replays a scrubbed OMP chunked trace with its native dialect", () => {
@@ -220,6 +310,7 @@ describe("Pi/OMP native trace replay", () => {
       "omp-request",
       "future_omp_event",
     );
+    assertCanonicalOracle(first, ompCanonicalOracle, ompNativeTrace);
     assert.equal(first.events.length, ompNativeTrace.length);
     assert.equal(first.projector.diagnostics().activeTasks, 0);
   });
