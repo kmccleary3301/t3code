@@ -36,20 +36,24 @@ const loadCompressedFixture = (
 const chunkedCompressed = loadCompressedFixture("omp-17.3.7-chunked.json.gz");
 const hierarchyCompressed = loadCompressedFixture("omp-17.3.7-hierarchy.json.gz");
 const cancellationCompressed = loadCompressedFixture("omp-17.3.7-cancellation.json.gz");
+const reconnectCompressed = loadCompressedFixture("omp-17.3.7-reconnect.json.gz");
 const ompChunkedFixture = chunkedCompressed.fixture;
 const ompHierarchyFixture = hierarchyCompressed.fixture;
 const ompCancellationFixture = cancellationCompressed.fixture;
+const ompReconnectFixture = reconnectCompressed.fixture;
 const committedJsonFixtures = [piFixture, ompFixture, piRootFixture, ompRootFixture] as const;
 const OMP_READY_FRAME_REQUIRED = new Set([
   "omp-17.3.7-native-handshake",
   "omp-17.3.7-native-task-hierarchy",
   "omp-17.3.7-native-task-cancellation",
+  "omp-17.3.7-native-session-reconnect",
 ]);
 const committedFixtures = [
   ...committedJsonFixtures,
   ompChunkedFixture,
   ompHierarchyFixture,
   ompCancellationFixture,
+  ompReconnectFixture,
 ] as const;
 const fixtures = validateNativeTraceCorpus(committedFixtures);
 const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -114,6 +118,13 @@ const reviewedProvenance: Readonly<
     sourceSha256: "bcdef2efc96d2e78c97b12c4da61e301d5a246ed5967a24beba6f0f92ecd33c5",
     exitCode: 0,
   },
+  "omp-17.3.7-native-session-reconnect": {
+    runtime: "omp",
+    version: "17.3.7",
+    revision: "binary-sha256:b6d0a3a579a92f7432035409eefbbe90c454d3b1c30aa4e33125d4e81614334d",
+    sourceSha256: "ab5beef873a4928c6daaa7257568906e78bba6a27e4f573204d8a9a8089cbad8",
+    exitCode: 0,
+  },
 };
 
 function replayStdout(fixture: NativeTraceCaptureEnvelope): ReadonlyArray<RpcEnvelope> {
@@ -156,7 +167,7 @@ describe("checked-in native trace corpus", () => {
   it("accepts only reviewed, exact-binary Pi and OMP captures", () => {
     assert.deepEqual(
       fixtures.map((fixture) => fixture.manifest?.runtime.kind),
-      ["pi", "omp", "pi", "omp", "omp", "omp", "omp"],
+      ["pi", "omp", "pi", "omp", "omp", "omp", "omp", "omp"],
     );
 
     for (const fixture of fixtures) {
@@ -221,6 +232,9 @@ describe("checked-in native trace corpus", () => {
         readonly turnSettled?: number;
         readonly subagentLifecycleStatuses?: ReadonlyArray<string>;
         readonly cancelResponse?: { readonly success: boolean; readonly cancelled: boolean };
+        readonly newSessionAck?: { readonly success: boolean; readonly cancelled: boolean };
+        readonly availableCommandsUpdatesAfterNewSession?: number;
+        readonly agentEnds?: number;
       };
       assert.deepEqual(
         frames.map((frame) => frame.type),
@@ -360,6 +374,51 @@ describe("checked-in native trace corpus", () => {
         );
         assert.isDefined(spawnFrame);
         assert.equal(cancelledChild.parentToolCallId, spawnFrame.toolCallId);
+      }
+      if (manifest.fixture.id === "omp-17.3.7-native-session-reconnect") {
+        assert.equal(expected.status, "reconnect-complete");
+        const newSessionRequests = fixture.capture.chunks
+          .filter((chunk) => chunk.stream === "stdin")
+          .flatMap((chunk) =>
+            Buffer.from(chunk.bytesBase64, "base64")
+              .toString("utf8")
+              .split("\n")
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as Record<string, unknown>)
+              .filter((request) => request.type === "new_session"),
+          );
+        assert.lengthOf(newSessionRequests, 1);
+        const newSessionResponse = frames.find(
+          (frame) => frame.type === "response" && frame.command === "new_session",
+        );
+        assert.isDefined(newSessionResponse);
+        assert.isTrue(newSessionResponse.success);
+        assert.equal(newSessionResponse.id, newSessionRequests[0]?.id);
+        // The captured wire shows the refresh landing between the last
+        // pre-restart agent_end and the new_session response (the handler
+        // emits the update while the session swap settles).
+        const responseIndex = frames.indexOf(newSessionResponse);
+        const updatesBeforeResponse = frames
+          .slice(0, responseIndex)
+          .filter((frame) => frame.type === "available_commands_update").length;
+        assert.isAtLeast(updatesBeforeResponse, expected.availableCommandsUpdatesAfterNewSession);
+        const projector = new PiFamilyEventProjector(reviewed.runtime);
+        const projected = frames.flatMap((frame) => projector.project(frame));
+        const kinds = projected.map((event) => event.kind);
+        assert.equal(
+          kinds.filter((kind) => kind === "turn.started").length,
+          expected.canonicalSettlement?.started,
+        );
+        assert.equal(
+          kinds.filter((kind) => kind === "turn.settled").length,
+          expected.canonicalSettlement?.completed,
+        );
+        assert.equal(projected.at(-1)?.kind, "turn.settled");
+        assert.equal(
+          frames.filter((frame) => frame.type === "agent_end" && frame.isTerminal === true).length,
+          expected.agentEnds,
+        );
+        assert.equal(projector.diagnostics().activeTasks, 0);
       }
       if (manifest.fixture.id === "omp-17.3.7-native-task-hierarchy") {
         assert.equal(expected.status, "hierarchy-complete");
