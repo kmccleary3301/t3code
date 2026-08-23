@@ -12,6 +12,12 @@ it("sends provider, decoder, projector, and fixture changes to replay and budget
   assert.equal(result.budgetGate, true);
   assert.equal(result.docsOnly, false);
 });
+it("runs replay and budget gates when the focused CI workflow changes", () => {
+  const result = classifyFiles([".github/workflows/ci.yml"]);
+  assert.equal(result.replayGate, true);
+  assert.equal(result.budgetGate, true);
+  assert.equal(result.distributionGate, true);
+});
 
 it("routes release-only changes to distribution without publishing documentation changes", () => {
   const release = classifyFiles(["scripts/install.sh", ".github/workflows/release.yml"]);
