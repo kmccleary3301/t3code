@@ -587,6 +587,43 @@ describe("NativeTrace", () => {
       );
     },
   );
+  it.each(["stdout", "stderr"] as const)(
+    "rejects unicode-escaped secrets in imported %s JSONL bytes",
+    (stream) => {
+      const fixture = syntheticFixture(`synthetic-imported-${stream}-escaped-leak`);
+      const escapedSecret =
+        "\\u0042earer \\u0073k-\\u0061\\u0062\\u0063\\u0064\\u0065\\u0066\\u0067\\u0068";
+      const bytes = encoder.encode(`{"type":"future_pi_event","status":"${escapedSecret}"}\n`);
+      const originalChunk = fixture.capture.chunks.find((chunk) => chunk.stream === stream)!;
+      const capture = {
+        ...fixture.capture,
+        totalBytes: fixture.capture.totalBytes + bytes.byteLength - originalChunk.byteLength,
+        chunks: fixture.capture.chunks.map((chunk) =>
+          chunk.stream === stream
+            ? {
+                ...chunk,
+                byteLength: bytes.byteLength,
+                bytesBase64: NodeBuffer.Buffer.from(bytes).toString("base64"),
+              }
+            : chunk,
+        ),
+      };
+      expectFixtureError(
+        () => validateNativeTraceFixture({ ...fixture, capture }),
+        `fixture.capture.${stream}: sensitive byte patterns remain`,
+      );
+    },
+  );
+  it("rejects leak-bearing Uint8Array metadata before base64 redaction", () => {
+    assert.throws(
+      () =>
+        redactNativeTrace(
+          { value: encoder.encode("Bearer sk-abcdefgh") },
+          { allowedKeys: ["value"] },
+        ),
+      NativeTraceRedactionError,
+    );
+  });
   it.each([
     "password=opaque-canary",
     "Authorization: opaque-canary",

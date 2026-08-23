@@ -1141,6 +1141,21 @@ export function scanNativeTraceLeaks(
   return findings;
 }
 
+function scanNativeTraceByteValue(
+  bytes: Uint8Array,
+  patterns: readonly (string | RegExp)[] = DEFAULT_LEAK_PATTERNS,
+): readonly string[] {
+  const findings = new Set(scanNativeTraceLeaks(new TextDecoder().decode(bytes), patterns));
+  try {
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const parsed = JSON.parse(decoded);
+    for (const leak of scanNativeTraceLeaks(parsed, patterns)) findings.add(leak);
+  } catch {
+    // Non-JSON binary payloads are covered by the direct decoded-byte scan.
+  }
+  return [...findings];
+}
+
 function isPublicationSafeSensitiveValue(
   key: string,
   value: unknown,
@@ -1193,7 +1208,11 @@ function validateNativeTracePublicationShape(
     );
     return;
   }
-  if (value === null || typeof value !== "object" || value instanceof Uint8Array) return;
+  if (value instanceof Uint8Array) {
+    if (scanNativeTraceByteValue(value).length > 0) issues.push(`${path}: sensitive byte value`);
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
 
   const record = value as Readonly<Record<string, unknown>>;
   for (const [key, child] of Object.entries(record)) {
@@ -1294,6 +1313,7 @@ function scanNativeTraceJsonlBytes(
       if (stream !== "stderr") findings.add(`${stream}:invalid-jsonl:${index}`);
       return;
     }
+    for (const leak of scanNativeTraceLeaks(frame)) findings.add(`${stream}[${index}]:${leak}`);
     if (stream === "stderr") {
       scanNativeTraceStructuredByteValue(frame, `${stream}[${index}]`, findings);
       return;
@@ -1403,7 +1423,14 @@ export function redactNativeTrace(
       typeof input === "undefined"
     )
       return input;
-    if (input instanceof Uint8Array) return Buffer.from(input).toString("base64");
+    if (input instanceof Uint8Array) {
+      const leaks = scanNativeTraceByteValue(input, leakPatterns);
+      if (leaks.length > 0)
+        throw new NativeTraceRedactionError(
+          `Native trace redaction leaked sensitive byte data: ${leaks.join(", ")}`,
+        );
+      return Buffer.from(input).toString("base64");
+    }
     if (Array.isArray(input))
       return input.map((entry, index) => redact(entry, "", `${path}[${index}]`));
     const record = asRecord(input);
