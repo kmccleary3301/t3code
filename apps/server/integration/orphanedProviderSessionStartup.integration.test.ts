@@ -116,6 +116,8 @@ const startupDependencies = Layer.mergeAll(
     getCapabilities: () => Effect.die("unused"),
     getInstanceInfo: () => Effect.die("unused"),
     rollbackConversation: () => Effect.die("unused"),
+    captureNativeCheckpoint: () => Effect.succeed(undefined),
+    restoreNativeCheckpoint: () => Effect.void,
     streamEvents: Stream.empty,
   }),
 );

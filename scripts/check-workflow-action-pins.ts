@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -15,7 +15,7 @@ for (const fileName of NodeFS.readdirSync(workflowDir).filter((name) => name.end
     const match = line.match(/^\s*uses:\s*([^\s#]+)\s*(?:#\s*(.*))?$/u);
     if (match === null) continue;
     const reference = match[1];
-    if (reference.startsWith("./")) continue;
+    if (reference === undefined) continue;
     const sha = reference.slice(reference.lastIndexOf("@") + 1);
     const comment = match[2]?.trim();
     if (!shaPattern.test(sha))

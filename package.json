@@ -23,7 +23,7 @@
     "check:ts-relative-imports": "node scripts/check-ts-relative-imports.mjs",
     "classify-ci-change": "node scripts/classify-ci-change.ts",
     "check:workflow-action-pins": "node scripts/check-workflow-action-pins.ts",
-    "performance-baseline": "node scripts/performance-baseline.ts",
+    "performance-baseline": "node apps/server/scripts/performance-baseline.ts",
     "build": "vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-t3code' --filter './scripts' build",
     "build:marketing": "vp run --filter @t3tools/marketing build",
     "build:desktop": "vp run --filter @t3tools/desktop --filter t3 build",

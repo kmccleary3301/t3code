@@ -1153,20 +1153,22 @@ it.live("reprojects persisted events after a server restart", () =>
         database.close();
       }
 
-      yield* Effect.acquireUseRelease(
-        makeOrchestrationIntegrationHarness({
-          provider: CODEX_PROVIDER,
-          rootDir,
-        }),
-        (restarted) =>
-          Effect.gen(function* () {
-            const afterRestart = yield* restarted.waitForThread(
-              THREAD_ID,
-              (thread) => thread.title === "Integration Thread",
-            );
-            assert.deepEqual(afterRestart, beforeRestart);
-          }),
-        (restarted) => restarted.dispose,
+      yield* Effect.scoped(
+        Effect.acquireUseRelease(
+          makeOrchestrationIntegrationHarness({
+            provider: CODEX_PROVIDER,
+            rootDir,
+          }).pipe(Effect.provide(NodeServices.layer)),
+          (restarted) =>
+            Effect.gen(function* () {
+              const afterRestart = yield* restarted.waitForThread(
+                THREAD_ID,
+                (thread) => thread.title === "Integration Thread",
+              );
+              assert.deepEqual(afterRestart, beforeRestart);
+            }),
+          (restarted) => restarted.dispose.pipe(Effect.orDie),
+        ),
       );
     }),
   ),

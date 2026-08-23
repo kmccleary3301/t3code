@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off
 
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -14,12 +14,12 @@ import {
   StrictJsonlDecoder,
   nativeEventId,
   parseJsonObject,
-} from "../apps/server/src/provider/piFamily/index.ts";
+} from "../src/provider/piFamily/index.ts";
 import {
   ompNativeChunkedTraceJsonl,
   piNativeTrace,
   piNativeTraceJsonl,
-} from "../apps/server/src/provider/piFamily/nativeTraceFixtures.ts";
+} from "../src/provider/piFamily/nativeTraceFixtures.ts";
 
 const iterations = 5;
 const median = (values: ReadonlyArray<number>): number => {

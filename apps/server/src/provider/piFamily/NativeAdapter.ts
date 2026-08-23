@@ -1398,6 +1398,7 @@ export const makePiFamilyAdapter = (
           exitRecorded: false,
           traceInvalidated: false,
           traceFinalized: false,
+          stopped: false,
           startupComplete: false,
           ...(ready ? { ready } : {}),
           session: {

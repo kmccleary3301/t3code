@@ -345,6 +345,10 @@ describe("checked-in native trace corpus", () => {
         readonly turnSettled?: number;
         readonly subagentLifecycleStatuses?: ReadonlyArray<string>;
         readonly cancelResponse?: { readonly success: boolean; readonly cancelled: boolean };
+        readonly failureResponse?: { readonly code?: string };
+        readonly checkpointCommands?: number;
+        readonly restoreCommands?: number;
+        readonly agentSettles?: number;
         readonly newSessionAck?: { readonly success: boolean; readonly cancelled: boolean };
         readonly availableCommandsUpdatesAfterNewSession?: number;
         readonly agentEnds?: number;
@@ -490,7 +494,8 @@ describe("checked-in native trace corpus", () => {
         );
         if (!startedLifecycle || typeof startedLifecycle.payload !== "object")
           throw new TypeError("Expected a started subagent lifecycle payload");
-        assert.equal(cancelRequest.taskId, startedLifecycle.payload.id);
+        const startedPayload = startedLifecycle.payload as { readonly id?: unknown };
+        assert.equal(cancelRequest.taskId, startedPayload.id);
         const cancelResponse = frames.find(
           (frame) => frame.type === "response" && frame.command === "cancel_task",
         );
@@ -535,7 +540,10 @@ describe("checked-in native trace corpus", () => {
         const updatesBeforeResponse = frames
           .slice(0, responseIndex)
           .filter((frame) => frame.type === "available_commands_update").length;
-        assert.isAtLeast(updatesBeforeResponse, expected.availableCommandsUpdatesAfterNewSession);
+        assert.isAtLeast(
+          updatesBeforeResponse,
+          expected.availableCommandsUpdatesAfterNewSession ?? 0,
+        );
         const projector = new PiFamilyEventProjector(reviewed.runtime);
         const projected = frames.flatMap((frame) => projector.project(frame));
         const kinds = projected.map((event) => event.kind);
@@ -577,6 +585,9 @@ describe("checked-in native trace corpus", () => {
         );
         assert.lengthOf(checkpointRequests, 1);
         const snapshotRewind = snapshotRewinds[0];
+        if (snapshotRewind === undefined) {
+          throw new TypeError("Expected one snapshot rewind request");
+        }
         assert.isDefined(snapshotRewind.checkpointId);
         assert.isDefined(snapshotRewind.sessionId);
         const checkpointResponses = frames.filter(
@@ -733,11 +744,11 @@ describe("checked-in native trace corpus", () => {
         const captureRequests = stdinRequests.filter(
           (request) => request.type === "capture_checkpoint",
         );
-        assert.lengthOf(captureRequests, expected.checkpointCommands);
+        assert.lengthOf(captureRequests, expected.checkpointCommands ?? 0);
         const restoreRequests = stdinRequests.filter(
           (request) => request.type === "restore_checkpoint",
         );
-        assert.lengthOf(restoreRequests, expected.restoreCommands);
+        assert.lengthOf(restoreRequests, expected.restoreCommands ?? 0);
         // The first restore attempt omits the descriptor (rejected), the
         // second echoes the capture response descriptor and succeeds.
         assert.isUndefined(restoreRequests[0]?.checkpoint);
@@ -745,18 +756,18 @@ describe("checked-in native trace corpus", () => {
         const captureResponses = frames.filter(
           (frame) => frame.type === "response" && frame.command === "capture_checkpoint",
         );
-        assert.lengthOf(captureResponses, expected.checkpointCommands);
+        assert.lengthOf(captureResponses, expected.checkpointCommands ?? 0);
         assert.isTrue(captureResponses[0]?.success);
         const restoreResponses = frames.filter(
           (frame) => frame.type === "response" && frame.command === "restore_checkpoint",
         );
-        assert.lengthOf(restoreResponses, expected.restoreCommands);
+        assert.lengthOf(restoreResponses, expected.restoreCommands ?? 0);
         assert.isFalse(restoreResponses[0]?.success);
         assert.equal(restoreResponses[0]?.code, "CHECKPOINT_INVALID");
         assert.isTrue(restoreResponses[1]?.success);
         assert.equal(
           frames.filter((frame) => frame.type === "agent_settled").length,
-          expected.agentSettles,
+          expected.agentSettles ?? 0,
         );
         const projector = new PiFamilyEventProjector(reviewed.runtime);
         for (const frame of frames) projector.project(frame);
@@ -899,7 +910,7 @@ describe("checked-in native trace corpus", () => {
                 (frame.task as { readonly kind?: unknown }).kind === "job",
             )
             .map((frame) => (frame.task as { readonly status?: unknown }).status),
-          expected.childStatuses,
+          expected.childStatuses === undefined ? undefined : [...expected.childStatuses],
         );
         assert.deepEqual(
           frames
@@ -912,7 +923,7 @@ describe("checked-in native trace corpus", () => {
                 (frame.task as { readonly kind?: unknown }).kind === "workflow",
             )
             .map((frame) => (frame.task as { readonly status?: unknown }).status),
-          expected.parentStatuses,
+          expected.parentStatuses === undefined ? undefined : [...expected.parentStatuses],
         );
         const projector = new PiFamilyEventProjector(reviewed.runtime);
         const projected = frames.flatMap((frame) => projector.project(frame));
@@ -940,7 +951,7 @@ describe("checked-in native trace corpus", () => {
           frames
             .filter((frame) => frame.type === "extension_ui_request")
             .map((frame) => frame.method),
-          expected.uiMethods,
+          expected.uiMethods === undefined ? undefined : [...expected.uiMethods],
         );
         const stdinFrames = fixture.capture.chunks
           .filter((chunk) => chunk.stream === "stdin")
@@ -965,9 +976,12 @@ describe("checked-in native trace corpus", () => {
             ),
           expected.responseKinds,
         );
-        assert.include(expected.capabilityFallbacks, "arbitraryTerminalComponents:false");
-        assert.include(expected.capabilityFallbacks, "terminalInput:unsupported");
-        assert.include(expected.capabilityFallbacks, "custom:unsupported");
+        assert.include(
+          [...(expected.capabilityFallbacks ?? [])],
+          "arbitraryTerminalComponents:false",
+        );
+        assert.include([...(expected.capabilityFallbacks ?? [])], "terminalInput:unsupported");
+        assert.include([...(expected.capabilityFallbacks ?? [])], "custom:unsupported");
         assert.equal(expected.customUiFrame, false);
         assert.equal(expected.factoryUiFrames, false);
         assert.equal(
@@ -1047,7 +1061,10 @@ describe("checked-in native trace corpus", () => {
       const reviewed = reviewedProvenance[fixtureId ?? ""];
       assert.isDefined(reviewed);
       const runtime = fixture.manifest?.runtime.kind;
-      assert.isDefined(runtime);
+      if (runtime !== "pi" && runtime !== "omp") {
+        throw new TypeError(`Unsupported native trace runtime '${String(runtime)}'`);
+      }
+      const runtimeKind = runtime as "pi" | "omp";
       const directAssembler = runtime === "omp" ? new OmpChunkAssembler() : undefined;
       const directFrames = fixture.capture.chunks
         .filter((chunk) => chunk.stream === "stdout")
@@ -1066,8 +1083,8 @@ describe("checked-in native trace corpus", () => {
       assert.equal(directAssembler?.pendingMessageCount ?? 0, 0);
       const replayedFrames = replayStdout(fixture);
       assert.deepEqual(directFrames, replayedFrames);
-      const directProjector = new PiFamilyEventProjector(runtime);
-      const replayProjector = new PiFamilyEventProjector(runtime);
+      const directProjector = new PiFamilyEventProjector(runtimeKind);
+      const replayProjector = new PiFamilyEventProjector(runtimeKind);
       assert.deepEqual(
         directFrames.flatMap((frame) => directProjector.project(frame)),
         replayedFrames.flatMap((frame) => replayProjector.project(frame)),
