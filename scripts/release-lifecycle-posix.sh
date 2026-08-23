@@ -345,7 +345,7 @@ desktop_identity_smoke() {
       staged="$extraction/${desktop_name##*/}"
       cp "$desktop_file" "$staged"
       chmod 755 "$staged"
-      run_bounded 30 "$staged" --appimage-extract >/dev/null
+      (cd "$extraction" && run_bounded 30 "$staged" --appimage-extract >/dev/null)
       squashfs_root="$extraction/squashfs-root"
       [ -x "$squashfs_root/AppRun" ] || fail "AppImage extraction has no executable AppRun"
       desktop_entry=$(find "$squashfs_root" -type f -name '*.desktop' -print | awk 'NF { print; exit }')
