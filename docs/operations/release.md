@@ -59,15 +59,15 @@ build provenance attestations. Fork npm publication is an explicit opt-in.
 ### Published private release
 
 The current owner-controlled stable release is
-[`fork-v0.0.44`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.44), built from
-`b766a68ebe05a14e3e69cadd938c1b1bf97098cb`. Its installer SHA-256 is
+[`fork-v0.0.45`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.45), built from
+`7635c5071ed4513ebb8aa2bfbdfb0a52608950fa`. Its installer SHA-256 is
 `816a3f0bf94f169a87831a6d73a917364ac5bc2800a8054f5e7a139982e8cb5c`, its release-manifest
-SHA-256 is `43d645da8bc63d60603459a49842578fc462bd5e8531bcf3bb6f10aaf630ad53`, and its
-`t3-pi-omp-0.0.44.tgz` SHA-256 is
-`203df0f97ddff33075c981d5f17bfbb5becc79b4f3a9d611c1213bae5d894679`.
+SHA-256 is `74db11e597c136550a911262ddb1b94719e9af7a11a13ec5a50c1957eaa71e75`, and its
+`t3-pi-omp-0.0.45.tgz` SHA-256 is
+`176ece8ede8fa5a2f57fcdee1b5b84bcee5d19090bc88665d17cb3b3c5e07ef5`.
 
 Release workflow run
-[`32623872397`](https://github.com/kmccleary3301/t3code/actions/runs/32623872397) passed preflight,
+[`32636953731`](https://github.com/kmccleary3301/t3code/actions/runs/32636953731) passed preflight,
 typecheck, tests, all five desktop builds, native Linux packaging, local fork CLI packaging,
 provenance attestation, and GitHub publication. The release contains 21 manifest artifacts plus
 `RELEASE-MANIFEST.json` and `SHA256SUMS` (23 uploaded GitHub assets; GitHub's rendered release
@@ -76,23 +76,25 @@ ZIP artifacts, Linux arm64/x64 AppImages, a Windows x64 NSIS installer, Linux `n
 the CLI tarball, updater metadata, the installer, and builder metadata. No optional Pi/OMP runtime
 bundles were configured.
 
-Lifecycle run
+The prior `fork-v0.0.44` lifecycle run
 [`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) passed all five
 target-host jobs from lifecycle head `63a0af9ed6698403083bee2b29bbb8619cd2e6df`. It predates the
-current docs-only head, so it is release-lifecycle evidence rather than an exact-current-head
-functional proof. POSIX macOS arm64/x64 and Linux arm64/x64 verified CLI fresh install, upgrade,
-version/help, server health, rollback, desktop identity, tampered-checksum, missing-asset,
-missing-release no-mutation, uninstall, and native-config preservation. Windows x64 verified the
-CLI and NSIS desktop fresh install, upgrade, rollback, uninstall, server health, and native-config
-preservation.
+current release, so it is release-lifecycle evidence for `fork-v0.0.44`, not evidence that
+`fork-v0.0.45` has completed the lifecycle matrix. POSIX macOS arm64/x64 and Linux arm64/x64
+verified CLI fresh install, upgrade, version/help, server health, rollback, desktop identity,
+tampered-checksum, missing-asset, missing-release no-mutation, uninstall, and native-config
+preservation. Windows x64 verified the CLI and NSIS desktop fresh install, upgrade, rollback,
+uninstall, server health, and native-config preservation. A new `fork-v0.0.45` lifecycle run
+has not yet been executed.
 
 GitHub attests the published release assets, but platform signing credentials were not configured.
 The desktop artifacts are therefore unsigned and the macOS artifacts are unnotarized. Fork npm
 publication remains disabled; the checksummed GitHub tarball is the authoritative CLI package.
 
-`fork-v0.0.43` is the previous stable release used by the lifecycle matrix. `fork-v0.0.39` and
-earlier releases are superseded; `fork-v0.0.39` had a desktop asset-selection defect. Subsequent
-current-head CI/nightly records are separate from this stable release metadata.
+`fork-v0.0.44` is the prior stable release with the completed lifecycle matrix. `fork-v0.0.43`
+was the previous release used by that matrix, and `fork-v0.0.39` and earlier releases are
+superseded; `fork-v0.0.39` had a desktop asset-selection defect. Subsequent current-head
+CI/nightly records are separate from this stable release metadata.
 
 ### Optional Pi/OMP runtime bundles
 
