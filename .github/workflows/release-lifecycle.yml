@@ -1,0 +1,105 @@
+name: Release Lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Owner-controlled release repository
+        required: true
+        default: kmccleary3301/t3code
+        type: string
+      release_tag:
+        description: Current stable fork release tag
+        required: true
+        default: fork-v0.0.43
+        type: string
+      previous_tag:
+        description: Previous stable fork release tag
+        required: true
+        default: fork-v0.0.40
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  posix:
+    name: POSIX ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macos-arm64
+            label: macOS arm64
+            runner: macos-26
+          - id: macos-x64
+            label: macOS x64
+            runner: macos-26-intel
+          - id: linux-x64
+            label: Linux x64
+            runner: ubuntu-24.04
+          - id: linux-arm64
+            label: Linux arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout lifecycle harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.13.1
+
+      - name: Run release lifecycle
+        env:
+          T3_LIFECYCLE_REPOSITORY: ${{ inputs.repository }}
+          T3_LIFECYCLE_RELEASE_TAG: ${{ inputs.release_tag }}
+          T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          T3_LIFECYCLE_REPORT: ${{ runner.temp }}/release-lifecycle-${{ matrix.id }}.json
+        run: |
+          export T3_LIFECYCLE_NATIVE_ROOT="$HOME"
+          sh scripts/release-lifecycle-posix.sh
+
+      - name: Upload lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-lifecycle-${{ matrix.id }}
+          path: ${{ runner.temp }}/release-lifecycle-${{ matrix.id }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  windows:
+    name: Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Checkout lifecycle harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.13.1
+
+      - name: Run release lifecycle
+        shell: pwsh
+        env:
+          T3_LIFECYCLE_REPOSITORY: ${{ inputs.repository }}
+          T3_LIFECYCLE_RELEASE_TAG: ${{ inputs.release_tag }}
+          T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          T3_LIFECYCLE_REPORT: ${{ runner.temp }}/release-lifecycle-windows.json
+        run: |
+          $env:T3_LIFECYCLE_NATIVE_ROOT = $env:USERPROFILE
+          ./scripts/release-lifecycle-windows.ps1
+
+      - name: Upload lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-lifecycle-windows
+          path: ${{ runner.temp }}/release-lifecycle-windows.json
+          if-no-files-found: ignore
+          retention-days: 30
