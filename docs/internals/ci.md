@@ -182,10 +182,11 @@ attestations cover the release assets. Platform-signing credentials were not con
 desktop artifacts are unsigned and the macOS artifacts are unnotarized.
 
 Release lifecycle run
-[`32624959424`](https://github.com/kmccleary3301/t3code/actions/runs/32624959424) passed all five
-target-host jobs. POSIX jobs exercised the CLI install/upgrade/rollback/uninstall and native-config
-preservation paths on macOS arm64/x64 and Linux arm64/x64; the Windows job exercised those paths
-plus NSIS desktop install/upgrade/rollback/uninstall.
+[`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) passed all five
+target-host jobs. POSIX jobs exercised CLI install/upgrade/rollback/uninstall and native-config
+preservation on macOS arm64/x64 and Linux arm64/x64, plus desktop artifact install/upgrade/identity/
+rollback/uninstall and tampered-checksum, missing-asset, and missing-release no-mutation checks;
+the Windows job exercised CLI and NSIS desktop install/upgrade/rollback/uninstall.
 
 Optional Pi/OMP runtime bundles are supplied through the owner-controlled
 `T3_PI_OMP_RUNTIME_BUNDLES_JSON` repository variable. The value is a JSON object with a `bundles`

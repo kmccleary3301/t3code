@@ -75,11 +75,12 @@ archives, the CLI tarball, updater metadata, the installer, manifest, checksums,
 metadata. No optional Pi/OMP runtime bundles were configured.
 
 Lifecycle run
-[`32624959424`](https://github.com/kmccleary3301/t3code/actions/runs/32624959424) passed all five
+[`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) passed all five
 target-host jobs. POSIX macOS arm64/x64 and Linux arm64/x64 verified CLI fresh install, upgrade,
-version/help, server health, rollback, missing-release no-mutation, uninstall, and native-config
-preservation. Windows x64 verified the CLI and NSIS desktop fresh install, upgrade, rollback,
-uninstall, server health, and native-config preservation.
+version/help, server health, rollback, desktop identity, tampered-checksum, missing-asset,
+missing-release no-mutation, uninstall, and native-config preservation. Windows x64 verified the
+CLI and NSIS desktop fresh install, upgrade, rollback, uninstall, server health, and native-config
+preservation.
 
 GitHub attests the published release assets, but platform signing credentials were not configured.
 The desktop artifacts are therefore unsigned and the macOS artifacts are unnotarized. Fork npm
