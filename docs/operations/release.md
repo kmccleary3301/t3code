@@ -70,14 +70,17 @@ Release workflow run
 [`32623872397`](https://github.com/kmccleary3301/t3code/actions/runs/32623872397) passed preflight,
 typecheck, tests, all five desktop builds, native Linux packaging, local fork CLI packaging,
 provenance attestation, and GitHub publication. The release contains 21 manifest artifacts plus
-`RELEASE-MANIFEST.json` and `SHA256SUMS` (23 GitHub assets total): macOS arm64/x64 DMG and ZIP
-artifacts, Linux arm64/x64 AppImages, a Windows x64 NSIS installer, Linux `node-pty` archives, the
-CLI tarball, updater metadata, the installer, and builder metadata. No optional Pi/OMP runtime
+`RELEASE-MANIFEST.json` and `SHA256SUMS` (23 uploaded GitHub assets; GitHub's rendered release
+view may display 25 when it includes the two generated source archives): macOS arm64/x64 DMG and
+ZIP artifacts, Linux arm64/x64 AppImages, a Windows x64 NSIS installer, Linux `node-pty` archives,
+the CLI tarball, updater metadata, the installer, and builder metadata. No optional Pi/OMP runtime
 bundles were configured.
 
 Lifecycle run
 [`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) passed all five
-target-host jobs. POSIX macOS arm64/x64 and Linux arm64/x64 verified CLI fresh install, upgrade,
+target-host jobs from lifecycle head `63a0af9ed6698403083bee2b29bbb8619cd2e6df`. It predates the
+current docs-only head, so it is release-lifecycle evidence rather than an exact-current-head
+functional proof. POSIX macOS arm64/x64 and Linux arm64/x64 verified CLI fresh install, upgrade,
 version/help, server health, rollback, desktop identity, tampered-checksum, missing-asset,
 missing-release no-mutation, uninstall, and native-config preservation. Windows x64 verified the
 CLI and NSIS desktop fresh install, upgrade, rollback, uninstall, server health, and native-config
