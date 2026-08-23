@@ -124,6 +124,14 @@ function Install-Nsis([string] $Installer, [string] $Destination) {
   if ($null -eq $application) { Fail "NSIS installer produced no application executable" }
   return [pscustomobject]@{ path = $application.FullName; version = $application.VersionInfo.ProductVersion }
 }
+function Stop-ServerTree([System.Diagnostics.Process] $Process) {
+  if ($null -eq $Process) { return }
+  if (-not $Process.HasExited) {
+    try { & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null } catch { }
+    try { $Process.WaitForExit(10000) } catch { }
+  }
+}
+
 
 $serverProcess = $null
 try {
@@ -169,7 +177,7 @@ try {
     Start-Sleep -Seconds 1
   }
   if (-not $ready) { Get-Content -LiteralPath $serverStdout, $serverStderr -ErrorAction SilentlyContinue | Write-Error; Fail 'server readiness timed out' }
-  if (-not $serverProcess.HasExited) { Stop-Process -Id $serverProcess.Id -Force }
+  Stop-ServerTree $serverProcess
   $serverProcess = $null
 
   $desktopRoot = Join-Path $root 'desktop'
@@ -210,8 +218,15 @@ try {
   $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath
   Write-Output "Windows release lifecycle passed for $currentTag/$previousTag"
 } finally {
-  if ($null -ne $serverProcess -and -not $serverProcess.HasExited) {
-    Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
+  if ($null -ne $serverProcess) { Stop-ServerTree $serverProcess }
+  if (Test-Path $root) {
+    for ($attempt = 0; $attempt -lt 20 -and (Test-Path $root); $attempt++) {
+      try {
+        Remove-Item -Recurse -Force -LiteralPath $root -ErrorAction Stop
+      } catch {
+        Start-Sleep -Milliseconds 250
+      }
+    }
+    if (Test-Path $root) { Remove-Item -Recurse -Force -LiteralPath $root -ErrorAction Stop }
   }
-  if (Test-Path $root) { Remove-Item -Recurse -Force $root }
 }
