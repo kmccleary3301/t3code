@@ -81,14 +81,16 @@ Download the latest release from
 [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
 registry.
 
-The verified private Pi + OMP
+The private Pi + OMP
 [`fork-v0.0.45`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.45)
-release includes macOS arm64/x64, Linux arm64/x64, and Windows x64 desktop artifacts. Verify them
-against `SHA256SUMS`; the release also carries GitHub build provenance attestations. Platform
-code-signing credentials were not configured, so the installers are unsigned and the
-[macOS arm64 DMG](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.45/T3-Code-Pi-OMP-0.0.45-arm64.dmg)
-is not notarized. The fork installs side by side with upstream under a distinct bundle ID and URL
-scheme. Use `fork-v0.0.45` or newer; `fork-v0.0.39` had a desktop asset-selection defect.
+release includes macOS arm64/x64, Linux arm64/x64, and Windows x64 desktop artifacts. Its
+`SHA256SUMS` and GitHub build provenance are verified, but the target-host
+install/update/rollback/uninstall lifecycle has not been executed for this release; that
+lifecycle evidence applies to prior `fork-v0.0.44`. Platform code-signing credentials were not
+configured, so the installers are unsigned and the
+[`macOS arm64 DMG`](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.45/T3-Code-Pi-OMP-0.0.45-arm64.dmg)
+is not notarized. Treat `fork-v0.0.45` as an unsigned personal build pending its target-host
+lifecycle run; `fork-v0.0.39` had a desktop asset-selection defect.
 
 Windows:
 
