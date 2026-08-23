@@ -14,7 +14,7 @@ export type ChangeClassification = Readonly<{
 
 const DOCS_ONLY = /^(?:docs\/|\.agents\/|AGENTS\.md$|.*\.md$)/u;
 const REPLAY =
-  /(?:^|\/)(?:\.github\/workflows\/ci\.yml|apps\/server\/src\/(?:provider|orchestration|persistence|checkpointing)|apps\/server\/integration|packages\/contracts\/|.*(?:fixture|decoder|projector|projection|transfer|report).*)/u;
+  /(?:^|\/)(?:\.github\/workflows\/ci\.yml|scripts\/classify-ci-change|apps\/server\/src\/(?:provider|orchestration|persistence|checkpointing)|apps\/server\/integration|packages\/contracts\/|.*(?:fixture|decoder|projector|projection|transfer|report).*)/u;
 const DISTRIBUTION =
   /(?:^|\/)(?:\.github\/workflows\/(?:release|upstream-sync|ci)\.yml|scripts\/(?:install|release|resolve-|prepare-runtime|generate-release|check-upstream|classify-ci)|packages\/contracts\/src\/productIdentity|docs\/(?:user\/install|operations\/release)\.md)/u;
 
