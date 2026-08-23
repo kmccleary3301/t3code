@@ -32,6 +32,13 @@ root=${RUNNER_TEMP:-${TMPDIR:-/tmp}}/t3-pi-omp-release-lifecycle
 rm -rf "$root"
 mkdir -p "$root/releases" "$root/reports" "$(dirname "$report_path")"
 server_pid=
+desktop_mount=
+pi_state=
+omp_state=
+pi_state_backup=
+omp_state_backup=
+pi_state_existed=0
+omp_state_existed=0
 stop_server() {
   if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
     kill "$server_pid" 2>/dev/null || true
@@ -47,15 +54,56 @@ stop_server() {
   fi
   server_pid=
 }
+detach_desktop_mount() {
+  if [ -n "${desktop_mount:-}" ]; then
+    hdiutil detach "$desktop_mount" >/dev/null 2>&1 || hdiutil detach -force "$desktop_mount" >/dev/null 2>&1 || true
+    rm -rf "$desktop_mount" >/dev/null 2>&1 || true
+    desktop_mount=
+  fi
+}
+restore_native_state() {
+  state_path=$1
+  backup_path=$2
+  existed=$3
+  [ -n "$state_path" ] || return 0
+  if [ "$existed" -eq 1 ]; then
+    cp -p "$backup_path" "$state_path" 2>/dev/null || true
+  else
+    rm -f "$state_path" 2>/dev/null || true
+  fi
+}
 cleanup() {
   stop_server
-  rm -rf "$root"
+  detach_desktop_mount
+  restore_native_state "$pi_state" "$pi_state_backup" "$pi_state_existed"
+  restore_native_state "$omp_state" "$omp_state_backup" "$omp_state_existed"
+  rm -rf "$root" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT HUP INT TERM
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v node >/dev/null 2>&1 || fail "node is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"
+
+os_name=$(uname -s)
+case "$os_name" in
+  Darwin)
+    host_platform=darwin
+    command -v hdiutil >/dev/null 2>&1 || fail "hdiutil is required for the macOS desktop smoke"
+    command -v plutil >/dev/null 2>&1 || fail "plutil is required for the macOS desktop smoke"
+    command -v find >/dev/null 2>&1 || fail "find is required for the macOS desktop smoke"
+    ;;
+  Linux)
+    host_platform=linux
+    command -v find >/dev/null 2>&1 || fail "find is required for the Linux desktop smoke"
+    ;;
+  *) fail "unsupported operating system '$os_name'" ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64) host_arch=arm64 ;;
+  x86_64|amd64) host_arch=x64 ;;
+  *) fail "unsupported architecture '$(uname -m)'" ;;
+esac
 
 sha256_file() {
   file=$1
@@ -91,14 +139,20 @@ fetch_release() {
   installer_sha=$(verify_checksum_entry "$destination/install.sh" "$destination/SHA256SUMS" install.sh)
   manifest_sha=$(verify_checksum_entry "$destination/RELEASE-MANIFEST.json" "$destination/SHA256SUMS" RELEASE-MANIFEST.json)
   sh -n "$destination/install.sh"
-  node - "$destination/RELEASE-MANIFEST.json" "$version" <<'NODE'
+  node - "$destination/RELEASE-MANIFEST.json" "$version" "$host_platform" "$host_arch" <<'NODE'
 const fs = require("node:fs");
-const manifest = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const version = process.argv[3];
+const [manifestPath, version, platform, arch] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 if (manifest.profile !== "pi-omp") throw new Error(`unexpected profile ${manifest.profile}`);
 if (manifest.clientVersion !== version) throw new Error(`unexpected version ${manifest.clientVersion}`);
 if (!Array.isArray(manifest.artifacts) || !manifest.artifacts.some((asset) => asset.kind === "cli")) {
   throw new Error("manifest has no CLI artifact");
+}
+const extension = platform === "darwin" ? /\.dmg$/iu : /\.appimage$/iu;
+if (!manifest.artifacts.some((asset) =>
+  asset.kind === "desktop" && asset.platform === platform && asset.arch === arch &&
+  typeof asset.path === "string" && extension.test(asset.path))) {
+  throw new Error(`manifest has no ${platform}-${arch} desktop artifact`);
 }
 NODE
   printf '%s\t%s\t%s\n' "$tag" "$installer_sha" "$manifest_sha" >> "$root/release-hashes.tsv"
@@ -106,45 +160,237 @@ NODE
 
 fetch_release "$previous_tag" "$root/releases/$previous_tag"
 fetch_release "$current_tag" "$root/releases/$current_tag"
+manifest_asset_details() {
+  manifest=$1
+  kind=$2
+  node - "$manifest" "$kind" "$host_platform" "$host_arch" <<'NODE'
+const fs = require("node:fs");
+const [manifestPath, wanted, platform, arch] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const candidates = Array.isArray(manifest.artifacts)
+  ? manifest.artifacts.filter((asset) =>
+      asset && asset.kind === wanted &&
+      (wanted !== "desktop" || (asset.platform === platform && asset.arch === arch)))
+  : [];
+const asset = candidates.find((candidate) => typeof candidate.path === "string");
+if (!asset) throw new Error(`manifest has no ${wanted} artifact for ${platform}-${arch}`);
+process.stdout.write(`${asset.path}\t${asset.sha256 || ""}`);
+NODE
+}
+
+run_bounded() {
+  timeout_seconds=$1
+  shift
+  node - "$timeout_seconds" "$@" <<'NODE'
+const { spawn } = require("node:child_process");
+const timeoutSeconds = Number(process.argv[2]);
+const command = process.argv[3];
+const args = process.argv.slice(4);
+const child = spawn(command, args, { stdio: "inherit" });
+let settled = false;
+const finish = (code, message) => {
+  if (settled) return;
+  settled = true;
+  clearTimeout(timer);
+  if (message) console.error(message);
+  process.exit(code);
+};
+const timer = setTimeout(() => {
+  child.kill("SIGKILL");
+  finish(1, `${command} timed out after ${timeoutSeconds}s`);
+}, timeoutSeconds * 1000);
+child.on("error", (error) => finish(1, `${command} failed to start: ${error.message}`));
+child.on("exit", (code, signal) => finish(code === 0 ? 0 : 1, code === 0 ? "" : `${command} exited with ${code ?? signal}`));
+NODE
+}
 
 pi_state="$native_root/.pi/agent/config.json"
 omp_state="$native_root/.omp/agent/agent.db"
-mkdir -p "$(dirname "$pi_state")" "$(dirname "$omp_state")"
-printf '%s\n' 'lifecycle-preservation-pi' > "$pi_state"
-printf '%s\n' 'lifecycle-preservation-omp' > "$omp_state"
+pi_state_backup="$root/pi-state.before"
+omp_state_backup="$root/omp-state.before"
+if [ -e "$pi_state" ] || [ -L "$pi_state" ]; then
+  [ -f "$pi_state" ] || fail "Pi native state is not a regular file: $pi_state"
+  pi_state_existed=1
+  cp -p "$pi_state" "$pi_state_backup"
+else
+  mkdir -p "$(dirname "$pi_state")"
+  printf '%s\n' 'lifecycle-preservation-pi' > "$pi_state"
+fi
+if [ -e "$omp_state" ] || [ -L "$omp_state" ]; then
+  [ -f "$omp_state" ] || fail "OMP native state is not a regular file: $omp_state"
+  omp_state_existed=1
+  cp -p "$omp_state" "$omp_state_backup"
+else
+  mkdir -p "$(dirname "$omp_state")"
+  printf '%s\n' 'lifecycle-preservation-omp' > "$omp_state"
+fi
 pi_before=$(sha256_file "$pi_state")
 omp_before=$(sha256_file "$omp_state")
-
 run_installer() {
-  tag=$1
-  prefix=$2
-  version=${tag#fork-v}
-  sh "$root/releases/$tag/install.sh" \
+  install_tag=$1
+  install_prefix=$2
+  shift 2
+  install_version=${install_tag#fork-v}
+  sh "$root/releases/$install_tag/install.sh" \
     --profile pi-omp \
-    --release-base-url "https://github.com/$repository/releases/download/$tag" \
-    --version "$version" \
-    --prefix "$prefix"
+    --release-base-url "https://github.com/$repository/releases/download/$install_tag" \
+    --version "$install_version" \
+    --prefix "$install_prefix" "$@"
 }
 
 assert_version() {
-  prefix=$1
-  expected=$2
-  [ -x "$prefix/bin/t3-pi-omp" ] || fail "installed CLI is missing at $prefix"
-  version_output=$("$prefix/bin/t3-pi-omp" --version 2>&1) || fail "--version failed for $expected"
+  check_prefix=$1
+  expected_version=$2
+  [ -x "$check_prefix/bin/t3-pi-omp" ] || fail "installed CLI is missing at $check_prefix"
+  version_output=$("$check_prefix/bin/t3-pi-omp" --version 2>&1) || fail "--version failed for $expected_version"
   case "$version_output" in
-    *"$expected"*) ;;
-    *) fail "expected version $expected, got: $version_output" ;;
+    *"$expected_version"*) ;;
+    *) fail "expected version $expected_version, got: $version_output" ;;
   esac
-  help_output=$("$prefix/bin/t3-pi-omp" --help 2>&1) || fail "--help failed for $expected"
+  help_output=$("$check_prefix/bin/t3-pi-omp" --help 2>&1) || fail "--help failed for $expected_version"
   case "$help_output" in
     *"Run the T3 Code server"*) ;;
     *) fail "help output did not describe the server command" ;;
   esac
 }
+assert_prefix_unchanged() {
+  check_prefix=$1
+  expected_active_target=$2
+  expected_active_version=$3
+  expected_previous_version=$4
+  expected_owner_hash=$5
+  [ -L "$check_prefix/active" ] || fail "failed install changed the active pointer type"
+  [ "$(readlink "$check_prefix/active")" = "$expected_active_target" ] ||
+    fail "failed install changed the active pointer"
+  [ "$(cat "$check_prefix/.active-version")" = "$expected_active_version" ] ||
+    fail "failed install changed the active version"
+  [ "$(cat "$check_prefix/.previous-version" 2>/dev/null || true)" = "$expected_previous_version" ] ||
+    fail "failed install changed the previous version"
+  [ ! -e "$check_prefix/versions/$current_version" ] ||
+    fail "failed install left a current version directory"
+  [ "$(sha256_file "$check_prefix/.t3-install-owner")" = "$expected_owner_hash" ] ||
+    fail "failed install changed the ownership marker"
+}
+make_mutating_curl() {
+  mutation_bin="$root/mutation-bin"
+  mkdir -p "$mutation_bin"
+  real_curl=$(command -v curl)
+  cat > "$mutation_bin/curl" <<'SH'
+#!/bin/sh
+set -eu
+output=
+url=
+previous=
+for arg in "$@"; do
+  case "$previous" in
+    --output|-o) output=$arg ;;
+  esac
+  case "$arg" in
+    https://*|http://*) url=$arg ;;
+  esac
+  previous=$arg
+done
+[ -n "$output" ] || exec "$T3_LIFECYCLE_REAL_CURL" "$@"
+asset=${url##*/}
+if [ "${T3_LIFECYCLE_MUTATION_MODE:-}" = missing ] &&
+  [ "$asset" = "${T3_LIFECYCLE_MUTATION_ASSET:-}" ]; then
+  rm -f "$output"
+  exit 22
+fi
+"$T3_LIFECYCLE_REAL_CURL" "$@"
+if [ "${T3_LIFECYCLE_MUTATION_MODE:-}" = checksum ] && [ "$asset" = SHA256SUMS ]; then
+  awk '$2 == "RELEASE-MANIFEST.json" || $2 == "./RELEASE-MANIFEST.json" { $1 = "0000000000000000000000000000000000000000000000000000000000000000" } { print }' "$output" > "$output.mutated"
+  mv "$output.mutated" "$output"
+fi
+SH
+  chmod 755 "$mutation_bin/curl"
+}
+
+desktop_identity_smoke() {
+  tag=$1
+  desktop_prefix=$2
+  manifest="$root/releases/$tag/RELEASE-MANIFEST.json"
+  details=$(manifest_asset_details "$manifest" desktop)
+  desktop_name=${details%%	*}
+  desktop_hash=${details#*	}
+  desktop_file="$desktop_prefix/active/desktop/${desktop_name##*/}"
+  [ -f "$desktop_file" ] || fail "desktop artifact is missing at $desktop_file"
+  case "$host_platform:$desktop_name" in
+    darwin:*.dmg|linux:*.AppImage|linux:*.appimage) ;;
+    *) fail "desktop artifact has unexpected name '$desktop_name'" ;;
+  esac
+  desktop_actual=$(verify_checksum_entry "$desktop_file" "$root/releases/$tag/SHA256SUMS" "${desktop_name##*/}")
+  [ -z "$desktop_hash" ] || [ "$desktop_actual" = "$desktop_hash" ] ||
+    fail "desktop manifest checksum mismatch for $desktop_name"
+  printf '%s\t%s\t%s\n' "$tag" "${desktop_name##*/}" "$desktop_actual" >> "$root/desktop-hashes.tsv"
+  case "$host_platform" in
+    darwin)
+      desktop_mount="$root/desktop-mount-$tag"
+      mkdir -p "$desktop_mount"
+      run_bounded 30 hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$desktop_mount" "$desktop_file" >/dev/null
+      desktop_app=$(find "$desktop_mount" -type d -name '*.app' -print | awk 'NF { print; exit }')
+      [ -n "$desktop_app" ] || { detach_desktop_mount; fail "DMG has no application bundle"; }
+      plist="$desktop_app/Contents/Info.plist"
+      [ -f "$plist" ] || { detach_desktop_mount; fail "DMG application has no Info.plist"; }
+      bundle_version=$(plutil -extract CFBundleShortVersionString raw -o - "$plist" 2>/dev/null || true)
+      [ -n "$bundle_version" ] || bundle_version=$(plutil -extract CFBundleVersion raw -o - "$plist" 2>/dev/null || true)
+      case "$bundle_version" in
+        *"${tag#fork-v}"*) ;;
+        *) detach_desktop_mount; fail "DMG identity did not expose ${tag#fork-v}: $bundle_version" ;;
+      esac
+      ;;
+    linux)
+      extraction="$root/desktop-extract-$tag"
+      mkdir -p "$extraction"
+      staged="$extraction/${desktop_name##*/}"
+      cp "$desktop_file" "$staged"
+      chmod 755 "$staged"
+      run_bounded 30 "$staged" --appimage-extract >/dev/null
+      squashfs_root="$extraction/squashfs-root"
+      [ -x "$squashfs_root/AppRun" ] || fail "AppImage extraction has no executable AppRun"
+      desktop_entry=$(find "$squashfs_root" -type f -name '*.desktop' -print | awk 'NF { print; exit }')
+      [ -n "$desktop_entry" ] || fail "AppImage extraction has no desktop entry"
+      awk '/^Name=.*T3 Code/ { found = 1 } END { exit found ? 0 : 1 }' "$desktop_entry" ||
+        fail "AppImage desktop entry has no T3 Code identity"
+      case "$desktop_name" in
+        *"${tag#fork-v}"*) ;;
+        *) fail "AppImage identity did not expose ${tag#fork-v}: $desktop_name" ;;
+      esac
+      ;;
+  esac
+  detach_desktop_mount
+}
 
 prefix="$root/prefix"
 run_installer "$previous_tag" "$prefix"
 assert_version "$prefix" "$previous_version"
+prefix_active_target=$(readlink "$prefix/active")
+prefix_active_version=$(cat "$prefix/.active-version")
+prefix_previous_version=$(cat "$prefix/.previous-version" 2>/dev/null || true)
+prefix_owner_hash=$(sha256_file "$prefix/.t3-install-owner")
+make_mutating_curl
+if PATH="$root/mutation-bin:$PATH" T3_LIFECYCLE_REAL_CURL="$real_curl" \
+  T3_LIFECYCLE_MUTATION_MODE=checksum \
+  sh "$root/releases/$current_tag/install.sh" --profile pi-omp \
+  --release-base-url "https://github.com/$repository/releases/download/$current_tag" \
+  --version "$current_version" --prefix "$prefix" >/dev/null 2>&1
+then
+  fail "tampered SHA256SUMS unexpectedly succeeded"
+fi
+assert_prefix_unchanged \
+  "$prefix" "$prefix_active_target" "$prefix_active_version" "$prefix_previous_version" "$prefix_owner_hash"
+cli_details=$(manifest_asset_details "$root/releases/$current_tag/RELEASE-MANIFEST.json" cli)
+cli_name=${cli_details%%	*}
+if PATH="$root/mutation-bin:$PATH" T3_LIFECYCLE_REAL_CURL="$real_curl" \
+  T3_LIFECYCLE_MUTATION_MODE=missing T3_LIFECYCLE_MUTATION_ASSET="${cli_name##*/}" \
+  sh "$root/releases/$current_tag/install.sh" --profile pi-omp \
+  --release-base-url "https://github.com/$repository/releases/download/$current_tag" \
+  --version "$current_version" --prefix "$prefix" >/dev/null 2>&1
+then
+  fail "missing CLI asset unexpectedly succeeded"
+fi
+assert_prefix_unchanged \
+  "$prefix" "$prefix_active_target" "$prefix_active_version" "$prefix_previous_version" "$prefix_owner_hash"
 run_installer "$current_tag" "$prefix"
 assert_version "$prefix" "$current_version"
 [ "$(cat "$prefix/.previous-version")" = "$previous_version" ] || fail "upgrade did not retain previous version"
@@ -185,16 +431,28 @@ sh "$root/releases/$current_tag/install.sh" \
   --rollback
 assert_version "$prefix" "$previous_version"
 
+desktop_prefix="$root/desktop-prefix"
+run_installer "$previous_tag" "$desktop_prefix" --desktop
+assert_version "$desktop_prefix" "$previous_version"
+desktop_identity_smoke "$previous_tag" "$desktop_prefix"
+run_installer "$current_tag" "$desktop_prefix" --desktop
+assert_version "$desktop_prefix" "$current_version"
+desktop_identity_smoke "$current_tag" "$desktop_prefix"
+sh "$root/releases/$current_tag/install.sh" --profile pi-omp --prefix "$desktop_prefix" --rollback
+assert_version "$desktop_prefix" "$previous_version"
+desktop_identity_smoke "$previous_tag" "$desktop_prefix"
+sh "$root/releases/$current_tag/install.sh" --profile pi-omp --prefix "$desktop_prefix" --uninstall
+[ ! -e "$desktop_prefix" ] || fail "desktop uninstall left the owned prefix"
+
 bad_prefix="$root/bad-prefix"
-set +e
-sh "$root/releases/$current_tag/install.sh" \
+if sh "$root/releases/$current_tag/install.sh" \
   --profile pi-omp \
   --release-base-url "https://github.com/$repository/releases/download/fork-v99.99.99" \
   --version 99.99.99 \
   --prefix "$bad_prefix" >/dev/null 2>&1
-bad_status=$?
-set -e
-[ "$bad_status" -ne 0 ] || fail "missing release unexpectedly succeeded"
+then
+  fail "missing release unexpectedly succeeded"
+fi
 [ ! -e "$bad_prefix" ] || fail "missing release mutated its prefix"
 
 sh "$root/releases/$current_tag/install.sh" --profile pi-omp --prefix "$prefix" --uninstall
@@ -203,12 +461,16 @@ sh "$root/releases/$current_tag/install.sh" --profile pi-omp --prefix "$prefix" 
 [ "$(sha256_file "$pi_state")" = "$pi_before" ] || fail "Pi native state changed"
 [ "$(sha256_file "$omp_state")" = "$omp_before" ] || fail "OMP native state changed"
 
-node - "$report_path" "$root/release-hashes.tsv" "$current_tag" "$previous_tag" <<'NODE'
+node - "$report_path" "$root/release-hashes.tsv" "$root/desktop-hashes.tsv" "$current_tag" "$previous_tag" <<'NODE'
 const fs = require("node:fs");
-const [report, hashes, currentTag, previousTag] = process.argv.slice(2);
+const [report, hashes, desktopHashes, currentTag, previousTag] = process.argv.slice(2);
 const releaseHashes = fs.readFileSync(hashes, "utf8").trim().split("\n").map((line) => {
   const [tag, installerSha256, manifestSha256] = line.split("\t");
   return { tag, installerSha256, manifestSha256 };
+});
+const desktopArtifacts = fs.readFileSync(desktopHashes, "utf8").trim().split("\n").map((line) => {
+  const [tag, name, sha256] = line.split("\t");
+  return { tag, name, sha256 };
 });
 fs.writeFileSync(report, JSON.stringify({
   schemaVersion: 1,
@@ -217,8 +479,15 @@ fs.writeFileSync(report, JSON.stringify({
   architecture: process.arch,
   currentTag,
   previousTag,
-  checks: ["fresh-install", "upgrade", "version-help", "server-health", "rollback", "missing-release-no-mutation", "uninstall", "native-config-preservation"],
+  checks: [
+    "fresh-install", "upgrade", "version-help", "server-health", "rollback",
+    "tampered-checksum-no-mutation", "missing-asset-no-mutation",
+    "missing-release-no-mutation", "desktop-install", "desktop-upgrade",
+    "desktop-identity", "desktop-rollback", "desktop-uninstall", "uninstall",
+    "native-config-preservation",
+  ],
   releaseHashes,
+  desktopArtifacts,
 }, null, 2) + "\n");
 NODE
 printf '%s\n' "POSIX release lifecycle passed for $current_tag on $(uname -s)/$(uname -m)"
