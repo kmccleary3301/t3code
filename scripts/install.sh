@@ -419,7 +419,8 @@ const m = JSON.parse(fs.readFileSync(file, "utf8"));
 const aliases = {
   cli: ["cli", "package", "npm", "cli-package"],
   desktop: ["desktop", "desktop-artifact", "app"],
-  runtime: ["runtime", "provider", "runtime-archive"]
+  runtime: ["runtime", "provider", "runtime-archive"],
+  native: ["native", "node-pty"]
 };
 const platformNames = platform === "darwin" ? ["darwin", "mac", "macos"] : ["linux"];
 const archNames = arch === "arm64" ? ["arm64", "aarch64"] : ["x64", "x86_64", "amd64"];
@@ -429,6 +430,7 @@ function add(v, context) {
   if (!v || typeof v !== "object" || Array.isArray(v)) return;
   const kind = text(v.kind || v.type || v.artifactKind || "");
   const provider = text(v.runtime || v.provider || v.name || "");
+  const native = text(v.native || v.nativePackage || "");
   const name = v.path || v.file || v.filename || v.asset || v.archive || v.tarball || (typeof v.name === "string" && !v.kind ? v.name : "");
   const nameText = text(name);
   if (wanted === "desktop" && nameText.endsWith(".blockmap")) return;
@@ -437,10 +439,14 @@ function add(v, context) {
     nameText.endsWith(".exe") ? "windows" : nameText;
   const p = text(v.platform || v.os || v.target || context.platform || (wanted === "cli" ? "" : wanted === "desktop" ? desktopPlatform : nameText));
   const a = text(v.arch || v.architecture || context.arch || (wanted === "cli" ? "" : nameText));
-  const k = wanted === "runtime" ? (kind.includes("runtime") || kind.includes("provider") || provider === runtime || kind === runtime) :
-    aliases[wanted].some((x) => kind.includes(x));
-  if (!k && wanted !== "runtime") return;
+  const k = wanted === "native"
+    ? (kind.includes("native") || native === "node-pty")
+    : wanted === "runtime"
+      ? (kind.includes("runtime") || kind.includes("provider") || provider === runtime || kind === runtime)
+      : aliases[wanted].some((x) => kind.includes(x));
+  if (!k && wanted !== "runtime" && wanted !== "native") return;
   if (wanted === "runtime" && !(kind.includes("runtime") || kind.includes("provider") || provider === runtime || kind === runtime)) return;
+  if (wanted === "native" && native && native !== "node-pty") return;
   if (p && !platformNames.some((x) => p.includes(x)) && !p.includes(platform + "-")) return;
   if (a && !archNames.some((x) => a.includes(x))) return;
   if (wanted === "runtime" && provider && provider !== runtime && !kind.includes(runtime)) return;
@@ -465,6 +471,7 @@ if (Array.isArray(m.artifacts)) walk(m.artifacts, {});
 if (wanted === "cli") walk(m.cli || m.cliAsset || {}, {});
 if (wanted === "desktop") walk(m.desktop || m.desktopAsset || {}, {});
 if (wanted === "runtime") walk((m.runtimes && (m.runtimes[runtime] || m.runtimes)) || m.runtime || {}, {});
+if (wanted === "native") walk(m.native || m.nativeAsset || {}, {});
 candidates.sort((x, y) => y.score - x.score);
 const out = candidates.find((x) => x.hash || x.name);
 if (!out) process.exit(1);
@@ -620,6 +627,45 @@ if [ -z "$cli_source" ]; then
   cp "$cli_source" "$stage_version/bin/$binary_name"
 fi
 chmod 755 "$stage_version/bin/$binary_name"
+if [ "$platform" = linux ]; then
+  native_info=$(manifest_asset "$work_tmp/RELEASE-MANIFEST.json" native "$platform" "$arch" "" || true)
+  native_name=$(printf '%s\n' "$native_info" | awk -F '\t' '{ print $1 }')
+  native_hash=$(printf '%s\n' "$native_info" | awk -F '\t' '{ print $2 }')
+  native_url=$(printf '%s\n' "$native_info" | awk -F '\t' '{ print $3 }')
+  if [ -n "$native_name" ]; then
+    case "$native_name" in *..*|/*|*' '*|*'\t'*) fail "unsafe native asset path '$native_name'" ;; esac
+    native_file=$work_tmp/downloads/native-$arch.tar.gz
+    if [ -n "$native_url" ]; then require_https "$native_url" "native asset URL"; else native_url=$release_base_url/$native_name; fi
+    fetch "$native_url" "$native_file"
+    [ -n "$native_hash" ] || native_hash=$(checksum_for "$native_name" "$work_tmp/SHA256SUMS")
+    verify_asset "$native_file" "$native_name" "$native_hash"
+    native_unpack=$work_tmp/stage/native-pty
+    mkdir -p "$native_unpack"
+    extract_archive "$native_file" "$native_unpack" || fail "native node-pty asset is not a supported archive"
+    verify_extracted_tree "$native_unpack" ||
+      fail "native node-pty archive contains unsafe links"
+    [ -f "$native_unpack/pty.node" ] || fail "native node-pty archive has no pty.node"
+    [ -f "$native_unpack/spawn-helper" ] || fail "native node-pty archive has no spawn-helper"
+    node_pty_dir=$(
+      node - "$stage_version" "$package_name" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const [stage, packageName] = process.argv.slice(2);
+const candidates = [
+  path.join(stage, "lib", "node_modules", packageName, "node_modules", "node-pty"),
+  path.join(stage, "lib", "node_modules", "node-pty"),
+];
+const found = candidates.find((candidate) => fs.existsSync(path.join(candidate, "package.json")));
+if (!found) process.exit(1);
+process.stdout.write(found);
+NODE
+    ) || fail "installed CLI has no node-pty package"
+    mkdir -p "$node_pty_dir/prebuilds/linux-$arch"
+    cp "$native_unpack/pty.node" "$node_pty_dir/prebuilds/linux-$arch/pty.node"
+    cp "$native_unpack/spawn-helper" "$node_pty_dir/prebuilds/linux-$arch/spawn-helper"
+    chmod 755 "$node_pty_dir/prebuilds/linux-$arch/spawn-helper"
+  fi
+fi
 
 if [ "$do_desktop" -eq 1 ]; then
   desktop_info=$(manifest_asset "$work_tmp/RELEASE-MANIFEST.json" desktop "$platform" "$arch" "" || true)

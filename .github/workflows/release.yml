@@ -446,15 +446,70 @@ jobs:
           pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
           pty_dir="$(dirname "$pty_pkg")"
           ( cd "$pty_dir" && npx --yes node-gyp rebuild )
-          mkdir -p wsl-prebuild
+          mkdir -p wsl-prebuild node-pty-package
           cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
-          file wsl-prebuild/pty.node
+          cp "$pty_dir/build/Release/pty.node" node-pty-package/pty.node
+          cp "$pty_dir/build/Release/spawn-helper" node-pty-package/spawn-helper
+          tar -czf node-pty-linux-x64.tar.gz -C node-pty-package pty.node spawn-helper
+          file wsl-prebuild/pty.node node-pty-linux-x64.tar.gz
 
-      - name: Upload node-pty linux-x64 prebuild
+      - name: Upload node-pty linux-x64 WSL prebuild
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild/pty.node
+          if-no-files-found: error
+
+      - name: Upload node-pty linux-x64 release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: node-pty-linux-x64
+          path: node-pty-linux-x64.tar.gz
+          if-no-files-found: error
+
+  build_node_pty_linux_arm64:
+    name: Build node-pty (linux-arm64)
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+
+      - name: Build node-pty linux-arm64 release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
+          pty_dir="$(dirname "$pty_pkg")"
+          ( cd "$pty_dir" && npx --yes node-gyp rebuild )
+          mkdir -p node-pty-package
+          cp "$pty_dir/build/Release/pty.node" node-pty-package/pty.node
+          cp "$pty_dir/build/Release/spawn-helper" node-pty-package/spawn-helper
+          tar -czf node-pty-linux-arm64.tar.gz -C node-pty-package pty.node spawn-helper
+          file node-pty-linux-arm64.tar.gz
+
+      - name: Upload node-pty linux-arm64 release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: node-pty-linux-arm64
+          path: node-pty-linux-arm64.tar.gz
           if-no-files-found: error
 
   build:
@@ -872,7 +927,7 @@ jobs:
 
   publish_cli:
     name: Build and optionally publish CLI
-    needs: [preflight, relay_public_config, build]
+    needs: [preflight, relay_public_config, build, build_node_pty_linux_arm64]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -948,6 +1003,17 @@ jobs:
             cp "$artifact_dir"/t3-resource-monitor* "$target_dir/"
             chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
           done
+      - name: Download Linux node-pty x64 release asset
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: node-pty-linux-x64
+          path: cli-release
+
+      - name: Download Linux node-pty arm64 release asset
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: node-pty-linux-arm64
+          path: cli-release
 
       - name: Publish CLI package to npm
         if: ${{ needs.preflight.outputs.product_profile == 'upstream' || env.T3_PI_OMP_PUBLISH_NPM == 'true' }}
@@ -966,7 +1032,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cli-package
-          path: cli-release/*.tgz
+          path: cli-release/*
           if-no-files-found: error
 
   release:
@@ -1111,6 +1177,7 @@ jobs:
               "release-assets/*.blockmap" \
               "release-assets/*.yml" \
               "release-assets/*.tgz" \
+              "release-assets/node-pty-*.tar.gz" \
               "release-assets/RELEASE-MANIFEST.json" \
               "release-assets/install.sh" \
               "release-assets/SHA256SUMS"

@@ -146,8 +146,9 @@ try {
 
   $port = Get-Random -Minimum 38773 -Maximum 39773
   $serverBase = Join-Path $root 'server-home'
-  $serverLog = Join-Path $root 'server.log'
-  $serverProcess = Start-Process -FilePath $cli -ArgumentList @('serve', '--port', $port, '--base-dir', $serverBase, '--no-browser') -RedirectStandardOutput $serverLog -RedirectStandardError $serverLog -PassThru
+  $serverStdout = Join-Path $root 'server.stdout.log'
+  $serverStderr = Join-Path $root 'server.stderr.log'
+  $serverProcess = Start-Process -FilePath $cli -ArgumentList @('serve', '--port', $port, '--base-dir', $serverBase, '--no-browser') -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr -PassThru
   $descriptorPath = Join-Path $root 'environment.json'
   $ready = $false
   for ($i = 0; $i -lt 60; $i++) {
@@ -162,12 +163,12 @@ try {
       }
     } catch { }
     if ($serverProcess.HasExited) {
-      Get-Content -LiteralPath $serverLog -ErrorAction SilentlyContinue | Write-Error
+      Get-Content -LiteralPath $serverStdout, $serverStderr -ErrorAction SilentlyContinue | Write-Error
       Fail 'server exited before readiness'
     }
     Start-Sleep -Seconds 1
   }
-  if (-not $ready) { Get-Content -LiteralPath $serverLog -ErrorAction SilentlyContinue | Write-Error; Fail 'server readiness timed out' }
+  if (-not $ready) { Get-Content -LiteralPath $serverStdout, $serverStderr -ErrorAction SilentlyContinue | Write-Error; Fail 'server readiness timed out' }
   if (-not $serverProcess.HasExited) { Stop-Process -Id $serverProcess.Id -Force }
   $serverProcess = $null
 

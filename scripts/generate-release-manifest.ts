@@ -19,8 +19,16 @@ export interface ReleaseArtifact {
   readonly path: string;
   readonly size: number;
   readonly sha256: string;
-  readonly kind: "cli" | "desktop" | "installer" | "update-metadata" | "runtime" | "other";
+  readonly kind:
+    | "cli"
+    | "desktop"
+    | "installer"
+    | "update-metadata"
+    | "runtime"
+    | "native"
+    | "other";
   readonly runtime?: "pi" | "omp";
+  readonly native?: "node-pty";
   readonly platform?: "darwin" | "linux" | "windows";
   readonly arch?: "arm64" | "x64";
   readonly signed: boolean;
@@ -108,9 +116,25 @@ function desktopDetails(name: string):
     arch: match[1]!.toLowerCase() === "arm64" ? "arm64" : "x64",
   };
 }
+function nativeDetails(name: string):
+  | {
+      readonly native: "node-pty";
+      readonly platform: "linux";
+      readonly arch: "arm64" | "x64";
+    }
+  | undefined {
+  const match = /^node-pty-(linux)-(arm64|x64)\.tar\.gz$/iu.exec(name);
+  if (!match) return undefined;
+  return {
+    native: "node-pty",
+    platform: "linux",
+    arch: match[2]!.toLowerCase() === "arm64" ? "arm64" : "x64",
+  };
+}
 
 function artifactKind(name: string): ReleaseArtifact["kind"] {
   if (runtimeDetails(name)) return "runtime";
+  if (nativeDetails(name)) return "native";
   if (name.endsWith(".tgz")) return "cli";
   if (name === "install.sh") return "installer";
   if (name.endsWith(".yml")) return "update-metadata";
@@ -190,6 +214,7 @@ export function generateReleaseManifest(input: {
     if (!stat.isFile()) throw new Error(`Release asset is not a regular file: ${name}`);
     const runtime = runtimeDetails(name);
     const kind = artifactKind(name);
+    const native = kind === "native" ? nativeDetails(name) : undefined;
     const desktop = kind === "desktop" ? desktopDetails(name) : undefined;
     return {
       name,
@@ -197,7 +222,7 @@ export function generateReleaseManifest(input: {
       size: stat.size,
       sha256: NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(path)).digest("hex"),
       kind,
-      ...(runtime ?? desktop),
+      ...(native ?? runtime ?? desktop),
       signed: signedForArtifact(name, records),
     };
   });
