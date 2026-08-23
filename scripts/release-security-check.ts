@@ -41,6 +41,22 @@ assert(
   "Upstream sync automation is not present.",
 );
 assert(
+  workflow.includes("T3CODE_UPSTREAM_REPOSITORY: ${{ vars.T3CODE_UPSTREAM_REPOSITORY"),
+  "Release upstream repository must enter the shell through an environment variable.",
+);
+assert(
+  workflow.includes('upstream_repository="$T3CODE_UPSTREAM_REPOSITORY"'),
+  "Release upstream repository must be copied from the environment.",
+);
+assert(
+  workflow.includes('[[ "$upstream_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]'),
+  "Release upstream repository must be validated before constructing a remote URL.",
+);
+assert(
+  !/upstream_repository="\$\{\{[^}]*T3CODE_UPSTREAM_REPOSITORY/u.test(workflow),
+  "Release upstream repository must not be interpolated into a shell assignment.",
+);
+assert(
   workflow.includes("actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be"),
   "Build provenance attestation must remain enabled and pinned.",
 );

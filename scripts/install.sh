@@ -2,7 +2,8 @@
 # Secure POSIX installer for T3 Code releases.
 # It downloads only HTTPS release assets, verifies RELEASE-MANIFEST.json and
 # SHA256SUMS before touching the destination, then switches an owned prefix
-# atomically. No downloaded shell or JavaScript is evaluated.
+# atomically. Release assets are never evaluated as shell or JavaScript; the
+# installer itself must be verified before invocation when installer provenance matters.
 set -eu
 
 profile=${T3_INSTALL_PROFILE:-upstream}

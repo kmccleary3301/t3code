@@ -19,9 +19,13 @@ This starts the T3 Code server on your machine and opens the local web app. Use
 
 ## CLI Installer
 
-The release workflow publishes a profile-specific POSIX installer with every release. It
-downloads only HTTPS assets, verifies `RELEASE-MANIFEST.json` and `SHA256SUMS`, and never
-evaluates downloaded shell or JavaScript:
+The release workflow publishes a profile-specific POSIX installer with every release. It downloads
+only HTTPS release assets and verifies `RELEASE-MANIFEST.json` and `SHA256SUMS` before changing the
+owned prefix. The installer itself is shell; `curl | sh` executes that downloaded script before its
+own checksum can be checked, so use the pinned download-first procedure below when installer
+provenance matters.
+
+For a convenience install from the current `latest` release:
 
 ```sh
 curl -fsSL https://github.com/pingdotgg/t3code/releases/latest/download/install.sh |

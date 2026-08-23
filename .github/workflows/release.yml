@@ -275,9 +275,13 @@ jobs:
       - name: Check owner-controlled upstream sync baseline
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.upstream_sync_check == 'true' }}
         shell: bash
+        env:
+          T3CODE_UPSTREAM_REPOSITORY: ${{ vars.T3CODE_UPSTREAM_REPOSITORY || 'pingdotgg/t3code' }}
         run: |
           set -euo pipefail
-          upstream_repository="${{ vars.T3CODE_UPSTREAM_REPOSITORY || 'pingdotgg/t3code' }}"
+          upstream_repository="$T3CODE_UPSTREAM_REPOSITORY"
+          [[ "$upstream_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+            { echo "invalid T3CODE_UPSTREAM_REPOSITORY" >&2; exit 1; }
           git remote add upstream "https://github.com/${upstream_repository}.git"
           git fetch --no-tags upstream main
           node scripts/check-upstream-sync.ts --remote upstream --ref main
