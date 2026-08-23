@@ -179,7 +179,7 @@ jobs:
           vp test run
           apps/server/integration/TransferBudgetReport.integration.test.ts
           apps/server/src/server.test.ts
-          -t "reports thread HTTP and WebSocket transfer budgets|keeps authenticated thread subscribers converged across bounded reconnect replay"
+          -t "reports thread HTTP and WebSocket transfer budgets|keeps authenticated .* thread subscribers converged across bounded reconnect replay"
 
       - name: Measure deterministic performance baseline
         if: steps.classify.outputs.replay_gate == 'true'

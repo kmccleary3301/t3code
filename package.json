@@ -12,7 +12,7 @@
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
     "migrate-dev-db": "node apps/server/scripts/migrate-dev-db.ts",
     "private-state-canary": "node apps/server/scripts/private-state-canary.ts",
-    "test-pi-omp": "vp test run apps/server/src/provider/piFamily/NativeTraceCorpus.test.ts apps/server/src/provider/piFamily/NativeTraceReplay.test.ts apps/server/integration/TransferBudgetReport.integration.test.ts apps/server/src/server.test.ts -t \"reports thread HTTP and WebSocket transfer budgets|keeps authenticated thread subscribers converged across bounded reconnect replay\"",
+    "test-pi-omp": "vp test run apps/server/src/provider/piFamily/NativeTraceCorpus.test.ts apps/server/src/provider/piFamily/NativeTraceReplay.test.ts apps/server/integration/TransferBudgetReport.integration.test.ts apps/server/src/server.test.ts -t \"reports thread HTTP and WebSocket transfer budgets|keeps authenticated .* thread subscribers converged across bounded reconnect replay\"",
     "start": "vp run --filter t3 start",
     "start:desktop": "vp run --filter @t3tools/desktop start",
     "start:marketing": "vp run --filter @t3tools/marketing preview",
