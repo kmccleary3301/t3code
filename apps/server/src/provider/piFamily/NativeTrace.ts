@@ -1162,6 +1162,7 @@ function isPublicationSafeSensitiveValue(
   ) {
     return true;
   }
+  if (value === null || value === undefined || value === false) return true;
   if (typeof value === "string") {
     return (
       value.length === 0 ||
