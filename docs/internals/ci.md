@@ -174,12 +174,11 @@ evidence until a release matrix enables them. macOS signing/passkey and Windows 
 depend on release-only credentials. Missing credentials produce unsigned artifacts where the release
 workflow allows that; pull-request CI does not test signing.
 
-The published `fork-v0.0.40` release contains every target in the matrix above plus the
-profile-specific CLI/web tarball. Release workflow run `32443000151` built Linux arm64 on the
-native `ubuntu-24.04-arm` runner and built the other four targets on their matching GitHub-hosted
-runners. GitHub provenance attestations cover the release assets. Platform-signing credentials
-were not configured, so the desktop artifacts are unsigned and the macOS artifacts are
-unnotarized.
+The published `fork-v0.0.43` release contains every target in the matrix above plus the
+profile-specific CLI/web tarball. Release workflow run `32609002282` built Linux arm64/x64,
+macOS arm64/x64, and Windows x64 on their matching GitHub-hosted runners. GitHub provenance
+attestations cover the release assets. Platform-signing credentials were not configured, so the
+desktop artifacts are unsigned and the macOS artifacts are unnotarized.
 
 Optional Pi/OMP runtime bundles are supplied through the owner-controlled
 `T3_PI_OMP_RUNTIME_BUNDLES_JSON` repository variable. The value is a JSON object with a `bundles`

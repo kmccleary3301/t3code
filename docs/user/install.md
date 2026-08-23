@@ -37,23 +37,26 @@ curl -fsSL https://github.com/kmccleary3301/t3code/releases/latest/download/inst
 ```
 
 Do not point the private installer at the official T3 release repository. For a pinned,
-auditable install of the published `fork-v0.0.40` release, download the verification files
+auditable install of the published `fork-v0.0.43` release, download the verification files
 from that exact release, verify the installer, then run it locally:
 
 ```sh
-base=https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.40
+base=https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.43
 curl -fsSLO "$base/install.sh"
 curl -fsSLO "$base/RELEASE-MANIFEST.json"
 curl -fsSLO "$base/SHA256SUMS"
 expected=$(awk '$2 == "./install.sh" { print $1 }' SHA256SUMS)
 actual=$(shasum -a 256 install.sh | awk '{ print $1 }') # use sha256sum on Linux
 test "$actual" = "$expected"
-sh install.sh --profile pi-omp --repository kmccleary3301/t3code --version 0.0.40
+sh install.sh --profile pi-omp --repository kmccleary3301/t3code --version 0.0.43
 ```
 
-The recorded `fork-v0.0.40` installer SHA-256 is
-`ff5b3bbceacd7196b3bb06e75aa2a1afa010ce38bea88574182fc9043537ef3e`; treat the release's
-`SHA256SUMS` as authoritative if this documentation and the release ever disagree.
+The recorded `fork-v0.0.43` installer SHA-256 is
+`ff5b3bbceacd7196b3bb06e75aa2a1afa010ce38bea88574182fc9043537ef3e`; its release-manifest
+SHA-256 is `44267981e905f4dbe5b2fe35a2c50c942ff14873a1228ca17047536c2f216e7b`, and the
+checksummed CLI tarball is `dff556bb845f935d2575c01e8085afd5cf86ba24e8aeed670a1e40d625f05155`.
+Treat the release's `SHA256SUMS` as authoritative if this documentation and the release ever
+disagree.
 
 Use `--channel nightly` for the newest matching nightly, `--version X.Y.Z` for an exact
 release, `--prefix "$HOME/.local/share/t3code/pi-omp"` for an isolated prefix, and `--dry-run`
@@ -77,13 +80,13 @@ Download the latest release from
 registry.
 
 The verified private Pi + OMP
-[`fork-v0.0.40`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.40)
+[`fork-v0.0.43`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.43)
 release includes macOS arm64/x64, Linux arm64/x64, and Windows x64 desktop artifacts. Verify them
 against `SHA256SUMS`; the release also carries GitHub build provenance attestations. Platform
 code-signing credentials were not configured, so the installers are unsigned and the
-[macOS arm64 DMG](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.40/T3-Code-Pi-OMP-0.0.40-arm64.dmg)
+[macOS arm64 DMG](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.43/T3-Code-Pi-OMP-0.0.43-arm64.dmg)
 is not notarized. The fork installs side by side with upstream under a distinct bundle ID and URL
-scheme. Use `fork-v0.0.40` or newer; `fork-v0.0.39` had a desktop asset-selection defect.
+scheme. Use `fork-v0.0.43` or newer; `fork-v0.0.39` had a desktop asset-selection defect.
 
 Windows:
 
