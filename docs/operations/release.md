@@ -69,10 +69,11 @@ SHA-256 is `43d645da8bc63d60603459a49842578fc462bd5e8531bcf3bb6f10aaf630ad53`, a
 Release workflow run
 [`32623872397`](https://github.com/kmccleary3301/t3code/actions/runs/32623872397) passed preflight,
 typecheck, tests, all five desktop builds, native Linux packaging, local fork CLI packaging,
-provenance attestation, and GitHub publication. The release contains 21 assets: macOS arm64/x64
-DMG and ZIP artifacts, Linux arm64/x64 AppImages, a Windows x64 NSIS installer, Linux `node-pty`
-archives, the CLI tarball, updater metadata, the installer, manifest, checksums, and builder
-metadata. No optional Pi/OMP runtime bundles were configured.
+provenance attestation, and GitHub publication. The release contains 21 manifest artifacts plus
+`RELEASE-MANIFEST.json` and `SHA256SUMS` (23 GitHub assets total): macOS arm64/x64 DMG and ZIP
+artifacts, Linux arm64/x64 AppImages, a Windows x64 NSIS installer, Linux `node-pty` archives, the
+CLI tarball, updater metadata, the installer, and builder metadata. No optional Pi/OMP runtime
+bundles were configured.
 
 Lifecycle run
 [`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) passed all five
