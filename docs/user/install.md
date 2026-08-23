@@ -84,13 +84,14 @@ registry.
 The private Pi + OMP
 [`fork-v0.0.45`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.45)
 release includes macOS arm64/x64, Linux arm64/x64, and Windows x64 desktop artifacts. Its
-`SHA256SUMS` and GitHub build provenance are verified, but the target-host
-install/update/rollback/uninstall lifecycle has not been executed for this release; that
-lifecycle evidence applies to prior `fork-v0.0.44`. Platform code-signing credentials were not
+`SHA256SUMS` and GitHub build provenance are verified. The current target-host
+install/update/rollback/uninstall lifecycle passed all five jobs in
+[`32643088885`](https://github.com/kmccleary3301/t3code/actions/runs/32643088885), covering macOS
+arm64/x64, Linux arm64/x64, and Windows x64. Platform code-signing credentials were not
 configured, so the installers are unsigned and the
 [`macOS arm64 DMG`](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.45/T3-Code-Pi-OMP-0.0.45-arm64.dmg)
-is not notarized. Treat `fork-v0.0.45` as an unsigned personal build pending its target-host
-lifecycle run; `fork-v0.0.39` had a desktop asset-selection defect.
+is not notarized. Treat `fork-v0.0.45` as an unsigned personal build; `fork-v0.0.39` had a
+desktop asset-selection defect.
 
 Windows:
 

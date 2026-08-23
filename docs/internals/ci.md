@@ -181,13 +181,13 @@ arm64/x64, macOS arm64/x64, and Windows x64 on matching GitHub-hosted runners. G
 attestations cover the release assets. Platform-signing credentials were not configured, so the
 desktop artifacts are unsigned and the macOS artifacts are unnotarized.
 
-The prior `fork-v0.0.44` lifecycle run
-[`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) passed all five
+The current `fork-v0.0.45` lifecycle run
+[`32643088885`](https://github.com/kmccleary3301/t3code/actions/runs/32643088885) passed all five
 target-host jobs. POSIX jobs exercised CLI install/upgrade/rollback/uninstall and native-config
 preservation on macOS arm64/x64 and Linux arm64/x64, plus desktop artifact install/upgrade/identity/
 rollback/uninstall and tampered-checksum, missing-asset, and missing-release no-mutation checks;
-the Windows job exercised CLI and NSIS desktop install/upgrade/rollback/uninstall. A new
-`fork-v0.0.45` lifecycle run has not yet been executed.
+the Windows job exercised CLI and NSIS desktop install/upgrade/rollback/uninstall. The prior
+`fork-v0.0.44` lifecycle run remains separately recorded as historical release evidence.
 
 Optional Pi/OMP runtime bundles are supplied through the owner-controlled
 `T3_PI_OMP_RUNTIME_BUNDLES_JSON` repository variable. The value is a JSON object with a `bundles`

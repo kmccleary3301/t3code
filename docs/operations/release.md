@@ -76,16 +76,15 @@ ZIP artifacts, Linux arm64/x64 AppImages, a Windows x64 NSIS installer, Linux `n
 the CLI tarball, updater metadata, the installer, and builder metadata. No optional Pi/OMP runtime
 bundles were configured.
 
-The prior `fork-v0.0.44` lifecycle run
-[`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) passed all five
-target-host jobs from lifecycle head `63a0af9ed6698403083bee2b29bbb8619cd2e6df`. It predates the
-current release, so it is release-lifecycle evidence for `fork-v0.0.44`, not evidence that
-`fork-v0.0.45` has completed the lifecycle matrix. POSIX macOS arm64/x64 and Linux arm64/x64
-verified CLI fresh install, upgrade, version/help, server health, rollback, desktop identity,
-tampered-checksum, missing-asset, missing-release no-mutation, uninstall, and native-config
-preservation. Windows x64 verified the CLI and NSIS desktop fresh install, upgrade, rollback,
-uninstall, server health, and native-config preservation. A new `fork-v0.0.45` lifecycle run
-has not yet been executed.
+The current `fork-v0.0.45` lifecycle run
+[`32643088885`](https://github.com/kmccleary3301/t3code/actions/runs/32643088885) passed all five
+target-host jobs. POSIX macOS arm64/x64 and Linux arm64/x64 verified CLI fresh install, upgrade,
+version/help, server health, rollback, desktop identity, tampered-checksum, missing-asset,
+missing-release no-mutation, uninstall, and native-config preservation. Windows x64 verified the
+CLI and NSIS desktop fresh install, upgrade, rollback, uninstall, server health, and native-config
+preservation. The prior `fork-v0.0.44` lifecycle run
+[`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) remains
+separately recorded as historical evidence.
 
 GitHub attests the published release assets, but platform signing credentials were not configured.
 The desktop artifacts are therefore unsigned and the macOS artifacts are unnotarized. Fork npm
