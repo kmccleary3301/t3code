@@ -79,8 +79,9 @@ The desktop artifacts are therefore unsigned and the macOS artifacts are unnotar
 publication remains disabled; the checksummed GitHub tarball is the authoritative CLI package.
 
 `fork-v0.0.40` and earlier releases are superseded. `fork-v0.0.39` had a desktop asset-selection
-defect; `fork-v0.0.43` records the current exact source head and explicit platform/architecture
-metadata.
+defect; `fork-v0.0.43` records release source head `86689c899f3afdd3d3ed5047fa19379125ca2d75`
+and explicit platform/architecture metadata. The current fork head is tracked separately in the
+validation ledger.
 
 ### Optional Pi/OMP runtime bundles
 
