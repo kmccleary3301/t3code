@@ -59,28 +59,35 @@ build provenance attestations. Fork npm publication is an explicit opt-in.
 ### Published private release
 
 The current owner-controlled stable release is
-[`fork-v0.0.43`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.43), built from
-`86689c899f3afdd3d3ed5047fa19379125ca2d75`. Its installer SHA-256 is
-`ff5b3bbceacd7196b3bb06e75aa2a1afa010ce38bea88574182fc9043537ef3e`, its release-manifest
-SHA-256 is `44267981e905f4dbe5b2fe35a2c50c942ff14873a1228ca17047536c2f216e7b`, and its
-`t3-pi-omp-0.0.43.tgz` SHA-256 is
-`dff556bb845f935d2575c01e8085afd5cf86ba24e8aeed670a1e40d625f05155`.
+[`fork-v0.0.44`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.44), built from
+`b766a68ebe05a14e3e69cadd938c1b1bf97098cb`. Its installer SHA-256 is
+`816a3f0bf94f169a87831a6d73a917364ac5bc2800a8054f5e7a139982e8cb5c`, its release-manifest
+SHA-256 is `43d645da8bc63d60603459a49842578fc462bd5e8531bcf3bb6f10aaf630ad53`, and its
+`t3-pi-omp-0.0.44.tgz` SHA-256 is
+`203df0f97ddff33075c981d5f17bfbb5becc79b4f3a9d611c1213bae5d894679`.
 
 Release workflow run
-[`32609002282`](https://github.com/kmccleary3301/t3code/actions/runs/32609002282) passed preflight,
-typecheck, tests, all five desktop builds, local fork CLI packaging, provenance attestation, and
-GitHub publication. The release contains 21 assets: macOS arm64/x64 DMG and ZIP artifacts, Linux
-arm64/x64 AppImages, a Windows x64 NSIS installer, the CLI tarball, updater metadata, the
-installer, manifest, checksums, and builder metadata. No optional Pi/OMP runtime bundles were
-configured.
+[`32623872397`](https://github.com/kmccleary3301/t3code/actions/runs/32623872397) passed preflight,
+typecheck, tests, all five desktop builds, native Linux packaging, local fork CLI packaging,
+provenance attestation, and GitHub publication. The release contains 21 assets: macOS arm64/x64
+DMG and ZIP artifacts, Linux arm64/x64 AppImages, a Windows x64 NSIS installer, Linux `node-pty`
+archives, the CLI tarball, updater metadata, the installer, manifest, checksums, and builder
+metadata. No optional Pi/OMP runtime bundles were configured.
+
+Lifecycle run
+[`32624959424`](https://github.com/kmccleary3301/t3code/actions/runs/32624959424) passed all five
+target-host jobs. POSIX macOS arm64/x64 and Linux arm64/x64 verified CLI fresh install, upgrade,
+version/help, server health, rollback, missing-release no-mutation, uninstall, and native-config
+preservation. Windows x64 verified the CLI and NSIS desktop fresh install, upgrade, rollback,
+uninstall, server health, and native-config preservation.
 
 GitHub attests the published release assets, but platform signing credentials were not configured.
 The desktop artifacts are therefore unsigned and the macOS artifacts are unnotarized. Fork npm
 publication remains disabled; the checksummed GitHub tarball is the authoritative CLI package.
 
-`fork-v0.0.40` and earlier releases are superseded. `fork-v0.0.39` had a desktop asset-selection
-defect; `fork-v0.0.43` records release source head `86689c899f3afdd3d3ed5047fa19379125ca2d75`
-and explicit platform/architecture metadata. Subsequent current-head CI/nightly records are separate from this stable release metadata.
+`fork-v0.0.43` is the previous stable release used by the lifecycle matrix. `fork-v0.0.39` and
+earlier releases are superseded; `fork-v0.0.39` had a desktop asset-selection defect. Subsequent
+current-head CI/nightly records are separate from this stable release metadata.
 
 ### Optional Pi/OMP runtime bundles
 

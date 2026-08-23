@@ -174,11 +174,18 @@ evidence until a release matrix enables them. macOS signing/passkey and Windows 
 depend on release-only credentials. Missing credentials produce unsigned artifacts where the release
 workflow allows that; pull-request CI does not test signing.
 
-The published `fork-v0.0.43` release contains every target in the matrix above plus the
-profile-specific CLI/web tarball. Release workflow run `32609002282` built Linux arm64/x64,
-macOS arm64/x64, and Windows x64 on their matching GitHub-hosted runners. GitHub provenance
+The published `fork-v0.0.44` release contains every target in the matrix above plus the
+profile-specific CLI/web tarball. Release workflow run
+[`32623872397`](https://github.com/kmccleary3301/t3code/actions/runs/32623872397) built Linux
+arm64/x64, macOS arm64/x64, and Windows x64 on matching GitHub-hosted runners. GitHub provenance
 attestations cover the release assets. Platform-signing credentials were not configured, so the
 desktop artifacts are unsigned and the macOS artifacts are unnotarized.
+
+Release lifecycle run
+[`32624959424`](https://github.com/kmccleary3301/t3code/actions/runs/32624959424) passed all five
+target-host jobs. POSIX jobs exercised the CLI install/upgrade/rollback/uninstall and native-config
+preservation paths on macOS arm64/x64 and Linux arm64/x64; the Windows job exercised those paths
+plus NSIS desktop install/upgrade/rollback/uninstall.
 
 Optional Pi/OMP runtime bundles are supplied through the owner-controlled
 `T3_PI_OMP_RUNTIME_BUNDLES_JSON` repository variable. The value is a JSON object with a `bundles`
@@ -198,10 +205,11 @@ analysis on macOS; and release-script/manifest/workflow smoke checks.
 **Still release- or environment-gated:** launching stock Pi or OMP binaries;
 compatibility with a particular native runtime version or capability payload;
 real provider credentials and model/UI behavior; clean-machine installs from
-npm or Node archives; installer behavior on Windows or musl; execution of
-macOS/Linux/Windows artifacts on their target hosts; notarization, signing,
-and update delivery; and cross-platform desktop integration. A green pull
-request therefore must not be described as proof of any of those properties.
+npm or Node archives; installer behavior on musl; execution of desktop artifacts from
+arbitrary releases outside the published `fork-v0.0.44` lifecycle matrix; notarization,
+signing, and update delivery beyond the exercised release; and cross-platform desktop
+integration outside that matrix. A green pull request therefore must not be described as proof
+of any of those properties.
 
 See [Release Checklist](../operations/release.md) for the release/signing
 setup checklist.
