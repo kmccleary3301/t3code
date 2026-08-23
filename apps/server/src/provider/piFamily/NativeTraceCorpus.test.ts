@@ -647,7 +647,7 @@ describe("checked-in native trace corpus", () => {
           expected.agentEnds,
         );
         const projector = new PiFamilyEventProjector(reviewed.runtime);
-        const projected = frames.flatMap((frame) => projector.project(frame));
+        for (const frame of frames) projector.project(frame);
         assert.equal(projector.diagnostics().activeTasks, 0);
       }
       if (manifest.fixture.id === "pi-0.84.2-native-prompt-lifecycle") {
@@ -759,7 +759,7 @@ describe("checked-in native trace corpus", () => {
           expected.agentSettles,
         );
         const projector = new PiFamilyEventProjector(reviewed.runtime);
-        const projected = frames.flatMap((frame) => projector.project(frame));
+        for (const frame of frames) projector.project(frame);
         assert.equal(projector.diagnostics().activeTasks, 0);
       }
       if (manifest.fixture.id === "pi-0.84.2-native-session-compaction-restart") {

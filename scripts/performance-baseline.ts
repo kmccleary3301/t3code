@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeZlib from "node:zlib";
-import { performance } from "node:perf_hooks";
+import * as NodePerfHooks from "node:perf_hooks";
 
 import {
   OmpChunkAssembler,
@@ -17,7 +17,6 @@ import {
 } from "../apps/server/src/provider/piFamily/index.ts";
 import {
   ompNativeChunkedTraceJsonl,
-  ompNativeTrace,
   piNativeTrace,
   piNativeTraceJsonl,
 } from "../apps/server/src/provider/piFamily/nativeTraceFixtures.ts";
@@ -29,9 +28,9 @@ const median = (values: ReadonlyArray<number>): number => {
 };
 
 const timed = <A>(operation: () => A): { readonly value: A; readonly milliseconds: number } => {
-  const start = performance.now();
+  const start = NodePerfHooks.performance.now();
   const value = operation();
-  return { value, milliseconds: performance.now() - start };
+  return { value, milliseconds: NodePerfHooks.performance.now() - start };
 };
 
 const replay = (trace: string, runtime: "pi" | "omp", chunked: boolean) => {

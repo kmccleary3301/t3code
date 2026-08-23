@@ -1563,12 +1563,6 @@ export const ProviderSessionRuntimeStatus = Schema.Literals([
 ]);
 export type ProviderSessionRuntimeStatus = typeof ProviderSessionRuntimeStatus.Type;
 
-const ProjectionThreadTurnStatus = Schema.Literals([
-  "running",
-  "completed",
-  "interrupted",
-  "error",
-]);
 const ProjectionCheckpointRow = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
