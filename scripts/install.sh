@@ -444,7 +444,7 @@ function add(v, context) {
     : wanted === "runtime"
       ? (kind.includes("runtime") || kind.includes("provider") || provider === runtime || kind === runtime)
       : aliases[wanted].some((x) => kind.includes(x));
-  if (!k && wanted !== "runtime" && wanted !== "native") return;
+  if (!k && wanted !== "runtime") return;
   if (wanted === "runtime" && !(kind.includes("runtime") || kind.includes("provider") || provider === runtime || kind === runtime)) return;
   if (wanted === "native" && native && native !== "node-pty") return;
   if (p && !platformNames.some((x) => p.includes(x)) && !p.includes(platform + "-")) return;
