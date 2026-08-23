@@ -1019,6 +1019,52 @@ describe("Pi-family native adapter", () => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+  it.effect("accepts the configured startup model when native switching is unsupported", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("omp");
+      const threadId = ThreadId.make("omp-startup-model-thread");
+      const instanceId = ProviderInstanceId.make("omp-startup-model-instance");
+      const modelSelection = { instanceId, model: "openai-codex/gpt-5.4" };
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "omp",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript("omp", false, false), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+      });
+      assert.equal(session.model, modelSelection.model);
+      yield* nextEvent(adapter.streamEvents);
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "hello",
+        modelSelection,
+      });
+      assert.equal(turn.threadId, threadId);
+      const events = [];
+      for (let index = 0; index < 4; index += 1) {
+        const event = yield* nextEvent(adapter.streamEvents);
+        if (Option.isSome(event)) events.push(event.value);
+      }
+      assert.equal(events.at(-1)?.type, "turn.completed");
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.effect("emits per-line decode errors and continues with later valid events", () =>
     Effect.gen(function* () {
       const runtime = "omp" as const;

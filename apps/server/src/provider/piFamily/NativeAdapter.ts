@@ -1407,11 +1407,11 @@ export const makePiFamilyAdapter = (
             runtimeMode: input.runtimeMode,
             cwd: input.cwd ?? config.cwd,
             threadId: input.threadId,
+            ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
             ...(input.resumeCursor === undefined ? {} : { resumeCursor: input.resumeCursor }),
             createdAt: startedAt,
             updatedAt: startedAt,
           },
-          stopped: false,
           capabilities: absentRuntimeCapabilities(config.runtime),
           stderrBytes: new Uint8Array(),
           eventOccurrenceBuckets: new Float64Array(EVENT_OCCURRENCE_BUCKET_COUNT),
@@ -1703,28 +1703,31 @@ export const makePiFamilyAdapter = (
         if (input.modelSelection && input.modelSelection.instanceId === config.instanceId) {
           const slash = input.modelSelection.model.indexOf("/");
           if (!session.capabilities.models.switch) {
-            return yield* new ProviderAdapterRequestError({
-              provider: config.provider,
-              method: "set_model",
-              detail: `Native ${config.runtime} did not negotiate in-session model switching.`,
-            });
+            if (session.session.model !== input.modelSelection.model) {
+              return yield* new ProviderAdapterRequestError({
+                provider: config.provider,
+                method: "set_model",
+                detail: `Native ${config.runtime} cannot switch models after session startup.`,
+              });
+            }
+          } else {
+            if (slash <= 0 || slash >= input.modelSelection.model.length - 1) {
+              return yield* new ProviderAdapterValidationError({
+                provider: config.provider,
+                operation: "sendTurn",
+                issue: "Native model selection must use provider/model format.",
+              });
+            }
+            yield* request(
+              session,
+              {
+                type: "set_model",
+                provider: input.modelSelection.model.slice(0, slash),
+                modelId: input.modelSelection.model.slice(slash + 1),
+              },
+              "set_model",
+            );
           }
-          if (slash <= 0 || slash >= input.modelSelection.model.length - 1) {
-            return yield* new ProviderAdapterValidationError({
-              provider: config.provider,
-              operation: "sendTurn",
-              issue: "Native model selection must use provider/model format.",
-            });
-          }
-          yield* request(
-            session,
-            {
-              type: "set_model",
-              provider: input.modelSelection.model.slice(0, slash),
-              modelId: input.modelSelection.model.slice(slash + 1),
-            },
-            "set_model",
-          );
         }
         yield* request(
           session,
