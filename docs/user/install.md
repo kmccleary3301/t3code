@@ -139,6 +139,37 @@ launches OMP, and configuring OMP never launches Pi. Their native runtimes own m
 tool, task, and checkpoint behavior; T3 Code negotiates the advertised RPC capabilities and
 projects the resulting events.
 
+### Pi and OMP support
+
+The private `pi-omp` release has a deliberately narrow native-runtime lane:
+
+- Pi `0.84.2`, using the audited binary and Pi-owned authentication.
+- OMP `17.3.7`, using the clean revalidated integration binary and OMP-owned authentication.
+
+The default OMP `18.0.0` binary is **unsupported** by this integration because it does not
+implement the T3 capability-discovery contract. Set the provider's explicit binary path to the
+audited OMP binary; do not infer support from the provider label or a version string alone.
+
+For an isolated OMP profile, use OMP's native authentication broker rather than copying its
+SQLite state:
+
+```sh
+omp auth-broker serve --bind=127.0.0.1:39871
+export OMP_AUTH_BROKER_URL=http://127.0.0.1:39871
+export OMP_AUTH_BROKER_TOKEN="$(cat ~/.omp/auth-broker.token)"
+```
+
+Start the OMP process and the T3 server from an environment containing those variables. The
+broker token stays in the protected token file; never copy or symlink `agent.db`, its `-wal` or
+`-shm` file, or native session history into T3 state. If a broker URL is configured but the broker
+is unavailable, OMP fails with an actionable error instead of silently falling back to local
+credentials.
+
+The five-target `fork-v0.0.45` release lifecycle proves installation, update, rollback, uninstall,
+and native-state preservation. It does not execute Pi/OMP discovery or authenticated root turns on
+every target; the audited native provider lane is local macOS arm64. Do not infer native-provider
+support for an untested runtime, OS, or architecture.
+
 Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
 them on in **Settings** → the provider's card when you want to use them.
 

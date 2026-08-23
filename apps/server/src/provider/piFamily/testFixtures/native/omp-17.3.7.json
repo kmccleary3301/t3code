@@ -94,7 +94,8 @@
       "totalBytes": 832,
       "totalEvents": 10,
       "byteSha256": "281d8d66f18347a9a0a397a5d585a72f8c458c160349234ea2c3015d6154eac4",
-      "truncated": false
+      "truncated": false,
+      "mode": "native-recorder"
     },
     "normalization": {
       "strategy": "deterministic-structural-v1",

@@ -86,6 +86,11 @@ preservation. The prior `fork-v0.0.44` lifecycle run
 [`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) remains
 separately recorded as historical evidence.
 
+The target-host lifecycle is an installer/desktop lifecycle proof; it does not select or discover
+Pi/OMP or execute authenticated native root turns on each host. Native-provider evidence is a
+separate audited local lane, so this matrix must not be read as proof of full Pi/OMP support on
+every shipped OS/architecture.
+
 GitHub attests the published release assets, but platform signing credentials were not configured.
 The desktop artifacts are therefore unsigned and the macOS artifacts are unnotarized. Fork npm
 publication remains disabled; the checksummed GitHub tarball is the authoritative CLI package.

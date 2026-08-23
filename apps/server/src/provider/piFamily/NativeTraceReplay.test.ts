@@ -246,7 +246,48 @@ function assertReplayContract(
   );
 }
 
+const RECORDED_SENSITIVE_KEYS =
+  /content|text|prompt|result|args|description|context|tasks|details/i;
+const RECORDED_SCRUBBED_VALUES = new Set([
+  "",
+  "[user text]",
+  "[assistant text]",
+  "[redacted]",
+  "Recorded child task",
+]);
+
+function assertRecordedTraceRedaction(value: unknown, path = "root"): void {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertRecordedTraceRedaction(entry, `${path}[${index}]`));
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, child] of Object.entries(value)) {
+    const childPath = `${path}.${key}`;
+    if (RECORDED_SENSITIVE_KEYS.test(key) && typeof child === "string") {
+      assert.isTrue(
+        RECORDED_SCRUBBED_VALUES.has(child),
+        `${childPath} contains an unapproved recorded-trace value`,
+      );
+    }
+    assertRecordedTraceRedaction(child, childPath);
+  }
+}
+
 describe("Pi/OMP native trace replay", () => {
+  it("keeps every checked-in replay source scrubbed and bounded", () => {
+    const recordedSources = [piRecordedNativeTrace, ompRecordedNativeTrace];
+    for (const source of recordedSources) {
+      assertRecordedTraceRedaction(source);
+      assert.deepEqual(scanNativeTraceLeaks(source), []);
+      assert.isAtMost(new TextEncoder().encode(JSON.stringify(source)).byteLength, 64 * 1024);
+    }
+    for (const source of [piNativeTrace, ompNativeTrace]) {
+      assert.deepEqual(scanNativeTraceLeaks(source), []);
+      assert.isAtMost(new TextEncoder().encode(JSON.stringify(source)).byteLength, 64 * 1024);
+    }
+  });
+
   it("replays the revision-bound scrubbed Pi capture through production framing", () => {
     const replay = replayTrace(piRecordedNativeTraceJsonl, "pi", false);
     assert.deepEqual(replay.events, piRecordedNativeTrace);

@@ -619,6 +619,17 @@ describe("NativeTrace", () => {
       },
     };
     expectFixtureError(() => validateNativeTraceFixture(wrongChunkHash), "byteSha256");
+    const wrongCaptureMode = {
+      ...fixture,
+      manifest: {
+        ...fixture.manifest!,
+        capture: { ...fixture.manifest!.capture, mode: "native-recorder" as const },
+      },
+    };
+    expectFixtureError(
+      () => validateNativeTraceFixture(wrongCaptureMode),
+      "manifest.capture.mode: must match synthetic-replay",
+    );
 
     const wrongLength = {
       ...fixture,

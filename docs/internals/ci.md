@@ -145,7 +145,8 @@ lowest layer named by its claim; parsed-object fixtures cannot prove byte framin
 Raw captures are private temporary artifacts with mode-0700 directories and mode-0600 files. They
 must never enter git. A committed fixture is a scrubbed structural replay subject, not evidence of
 the model's real output. It must declare runtime/version/binary provenance, normalization and
-redaction schema versions, reviewed redaction status, capture mode, expected outcome hash, and
+redaction schema versions, reviewed redaction status, capture mode (`native-recorder` for a
+non-synthetic capture or `synthetic-replay` for a generated fixture), expected outcome hash, and
 whether it is generated or synthetic. `validateNativeTraceCorpus` rejects duplicate IDs, missing or
 inconsistent provenance, bad chunk/hash/length/sequence data, unsupported schemas, truncation,
 unreviewed redaction, leak findings, and expected outcomes bound to another fixture.
@@ -208,10 +209,10 @@ analysis on macOS; and release-script/manifest/workflow smoke checks.
 compatibility with a particular native runtime version or capability payload;
 real provider credentials and model/UI behavior; clean-machine installs from
 npm or Node archives; installer behavior on musl; execution of desktop artifacts from
-arbitrary releases outside the exercised `fork-v0.0.44` lifecycle matrix; notarization,
-signing, and update delivery beyond the exercised lifecycle; and cross-platform desktop
-integration outside that matrix. A green pull request therefore must not be described
-as proof of any of those properties.
+arbitrary releases outside the exercised `fork-v0.0.45` lifecycle matrix (with `fork-v0.0.44` retained as
+historical evidence); notarization, signing, and update delivery beyond the exercised lifecycle; and
+cross-platform desktop integration outside that matrix. A green pull request therefore must not be
+described as proof of any of those properties.
 
 See [Release Checklist](../operations/release.md) for the release/signing
 setup checklist.

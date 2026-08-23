@@ -24,6 +24,49 @@ import { StrictJsonlDecoder } from "./StrictJsonlDecoder.ts";
 import { parseJsonObject, type RpcEnvelope } from "./protocol.ts";
 const MAX_COMMITTED_FIXTURE_BYTES = 1024 * 1024;
 const MAX_DECOMPRESSED_FIXTURE_BYTES = 4 * 1024 * 1024;
+const EXPECTED_NATIVE_FIXTURE_FILES = [
+  "omp-17.3.7-cancellation.json.gz",
+  "omp-17.3.7-checkpoints.json.gz",
+  "omp-17.3.7-chunked.json.gz",
+  "omp-17.3.7-hierarchy.json.gz",
+  "omp-17.3.7-reconnect.json.gz",
+  "omp-17.3.7-root.json",
+  "omp-17.3.7-unknown.json.gz",
+  "omp-17.3.7.json",
+  "pi-0.84.2-checkpoints.json.gz",
+  "pi-0.84.2-framing-failure.json.gz",
+  "pi-0.84.2-portable-extension-ui.json.gz",
+  "pi-0.84.2-prompt-lifecycle.json.gz",
+  "pi-0.84.2-root.json",
+  "pi-0.84.2-semantic-host-tasks.json.gz",
+  "pi-0.84.2-session-compaction-restart.json.gz",
+  "pi-0.84.2.json",
+] as const;
+const EXPECTED_CANONICAL_ORACLE_FILES = [
+  "omp-edge-canonical-oracle.json",
+  "pi-edge-canonical-oracle.json",
+] as const;
+const committedNativeFixtureFiles = [
+  "omp-17.3.7.json",
+  "omp-17.3.7-root.json",
+  "pi-0.84.2.json",
+  "pi-0.84.2-root.json",
+  "omp-17.3.7-chunked.json.gz",
+  "omp-17.3.7-hierarchy.json.gz",
+  "omp-17.3.7-cancellation.json.gz",
+  "omp-17.3.7-reconnect.json.gz",
+  "omp-17.3.7-checkpoints.json.gz",
+  "omp-17.3.7-unknown.json.gz",
+  "pi-0.84.2-prompt-lifecycle.json.gz",
+  "pi-0.84.2-framing-failure.json.gz",
+  "pi-0.84.2-checkpoints.json.gz",
+  "pi-0.84.2-session-compaction-restart.json.gz",
+  "pi-0.84.2-semantic-host-tasks.json.gz",
+  "pi-0.84.2-portable-extension-ui.json.gz",
+] as const;
+const fixtureInventory = NodeFS.readdirSync(new URL("./testFixtures/native/", import.meta.url))
+  .filter((fileName) => fileName.endsWith(".json") || fileName.endsWith(".json.gz"))
+  .sort();
 const loadCompressedFixture = (
   fileName: string,
 ): { readonly bytes: Buffer; readonly decompressed: Buffer; readonly fixture: unknown } => {
@@ -248,6 +291,27 @@ function replayStdout(fixture: NativeTraceCaptureEnvelope): ReadonlyArray<RpcEnv
 }
 
 describe("checked-in native trace corpus", () => {
+  it("keeps the checked-in native fixture inventory explicit", () => {
+    assert.deepEqual(
+      fixtureInventory,
+      [...EXPECTED_NATIVE_FIXTURE_FILES, ...EXPECTED_CANONICAL_ORACLE_FILES].sort(),
+    );
+    assert.deepEqual(
+      [...committedNativeFixtureFiles].sort(),
+      [...EXPECTED_NATIVE_FIXTURE_FILES].sort(),
+    );
+    assert.equal(committedFixtures.length, EXPECTED_NATIVE_FIXTURE_FILES.length);
+  });
+  it("binds capture mode to the fixture's synthetic classification", () => {
+    for (const fixture of fixtures) {
+      const synthetic = fixture.manifest?.fixture?.synthetic === true;
+      assert.equal(
+        fixture.manifest?.capture.mode,
+        synthetic ? "synthetic-replay" : "native-recorder",
+      );
+    }
+  });
+
   it("keeps every committed fixture below the review ceiling", () => {
     for (const fixture of committedJsonFixtures) {
       assert.isAtMost(

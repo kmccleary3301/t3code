@@ -56,6 +56,8 @@ export type NativeTraceTruncationReason =
   | "time-limit"
   | "lifecycle-error";
 
+export type NativeTraceCaptureMode = "native-recorder" | "synthetic-replay";
+
 export interface NativeTraceFixtureIdentity {
   readonly id: string;
   readonly label: string;
@@ -97,6 +99,7 @@ export interface NativeTraceExitManifest {
 }
 
 export interface NativeTraceCaptureManifest {
+  readonly mode: NativeTraceCaptureMode;
   readonly chunks: readonly NativeTraceChunkManifest[];
   readonly exits: readonly NativeTraceExitManifest[];
   readonly totalBytes: number;
@@ -346,10 +349,13 @@ function validateManifest(
   const capture = requireRecord(manifest.capture, "manifest.capture", issues);
   assertAllowedKeys(
     capture,
-    ["chunks", "exits", "totalBytes", "totalEvents", "byteSha256", "truncated"],
+    ["mode", "chunks", "exits", "totalBytes", "totalEvents", "byteSha256", "truncated"],
     "manifest.capture",
     issues,
   );
+  const expectedCaptureMode = fixture.synthetic === true ? "synthetic-replay" : "native-recorder";
+  if (capture.mode !== expectedCaptureMode)
+    issues.push(`manifest.capture.mode: must match ${expectedCaptureMode}`);
   const captureChunks = Array.isArray(capture.chunks) ? capture.chunks : [];
   if (!Array.isArray(capture.chunks)) issues.push("manifest.capture.chunks: required array");
   const captureExits = Array.isArray(capture.exits) ? capture.exits : [];
@@ -948,8 +954,8 @@ const DEFAULT_ALLOWED_KEYS = new Set([
   "reviewer",
   "provenance",
   "capture",
+  "mode",
   "value",
-  "events",
   "chunks",
   "exits",
   "totalBytes",
@@ -1435,6 +1441,7 @@ export function createNativeTraceManifest(input: {
     protocol: input.protocol,
     capabilities: input.capabilities,
     capture: {
+      mode: input.fixture.synthetic ? "synthetic-replay" : "native-recorder",
       chunks,
       exits: input.capture.exits.map((exit) => ({ ...exit })),
       totalBytes: input.capture.totalBytes,
