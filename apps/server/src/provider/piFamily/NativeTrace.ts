@@ -529,6 +529,13 @@ function validateManifest(
     expectedOutcome: expected.value,
     compatibility,
   };
+  const publicationUnknownPaths: string[] = [];
+  validateNativeTracePublicationShape(redactionSubject, "subject", publicationUnknownPaths, issues);
+  if (
+    canonicalNativeTraceJson(publicationUnknownPaths) !== canonicalNativeTraceJson(unknownPaths)
+  ) {
+    issues.push("manifest.redaction.report.unknownPaths: mismatch");
+  }
   if (sha256NativeTraceValue(redactionSubject) !== redactedSubjectHash)
     issues.push("manifest.redaction.report: subject mismatch");
   if (scanNativeTraceLeaks(redactionSubject).length > 0)
@@ -926,6 +933,8 @@ const DEFAULT_ALLOWED_KEYS = new Set([
   "sessionId",
   "turnId",
   "taskId",
+  "subagentId",
+  "checkpointId",
   "itemId",
   "parentId",
   "parentTaskId",
@@ -967,11 +976,81 @@ const DEFAULT_ALLOWED_KEYS = new Set([
   "redaction",
   "expectedOutcome",
   "compatibility",
+  "adapterEventTypes",
+  "agentEnds",
+  "agentRewindRequests",
+  "agentSettles",
+  "availableCommandsUpdatesAfterNewSession",
+  "byteSha256",
+  "cancelResponse",
+  "canonicalLifecycle",
+  "canonicalSettlement",
+  "capabilityFallbacks",
+  "checkpointCommands",
+  "childStatuses",
+  "chunkCount",
+  "chunkId",
+  "compactSuccess",
+  "compaction",
+  "compactionEndAborted",
+  "compactionEnds",
+  "compactionStarts",
+  "completed",
+  "customUiFrame",
+  "entryTypes",
+  "errorResponses",
+  "eventTypes",
+  "exit",
+  "factoryUiFrames",
+  "failureResponse",
+  "features",
+  "fixture",
+  "frameTypes",
+  "hasCompactionEntry",
+  "hasToolFrames",
+  "hostFrames",
+  "invalidRequestType",
+  "lifecycle",
+  "lifecycleOutcome",
+  "maxSchemaVersion",
+  "minSchemaVersion",
+  "modelCount",
+  "newSessionAck",
+  "outputMarker",
+  "parentStatuses",
+  "progress",
+  "projectedKinds",
+  "rawFrameTypes",
+  "responseCommands",
+  "responseKinds",
+  "restartAccepted",
+  "restartCount",
+  "restoreCommands",
+  "restoreRejections",
+  "runtimes",
+  "sessionIdentityPreserved",
+  "sessionSurvivedUnknownCommand",
+  "sha256",
+  "snapshotRewindRequests",
+  "started",
+  "stderr",
+  "strategy",
+  "subagentFrames",
+  "subagentLifecycleStatuses",
+  "success",
+  "teardownObservation",
+  "toolEvents",
+  "turnEnds",
+  "turnSettled",
+  "turnStarted",
+  "uiMethods",
+  "uiRequests",
+  "events",
 ]);
 const DEFAULT_SENSITIVE_KEY =
-  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process|task|assignment|summary|recentOutput|extractedToolData/i;
+  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process|task|subagentid|checkpointid|assignment|summary|recentOutput|extractedToolData/i;
 const DEFAULT_BYTE_SENSITIVE_KEY =
-  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|command|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process|task|assignment|summary|recentOutput|extractedToolData/i;
+  /authorization|cookie|credential|password|secret|token|api[-_]?key|signature|encrypted|prompt|content|text|message|delta|args|result|data|payload|input|output|query|description|command|email|username|home|cwd|path|environment|env|usage|cost|timestamp|startedAt|endedAt|createdAt|updatedAt|pid|process|task|subagentid|checkpointid|assignment|summary|recentOutput|extractedToolData/i;
 const DEFAULT_LEAK_PATTERNS: readonly RegExp[] = [
   /\bbearer\s+[A-Za-z0-9._~+\-/=]{8,}/iu,
   /\b(?:authorization|auth|cookie|credential|password|secret|token|api[-_ ]?key)["']?\s*[:=]\s*["']?(?!\[REDACTED\])[^\s"',;}\]]+/iu,
@@ -1075,12 +1154,75 @@ function isPublicationSafeSensitiveValue(
   ) {
     return true;
   }
-  if (value === null || value === undefined || value === false) return true;
+  // Root-turn markers are bounded public protocol labels, not model output.
+  if (
+    key.toLowerCase() === "outputmarker" &&
+    typeof value === "string" &&
+    /^[A-Z0-9][A-Z0-9_-]{0,127}$/u.test(value)
+  ) {
+    return true;
+  }
   if (typeof value === "string") {
-    return value.length === 0 || value.startsWith("[REDACTED]") || value.startsWith("[normalized:");
+    return (
+      value.length === 0 ||
+      /^\[REDACTED\]~*$/u.test(value) ||
+      /^\[normalized:(?:time|metadata|(?:id|request|session|task|turn|item|tool|toolcall|run|event|parent|checkpoint|path):[0-9]+)\]$/u.test(
+        value,
+      )
+    );
   }
   if (Array.isArray(value)) return value.length === 0;
   return typeof value === "object" && Object.keys(value).length === 0;
+}
+
+/**
+ * Validate the publication metadata envelope. Encoded native stdout/stderr
+ * remains provider-specific and may contain bounded unknown events; its exact
+ * decoder/chunk path performs separate structural and leak validation.
+ */
+function validateNativeTracePublicationShape(
+  value: unknown,
+  path: string,
+  unknownPaths: string[],
+  issues: string[],
+): void {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      validateNativeTracePublicationShape(entry, `${path}[${index}]`, unknownPaths, issues),
+    );
+    return;
+  }
+  if (value === null || typeof value !== "object" || value instanceof Uint8Array) return;
+
+  const record = value as Readonly<Record<string, unknown>>;
+  for (const [key, child] of Object.entries(record)) {
+    const childPath = `${path}.${key}`;
+    const sensitive = keyMatches(key, [DEFAULT_SENSITIVE_KEY]);
+    const identityValue = NATIVE_TRACE_IDENTITY_KEYS.has(key.toLowerCase());
+    if (!DEFAULT_ALLOWED_KEYS.has(key) && !sensitive && !identityValue) {
+      unknownPaths.push(childPath);
+      issues.push(`${childPath}: unknown publication key`);
+    }
+
+    if (identityValue && typeof child !== "string") {
+      issues.push(`${childPath}: identity publication value must be string`);
+    }
+    if (sensitive) {
+      const containerValue =
+        NATIVE_TRACE_CONTAINER_KEYS.has(key.toLowerCase()) &&
+        child !== null &&
+        typeof child === "object" &&
+        !Array.isArray(child);
+      if (
+        !identityValue &&
+        !containerValue &&
+        !isPublicationSafeSensitiveValue(key, child, record)
+      ) {
+        issues.push(`${childPath}: sensitive publication value`);
+      }
+    }
+    validateNativeTracePublicationShape(child, childPath, unknownPaths, issues);
+  }
 }
 
 function scanNativeTraceStructuredByteValue(

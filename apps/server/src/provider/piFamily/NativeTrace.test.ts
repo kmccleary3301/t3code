@@ -737,6 +737,95 @@ describe("NativeTrace", () => {
         }),
       "sensitive subject patterns",
     );
+    const expectedValue = fixture.manifest!.expectedOutcome.value;
+    expectFixtureError(
+      () =>
+        validateNativeTraceFixture({
+          ...fixture,
+          manifest: {
+            ...fixture.manifest!,
+            expectedOutcome: {
+              ...fixture.manifest!.expectedOutcome,
+              value: Object.assign({}, expectedValue, { reviewerNote: "unreviewed" }),
+            },
+          },
+        }),
+      "unknown publication key",
+    );
+    expectFixtureError(
+      () =>
+        validateNativeTraceFixture({
+          ...fixture,
+          manifest: {
+            ...fixture.manifest!,
+            expectedOutcome: {
+              ...fixture.manifest!.expectedOutcome,
+              value: Object.assign({}, expectedValue, { outputMarker: "secret-marker" }),
+            },
+          },
+        }),
+      "sensitive publication value",
+    );
+    expectFixtureError(
+      () =>
+        validateNativeTraceFixture({
+          ...fixture,
+          manifest: {
+            ...fixture.manifest!,
+            expectedOutcome: {
+              ...fixture.manifest!.expectedOutcome,
+              value: Object.assign({}, expectedValue, { taskId: ["not-an-identity-string"] }),
+            },
+          },
+        }),
+      "identity publication value must be string",
+    );
+    expectFixtureError(
+      () =>
+        validateNativeTraceFixture({
+          ...fixture,
+          manifest: {
+            ...fixture.manifest!,
+            expectedOutcome: {
+              ...fixture.manifest!.expectedOutcome,
+              value: Object.assign({}, expectedValue, { subagentId: ["not-an-identity-string"] }),
+            },
+          },
+        }),
+      "identity publication value must be string",
+    );
+    expectFixtureError(
+      () =>
+        validateNativeTraceFixture({
+          ...fixture,
+          manifest: {
+            ...fixture.manifest!,
+            expectedOutcome: {
+              ...fixture.manifest!.expectedOutcome,
+              value: Object.assign({}, expectedValue, {
+                message: "[REDACTED] unredacted suffix",
+              }),
+            },
+          },
+        }),
+      "sensitive publication value",
+    );
+    expectFixtureError(
+      () =>
+        validateNativeTraceFixture({
+          ...fixture,
+          manifest: {
+            ...fixture.manifest!,
+            expectedOutcome: {
+              ...fixture.manifest!.expectedOutcome,
+              value: Object.assign({}, expectedValue, {
+                message: "[normalized:customer SSN 123-45-6789]",
+              }),
+            },
+          },
+        }),
+      "sensitive publication value",
+    );
 
     const { reportHash: _reportHash, ...unsafeReportWithoutHash } = {
       ...fixture.manifest!.redaction.report,
