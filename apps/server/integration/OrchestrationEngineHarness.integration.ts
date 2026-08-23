@@ -6,6 +6,7 @@ import {
   ApprovalRequestId,
   CodexSettings,
   ProviderDriverKind,
+  ProviderInstanceId,
   type OrchestrationEvent,
   type OrchestrationThread,
 } from "@t3tools/contracts";
@@ -39,6 +40,8 @@ import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSes
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
+import { makePiFamilyAdapter } from "../src/provider/piFamily/NativeAdapter.ts";
+import type { PiFamilyRuntimeKind } from "../src/provider/piFamily/protocol.ts";
 import {
   NoOpProviderEventLoggers,
   ProviderEventLoggers,
@@ -229,6 +232,10 @@ export interface OrchestrationIntegrationHarness {
 interface MakeOrchestrationIntegrationHarnessOptions {
   readonly provider?: ProviderDriverKind;
   readonly realCodex?: boolean;
+  readonly nativeReplay?: {
+    readonly runtime: PiFamilyRuntimeKind;
+    readonly launchArguments: ReadonlyArray<string>;
+  };
   readonly rootDir?: string;
 }
 
@@ -241,11 +248,18 @@ export const makeOrchestrationIntegrationHarness = (
 
     const provider = options?.provider ?? ProviderDriverKind.make("codex");
     const useRealCodex = options?.realCodex === true;
-    const adapterHarness = useRealCodex
-      ? null
-      : yield* makeTestProviderAdapterHarness({
-          provider,
-        });
+    const nativeReplay = options?.nativeReplay;
+    if (useRealCodex && nativeReplay !== undefined) {
+      return yield* Effect.die(
+        "The orchestration harness cannot combine real Codex and native replay adapters.",
+      );
+    }
+    const adapterHarness =
+      useRealCodex || nativeReplay !== undefined
+        ? null
+        : yield* makeTestProviderAdapterHarness({
+            provider,
+          });
     const fakeRegistry = adapterHarness
       ? Layer.succeed(
           ProviderAdapterRegistry,
@@ -266,6 +280,10 @@ export const makeOrchestrationIntegrationHarness = (
       yield* fileSystem.makeDirectory(stateDir, { recursive: true });
       yield* initializeGitWorkspace(workspaceDir);
     }
+    const attachmentsDir = path.join(rootDir, "attachments");
+    const nativeAgentDirectory = path.join(rootDir, "native-agent");
+    yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+    yield* fileSystem.makeDirectory(nativeAgentDirectory, { recursive: true });
 
     const persistenceLayer = makeSqlitePersistenceLive(dbPath);
     const orchestrationLayer = OrchestrationEngineLive.pipe(
@@ -290,20 +308,44 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
-    const providerEventLoggersLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
-    const providerLayer = useRealCodex
-      ? makeProviderServiceLive().pipe(
-          Layer.provide(providerSessionDirectoryLayer),
-          Layer.provide(realCodexRegistry),
-          Layer.provide(AnalyticsService.layerTest),
-          Layer.provide(providerEventLoggersLayer),
+    const nativeReplayRegistry = nativeReplay
+      ? Layer.effect(
+          ProviderAdapterRegistry,
+          Effect.gen(function* () {
+            const adapter = yield* makePiFamilyAdapter({
+              provider,
+              runtime: nativeReplay.runtime,
+              binaryPath: process.execPath,
+              cwd: workspaceDir,
+              agentDirectory: nativeAgentDirectory,
+              attachmentsDir,
+              environment: {},
+              launchArguments: nativeReplay.launchArguments,
+              trustMode: "approve-for-this-run",
+              requestTimeoutMs: 5_000,
+              startupTimeoutMs: 5_000,
+              maxLineBytes: 1_048_576,
+              maxMessageBytes: 67_108_864,
+              stderrLimitBytes: 16_384,
+              instanceId: ProviderInstanceId.make(String(provider)),
+            });
+            return makeAdapterRegistryMock({ [provider]: adapter });
+          }),
+        ).pipe(
+          Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(providerSessionDirectoryLayer),
         )
-      : makeProviderServiceLive().pipe(
-          Layer.provide(providerSessionDirectoryLayer),
-          Layer.provide(fakeRegistry!),
-          Layer.provide(AnalyticsService.layerTest),
-          Layer.provide(providerEventLoggersLayer),
-        );
+      : null;
+    const providerRegistry =
+      nativeReplayRegistry ?? (useRealCodex ? realCodexRegistry : fakeRegistry!);
+    const providerEventLoggersLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(providerSessionDirectoryLayer),
+      Layer.provide(providerRegistry),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(providerEventLoggersLayer),
+    );
     const providerRegistryLayer = makeProviderRegistryLayer();
 
     const checkpointStoreLayer = CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer));

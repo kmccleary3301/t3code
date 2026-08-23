@@ -164,6 +164,11 @@ jobs:
           apps/server/src/provider/piFamily/NativeTraceCorpus.test.ts
           apps/server/src/provider/piFamily/NativeTraceReplay.test.ts
 
+      - name: Run native replay through T3 HTTP and WebSocket
+        if: steps.classify.outputs.replay_gate == 'true'
+        run: >-
+          vp test run apps/server/src/server.test.ts
+          -t "projects scrubbed .* native replay"
       - name: Run credential-free native process smoke
         if: steps.classify.outputs.replay_gate == 'true'
         run: >-

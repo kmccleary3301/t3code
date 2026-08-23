@@ -26,7 +26,8 @@ need:
   (`ProtocolContract`, `NativeAdapter`, `OmpChunkAssembler`, and `StrictJsonlDecoder`). These
   fixtures spawn the current Node process; they do not download or invoke stock Pi or OMP binaries.
 - **Pi OMP Focused Gate** runs on Ubuntu 24.04 within twelve minutes. It replays the scrubbed Pi
-  and OMP corpora, runs credential-free spawned-process smoke for both dialects, exercises the
+  and OMP corpora, runs the deterministic native replay through the T3 authenticated HTTP and
+  WebSocket surfaces, runs credential-free spawned-process smoke for both dialects, exercises the
   transfer-budget and authenticated reconnect-convergence tests, and records a deterministic
   performance baseline. Its artifact contains aggregate transfer/performance data only.
 - **Mobile Native Static Analysis** runs on macOS 26 because the mobile native

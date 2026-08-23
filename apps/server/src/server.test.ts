@@ -177,6 +177,7 @@ import {
   transferModelSelection,
   waitForTurnQuiesced,
 } from "../integration/TransferBudgetScenario.integration.ts";
+import { nativeReplayLaunchArguments } from "../integration/NativeReplayRuntime.integration.ts";
 import {
   formatTransferBudgetReport,
   formatTransferBudgetResult,
@@ -8713,6 +8714,183 @@ for (const providerName of convergenceProviders) {
             Effect.andThen(harness.dispose),
             Effect.tap(() => Effect.logInfo("replay-stage: dispose-complete")),
           ),
+      ).pipe(Effect.provide(Layer.merge(NodeHttpServerTestWithWsDeflate, NodeServices.layer))),
+    30_000,
+  );
+}
+const nativeReplayProviders = ["pi", "omp"] as const;
+for (const runtime of nativeReplayProviders) {
+  const provider = ProviderDriverKind.make(runtime);
+  it.live(
+    `projects scrubbed ${runtime} native replay through T3 HTTP and WebSocket`,
+    () =>
+      Effect.acquireUseRelease(
+        makeOrchestrationIntegrationHarness({
+          provider,
+          nativeReplay: {
+            runtime,
+            launchArguments: nativeReplayLaunchArguments(runtime),
+          },
+        }),
+        (harness) =>
+          Effect.gen(function* () {
+            const projectId = ProjectId.make(`native-replay-${runtime}-project`);
+            const threadId = ThreadId.make(`native-replay-${runtime}-thread`);
+            const instanceId = ProviderInstanceId.make(runtime);
+            const modelSelection = {
+              instanceId,
+              model: `${runtime}/replay-model`,
+            } as const;
+            const createdAt = "2026-08-23T00:00:00.000Z";
+
+            yield* harness.engine.dispatch({
+              type: "project.create",
+              commandId: CommandId.make(`native-replay:${runtime}:project-create`),
+              projectId,
+              title: `${runtime} native replay project`,
+              workspaceRoot: harness.workspaceDir,
+              defaultModelSelection: modelSelection,
+              createdAt,
+            });
+            yield* harness.engine.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`native-replay:${runtime}:thread-create`),
+              threadId,
+              projectId,
+              title: `${runtime} native replay thread`,
+              modelSelection,
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: harness.workspaceDir,
+              createdAt,
+            });
+            yield* buildAppUnderTest({
+              layers: {
+                orchestrationEngine: harness.engine,
+                projectionSnapshotQuery: harness.snapshotQuery,
+              },
+            });
+
+            const baseUrl = yield* getHttpServerUrl();
+            const cookie = yield* getAuthenticatedSessionCookieHeader();
+            const authenticatedWsUrl = appendSessionCookieToWsUrl(
+              baseUrl.replace(/^http:/, "ws:") + "/ws",
+              cookie,
+            );
+            const wsBaseUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+            const readThreadSnapshot = Effect.fn(`NativeReplay.${runtime}.readThreadSnapshot`)(
+              function* () {
+                const response = yield* fetchEffect(
+                  `${baseUrl}/api/orchestration/threads/${threadId}`,
+                  { headers: { cookie } },
+                );
+                assert.equal(response.status, 200);
+                return yield* responseJsonEffect<OrchestrationThreadDetailSnapshot>(response);
+              },
+            );
+            const initialSnapshot = yield* readThreadSnapshot();
+
+            const streamQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+            const recorder = makeWebSocketTransferRecorder();
+            const streamFiber = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const client = yield* makeCountingWsRpcClient;
+                yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                  threadId,
+                  afterSequence: initialSnapshot.snapshotSequence,
+                  requestCompletionMarker: true,
+                }).pipe(
+                  Stream.runForEach((item) => Queue.offer(streamQueue, item).pipe(Effect.asVoid)),
+                );
+              }).pipe(
+                Effect.provide(
+                  countingWsRpcProtocolLayer({
+                    url: wsBaseUrl,
+                    cookie,
+                    recorder,
+                  }),
+                ),
+              ),
+            ).pipe(Effect.forkScoped);
+            yield* collectQueueUntil(
+              streamQueue,
+              (item) => item.kind === "synchronized",
+              `${runtime} native replay initial synchronization`,
+            );
+
+            yield* Effect.scoped(
+              withWsRpcClient(authenticatedWsUrl, (client) =>
+                client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                  type: "thread.turn.start",
+                  commandId: CommandId.make(`native-replay:${runtime}:turn`),
+                  threadId,
+                  message: {
+                    messageId: MessageId.make(`native-replay-${runtime}-user`),
+                    role: "user",
+                    text: `Replay the scrubbed ${runtime} root turn.`,
+                    attachments: [],
+                  },
+                  modelSelection,
+                  runtimeMode: "approval-required",
+                  interactionMode: "default",
+                  createdAt,
+                }),
+              ),
+            );
+            yield* harness.waitForThread(
+              threadId,
+              (thread) =>
+                thread.latestTurn?.state === "completed" &&
+                thread.session?.status === "ready" &&
+                thread.messages.some(
+                  (message) => message.role === "assistant" && !message.streaming,
+                ),
+              20_000,
+            );
+            yield* harness.drainProviderRuntime;
+            yield* harness.drainCheckpointReactor;
+
+            const finalSnapshot = yield* readThreadSnapshot();
+            const finalTargetSequence = yield* harness.engine
+              .readEvents(initialSnapshot.snapshotSequence, 10_000)
+              .pipe(
+                Stream.runFold(
+                  () => initialSnapshot.snapshotSequence,
+                  (sequence: number, event: OrchestrationEvent) =>
+                    event.aggregateId === threadId && isThreadDetailEvent(event)
+                      ? Math.max(sequence, event.sequence)
+                      : sequence,
+                ),
+              );
+            assert.isAbove(finalTargetSequence, initialSnapshot.snapshotSequence);
+            const streamItems = yield* collectQueueUntil(
+              streamQueue,
+              (item) => item.kind === "event" && item.event.sequence >= finalTargetSequence,
+              `${runtime} native replay terminal event`,
+            );
+            const streamEvents = streamItems.flatMap((item) =>
+              item.kind === "event" ? [item.event] : [],
+            );
+            assert.isTrue(streamEvents.every((event) => event.aggregateId === threadId));
+            assert.isTrue(
+              streamEvents.every(
+                (event, index) => index === 0 || event.sequence > streamEvents[index - 1]!.sequence,
+              ),
+            );
+            assert.isTrue(
+              finalSnapshot.thread.messages.some(
+                (message) =>
+                  message.role === "assistant" && message.text.length > 0 && !message.streaming,
+              ),
+            );
+            assert.equal(finalSnapshot.thread.latestTurn?.state, "completed");
+            assert.equal(finalSnapshot.thread.session?.status, "ready");
+
+            yield* Effect.sync(() => recorder.terminate());
+            yield* Fiber.await(streamFiber).pipe(Effect.timeout("5 seconds"));
+          }),
+        (harness) => harness.dispose,
       ).pipe(Effect.provide(Layer.merge(NodeHttpServerTestWithWsDeflate, NodeServices.layer))),
     30_000,
   );
