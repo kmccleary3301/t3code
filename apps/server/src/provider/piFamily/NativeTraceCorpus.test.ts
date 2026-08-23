@@ -37,16 +37,49 @@ const chunkedCompressed = loadCompressedFixture("omp-17.3.7-chunked.json.gz");
 const hierarchyCompressed = loadCompressedFixture("omp-17.3.7-hierarchy.json.gz");
 const cancellationCompressed = loadCompressedFixture("omp-17.3.7-cancellation.json.gz");
 const reconnectCompressed = loadCompressedFixture("omp-17.3.7-reconnect.json.gz");
+const checkpointsCompressed = loadCompressedFixture("omp-17.3.7-checkpoints.json.gz");
+const unknownCompressed = loadCompressedFixture("omp-17.3.7-unknown.json.gz");
+const piPromptCompressed = loadCompressedFixture("pi-0.84.2-prompt-lifecycle.json.gz");
+const piFramingCompressed = loadCompressedFixture("pi-0.84.2-framing-failure.json.gz");
+const piCheckpointsCompressed = loadCompressedFixture("pi-0.84.2-checkpoints.json.gz");
+const piSessionCompactionCompressed = loadCompressedFixture(
+  "pi-0.84.2-session-compaction-restart.json.gz",
+);
+const piSemanticTasksCompressed = loadCompressedFixture("pi-0.84.2-semantic-host-tasks.json.gz");
+const piPortableUiCompressed = loadCompressedFixture("pi-0.84.2-portable-extension-ui.json.gz");
+const compressedFixtures = [
+  chunkedCompressed,
+  hierarchyCompressed,
+  cancellationCompressed,
+  reconnectCompressed,
+  unknownCompressed,
+  checkpointsCompressed,
+  piPromptCompressed,
+  piFramingCompressed,
+  piCheckpointsCompressed,
+  piSessionCompactionCompressed,
+  piSemanticTasksCompressed,
+  piPortableUiCompressed,
+] as const;
 const ompChunkedFixture = chunkedCompressed.fixture;
 const ompHierarchyFixture = hierarchyCompressed.fixture;
 const ompCancellationFixture = cancellationCompressed.fixture;
 const ompReconnectFixture = reconnectCompressed.fixture;
+const ompUnknownFixture = unknownCompressed.fixture;
+const ompCheckpointsFixture = checkpointsCompressed.fixture;
+const piPromptFixture = piPromptCompressed.fixture;
+const piFramingFixture = piFramingCompressed.fixture;
+const piCheckpointsFixture = piCheckpointsCompressed.fixture;
+const piSessionCompactionFixture = piSessionCompactionCompressed.fixture;
+const piSemanticTasksFixture = piSemanticTasksCompressed.fixture;
+const piPortableUiFixture = piPortableUiCompressed.fixture;
 const committedJsonFixtures = [piFixture, ompFixture, piRootFixture, ompRootFixture] as const;
 const OMP_READY_FRAME_REQUIRED = new Set([
   "omp-17.3.7-native-handshake",
   "omp-17.3.7-native-task-hierarchy",
-  "omp-17.3.7-native-task-cancellation",
+  "omp-17.3.7-native-unknown-command",
   "omp-17.3.7-native-session-reconnect",
+  "omp-17.3.7-native-checkpoints",
 ]);
 const committedFixtures = [
   ...committedJsonFixtures,
@@ -54,6 +87,14 @@ const committedFixtures = [
   ompHierarchyFixture,
   ompCancellationFixture,
   ompReconnectFixture,
+  ompCheckpointsFixture,
+  ompUnknownFixture,
+  piPromptFixture,
+  piFramingFixture,
+  piCheckpointsFixture,
+  piSessionCompactionFixture,
+  piSemanticTasksFixture,
+  piPortableUiFixture,
 ] as const;
 const fixtures = validateNativeTraceCorpus(committedFixtures);
 const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -125,6 +166,62 @@ const reviewedProvenance: Readonly<
     sourceSha256: "ab5beef873a4928c6daaa7257568906e78bba6a27e4f573204d8a9a8089cbad8",
     exitCode: 0,
   },
+  "omp-17.3.7-native-checkpoints": {
+    runtime: "omp",
+    version: "17.3.7",
+    revision: "binary-sha256:1ff2bbb374ddab80fd7a26893fa2f9aa8e18da9816f52d7eb92b2c729253aab7",
+    sourceSha256: "1b12445e0c0cdf6c0d723d217e4322d94e6265c2a54ca64d86c8b2d9b4222b13",
+    exitCode: 0,
+  },
+  "omp-17.3.7-native-unknown-command": {
+    runtime: "omp",
+    version: "17.3.7",
+    revision: "binary-sha256:1ff2bbb374ddab80fd7a26893fa2f9aa8e18da9816f52d7eb92b2c729253aab7",
+    sourceSha256: "60e9aeff05b5e71cc788de00ea5e83bcd361f3fbbcf081f21dcd2a6d85386bcd",
+    exitCode: 0,
+  },
+  "pi-0.84.2-native-prompt-lifecycle": {
+    runtime: "pi",
+    version: "0.84.2",
+    revision: "binary-sha256:840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    sourceSha256: "037fb55ee951e705563e7929ff6c917c6d87faa36f5beb80fdfaeee1b1d7f876",
+    exitCode: 0,
+  },
+  "pi-0.84.2-native-framing-failure": {
+    runtime: "pi",
+    version: "0.84.2",
+    revision: "binary-sha256:840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    sourceSha256: "ed394f10d9e1e17cd677cb5c8eedd18a45c0c73387a7faa499ee1837ae5d9492",
+    exitCode: 0,
+  },
+  "pi-0.84.2-native-checkpoints": {
+    runtime: "pi",
+    version: "0.84.2",
+    revision: "binary-sha256:840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    sourceSha256: "a792eeb0dae0003ed50c357be0621d668346221258d2de1a20f8a31f5a40e03a",
+    exitCode: 0,
+  },
+  "pi-0.84.2-native-session-compaction-restart": {
+    runtime: "pi",
+    version: "0.84.2",
+    revision: "binary-sha256:840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    sourceSha256: "f625732b56532f4e786d682554a37228a2c1581c592a0998d90e1bb34562db9b",
+    exitCode: 0,
+  },
+  "pi-0.84.2-native-semantic-host-tasks": {
+    runtime: "pi",
+    version: "0.84.2",
+    revision: "binary-sha256:840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    sourceSha256: "3a735ecdb95cc8823dfa14128586151f818a059d2d8eae533c6f839f0d9e0333",
+    exitCode: 0,
+  },
+  "pi-0.84.2-native-portable-extension-ui": {
+    runtime: "pi",
+    version: "0.84.2",
+    revision: "binary-sha256:840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521",
+    sourceSha256: "062d5b778c857c55fa752f2d2de421129f4914f2d91bbcfe9829507969d5c78b",
+    exitCode: 0,
+  },
 };
 
 function replayStdout(fixture: NativeTraceCaptureEnvelope): ReadonlyArray<RpcEnvelope> {
@@ -158,16 +255,32 @@ describe("checked-in native trace corpus", () => {
         MAX_COMMITTED_FIXTURE_BYTES,
       );
     }
-    for (const compressed of [chunkedCompressed, hierarchyCompressed, cancellationCompressed]) {
+    for (const compressed of compressedFixtures) {
       assert.isAtMost(compressed.bytes.byteLength, MAX_COMMITTED_FIXTURE_BYTES);
       assert.isAtMost(compressed.decompressed.byteLength, MAX_DECOMPRESSED_FIXTURE_BYTES);
     }
   });
-
   it("accepts only reviewed, exact-binary Pi and OMP captures", () => {
     assert.deepEqual(
       fixtures.map((fixture) => fixture.manifest?.runtime.kind),
-      ["pi", "omp", "pi", "omp", "omp", "omp", "omp", "omp"],
+      [
+        "pi",
+        "omp",
+        "pi",
+        "omp",
+        "omp",
+        "omp",
+        "omp",
+        "omp",
+        "omp",
+        "omp",
+        "pi",
+        "pi",
+        "pi",
+        "pi",
+        "pi",
+        "pi",
+      ],
     );
 
     for (const fixture of fixtures) {
@@ -235,6 +348,27 @@ describe("checked-in native trace corpus", () => {
         readonly newSessionAck?: { readonly success: boolean; readonly cancelled: boolean };
         readonly availableCommandsUpdatesAfterNewSession?: number;
         readonly agentEnds?: number;
+        readonly compaction?: {
+          readonly compactSuccess: boolean;
+          readonly compactionStarts: number;
+          readonly compactionEnds: number;
+          readonly compactionEndAborted: boolean | null;
+          readonly hasCompactionEntry: boolean;
+          readonly entryTypes: ReadonlyArray<string>;
+          readonly restartCount: number | null;
+          readonly restartAccepted: boolean;
+          readonly sessionIdentityPreserved: boolean;
+        };
+        readonly hostFrames?: ReadonlyArray<string>;
+        readonly childStatuses?: ReadonlyArray<string>;
+        readonly parentStatuses?: ReadonlyArray<string>;
+        readonly projectedKinds?: ReadonlyArray<string>;
+        readonly hasToolFrames?: boolean;
+        readonly uiMethods?: ReadonlyArray<string>;
+        readonly responseKinds?: ReadonlyArray<string>;
+        readonly capabilityFallbacks?: ReadonlyArray<string>;
+        readonly customUiFrame?: boolean;
+        readonly factoryUiFrames?: boolean;
       };
       assert.deepEqual(
         frames.map((frame) => frame.type),
@@ -420,6 +554,269 @@ describe("checked-in native trace corpus", () => {
         );
         assert.equal(projector.diagnostics().activeTasks, 0);
       }
+      if (manifest.fixture.id === "omp-17.3.7-native-checkpoints") {
+        assert.equal(expected.status, "checkpoints-complete");
+        const stdinRequests = fixture.capture.chunks
+          .filter((chunk) => chunk.stream === "stdin")
+          .flatMap((chunk) =>
+            Buffer.from(chunk.bytesBase64, "base64")
+              .toString("utf8")
+              .split("\n")
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as Record<string, unknown>),
+          );
+        const snapshotRewinds = stdinRequests.filter(
+          (request) => request.type === "rewind" && request.mode === "snapshot",
+        );
+        assert.lengthOf(snapshotRewinds, 1);
+        // Identity correlation: the durable snapshot rewind carries the same
+        // opaque checkpoint and session identifiers the checkpoint response
+        // returned (tokenized identically on both sides of the wire).
+        const checkpointRequests = stdinRequests.filter(
+          (request) => request.type === "checkpoint" && request.mode === "snapshot",
+        );
+        assert.lengthOf(checkpointRequests, 1);
+        const snapshotRewind = snapshotRewinds[0];
+        assert.isDefined(snapshotRewind.checkpointId);
+        assert.isDefined(snapshotRewind.sessionId);
+        const checkpointResponses = frames.filter(
+          (frame) => frame.type === "response" && frame.command === "checkpoint",
+        );
+        assert.lengthOf(checkpointResponses, 2);
+        for (const response of checkpointResponses) assert.isTrue(response.success);
+        const rewindResponses = frames.filter(
+          (frame) => frame.type === "response" && frame.command === "rewind",
+        );
+        assert.lengthOf(rewindResponses, 3);
+        assert.isTrue(rewindResponses[0]?.success);
+        assert.isTrue(rewindResponses[1]?.success);
+        assert.isFalse(rewindResponses[2]?.success);
+        assert.equal(rewindResponses[2]?.code, "checkpoint_missing");
+        const agentEnds = frames.filter(
+          (frame) => frame.type === "agent_end" && frame.isTerminal === true,
+        ).length;
+        assert.equal(agentEnds, 4);
+        const projector = new PiFamilyEventProjector(reviewed.runtime);
+        const projected = frames.flatMap((frame) => projector.project(frame));
+        const kinds = projected.map((event) => event.kind);
+        assert.equal(
+          kinds.filter((kind) => kind === "turn.started").length,
+          expected.canonicalSettlement?.started,
+        );
+        assert.equal(
+          kinds.filter((kind) => kind === "turn.settled").length,
+          expected.canonicalSettlement?.completed,
+        );
+        assert.equal(projector.diagnostics().activeTasks, 0);
+      }
+      if (manifest.fixture.id === "omp-17.3.7-native-unknown-command") {
+        assert.equal(expected.status, "unknown-command-bounded");
+        const stdinRequests = fixture.capture.chunks
+          .filter((chunk) => chunk.stream === "stdin")
+          .flatMap((chunk) =>
+            Buffer.from(chunk.bytesBase64, "base64")
+              .toString("utf8")
+              .split("\n")
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as Record<string, unknown>),
+          );
+        const unknownRequest = stdinRequests.find(
+          (request) => request.type === "definitely_not_a_real_command",
+        );
+        assert.isDefined(unknownRequest);
+        const errorResponse = frames.find(
+          (frame) =>
+            frame.type === "response" &&
+            frame.command === unknownRequest.type &&
+            frame.success === false,
+        );
+        assert.isDefined(errorResponse);
+        assert.equal(errorResponse.code, expected.failureResponse?.code);
+        assert.isString(errorResponse.error);
+        assert.include(String(errorResponse.error), "Unknown command");
+        // The transport survives: a valid request after the failure still
+        // receives its correlated success response on the same session.
+        const livenessResponse = frames.find(
+          (frame) => frame.type === "response" && frame.command === "get_capabilities",
+        );
+        assert.isDefined(livenessResponse);
+        assert.isTrue(livenessResponse.success);
+        assert.isAbove(frames.indexOf(livenessResponse), frames.indexOf(errorResponse));
+        assert.equal(
+          frames.filter((frame) => frame.type === "agent_end").length,
+          expected.agentEnds,
+        );
+        const projector = new PiFamilyEventProjector(reviewed.runtime);
+        const projected = frames.flatMap((frame) => projector.project(frame));
+        assert.equal(projector.diagnostics().activeTasks, 0);
+      }
+      if (manifest.fixture.id === "pi-0.84.2-native-prompt-lifecycle") {
+        assert.equal(expected.status, "prompt-lifecycle-complete");
+        const promptRequests = fixture.capture.chunks
+          .filter((chunk) => chunk.stream === "stdin")
+          .flatMap((chunk) =>
+            Buffer.from(chunk.bytesBase64, "base64")
+              .toString("utf8")
+              .split("\n")
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as Record<string, unknown>)
+              .filter((request) => request.type === "prompt"),
+          );
+        assert.lengthOf(promptRequests, 1);
+        const promptResult = frames.find((frame) => frame.type === "prompt_result");
+        assert.isDefined(promptResult);
+        assert.equal((promptResult as { outcome?: string }).outcome, "started");
+        const agentStart = frames.find((frame) => frame.type === "agent_start");
+        assert.isDefined(agentStart);
+        const turnStart = frames.find((frame) => frame.type === "turn_start");
+        assert.isDefined(turnStart);
+        const turnEnd = frames.find((frame) => frame.type === "turn_end");
+        assert.isDefined(turnEnd);
+        const settled = frames.filter((frame) => frame.type === "agent_settled");
+        assert.lengthOf(settled, 1);
+        const projector = new PiFamilyEventProjector(reviewed.runtime);
+        const projected = frames.flatMap((frame) => projector.project(frame));
+        const kinds = projected.map((event) => event.kind);
+        assert.equal(
+          kinds.filter((kind) => kind === "turn.started").length,
+          expected.canonicalSettlement?.started,
+        );
+        assert.equal(
+          kinds.filter((kind) => kind === "turn.settled").length,
+          expected.canonicalSettlement?.completed,
+        );
+        assert.equal(projector.diagnostics().activeTasks, 0);
+      }
+      if (manifest.fixture.id === "pi-0.84.2-native-framing-failure") {
+        assert.equal(expected.status, "framing-failure-bounded");
+        const stdinRequests = fixture.capture.chunks
+          .filter((chunk) => chunk.stream === "stdin")
+          .flatMap((chunk) =>
+            Buffer.from(chunk.bytesBase64, "base64")
+              .toString("utf8")
+              .split("\n")
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as Record<string, unknown>),
+          );
+        const invalidRequest = stdinRequests.find(
+          (request) => request.type === "bogus_command_type",
+        );
+        assert.isDefined(invalidRequest);
+        const errorResponse = frames.find(
+          (frame) =>
+            frame.type === "response" &&
+            frame.command === "bogus_command_type" &&
+            frame.success === false,
+        );
+        assert.isDefined(errorResponse);
+        assert.isString(errorResponse.error);
+        assert.include(String(errorResponse.error), "Unknown command");
+        const livenessResponse = frames.find(
+          (frame) => frame.type === "response" && frame.command === "get_capabilities",
+        );
+        assert.isDefined(livenessResponse);
+        assert.isTrue(livenessResponse.success);
+        assert.isAbove(frames.indexOf(livenessResponse), frames.indexOf(errorResponse));
+        assert.equal(frames.filter((frame) => frame.type === "agent_settled").length, 0);
+      }
+      if (manifest.fixture.id === "pi-0.84.2-native-checkpoints") {
+        assert.equal(expected.status, "checkpoints-complete");
+        const stdinRequests = fixture.capture.chunks
+          .filter((chunk) => chunk.stream === "stdin")
+          .flatMap((chunk) =>
+            Buffer.from(chunk.bytesBase64, "base64")
+              .toString("utf8")
+              .split("\n")
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as Record<string, unknown>),
+          );
+        const captureRequests = stdinRequests.filter(
+          (request) => request.type === "capture_checkpoint",
+        );
+        assert.lengthOf(captureRequests, expected.checkpointCommands);
+        const restoreRequests = stdinRequests.filter(
+          (request) => request.type === "restore_checkpoint",
+        );
+        assert.lengthOf(restoreRequests, expected.restoreCommands);
+        // The first restore attempt omits the descriptor (rejected), the
+        // second echoes the capture response descriptor and succeeds.
+        assert.isUndefined(restoreRequests[0]?.checkpoint);
+        assert.isDefined(restoreRequests[1]?.checkpoint);
+        const captureResponses = frames.filter(
+          (frame) => frame.type === "response" && frame.command === "capture_checkpoint",
+        );
+        assert.lengthOf(captureResponses, expected.checkpointCommands);
+        assert.isTrue(captureResponses[0]?.success);
+        const restoreResponses = frames.filter(
+          (frame) => frame.type === "response" && frame.command === "restore_checkpoint",
+        );
+        assert.lengthOf(restoreResponses, expected.restoreCommands);
+        assert.isFalse(restoreResponses[0]?.success);
+        assert.equal(restoreResponses[0]?.code, "CHECKPOINT_INVALID");
+        assert.isTrue(restoreResponses[1]?.success);
+        assert.equal(
+          frames.filter((frame) => frame.type === "agent_settled").length,
+          expected.agentSettles,
+        );
+        const projector = new PiFamilyEventProjector(reviewed.runtime);
+        const projected = frames.flatMap((frame) => projector.project(frame));
+        assert.equal(projector.diagnostics().activeTasks, 0);
+      }
+      if (manifest.fixture.id === "pi-0.84.2-native-session-compaction-restart") {
+        assert.equal(expected.status, "session-compaction-restart-complete");
+        const compaction = expected.compaction;
+        assert.isDefined(compaction);
+        if (!compaction) throw new TypeError("Expected Pi compaction outcome metadata");
+        const compactResponse = frames.find(
+          (frame) => frame.type === "response" && frame.command === "compact",
+        );
+        assert.isDefined(compactResponse);
+        assert.isTrue(compactResponse?.success);
+        assert.lengthOf(
+          frames.filter((frame) => frame.type === "compaction_start"),
+          1,
+        );
+        assert.lengthOf(
+          frames.filter((frame) => frame.type === "compaction_end"),
+          1,
+        );
+        const compactionEnd = frames.find((frame) => frame.type === "compaction_end");
+        assert.equal(compactionEnd?.aborted, false);
+        assert.equal(compaction.compactSuccess, true);
+        assert.equal(compaction.compactionStarts, 1);
+        assert.equal(compaction.compactionEnds, 1);
+        assert.equal(compaction.compactionEndAborted, false);
+        assert.equal(compaction.hasCompactionEntry, true);
+        assert.deepEqual(compaction.entryTypes, [
+          "model_change",
+          "thinking_level_change",
+          "message",
+          "message",
+          "message",
+          "message",
+          "compaction",
+        ]);
+        assert.equal(compaction.restartCount, 3);
+        assert.equal(compaction.restartAccepted, true);
+        assert.equal(compaction.sessionIdentityPreserved, true);
+        assert.lengthOf(
+          frames.filter(
+            (frame) => frame.type === "response" && frame.command === "negotiate_protocol",
+          ),
+          2,
+        );
+        assert.lengthOf(
+          frames.filter((frame) => frame.type === "response" && frame.command === "get_state"),
+          2,
+        );
+        assert.lengthOf(
+          frames.filter((frame) => frame.type === "response" && frame.command === "prompt"),
+          3,
+        );
+        assert.equal(frames.filter((frame) => frame.type === "agent_start").length, 3);
+        assert.equal(frames.filter((frame) => frame.type === "agent_settled").length, 3);
+        assert.isTrue(frames.at(-1)?.type === "agent_settled");
+      }
       if (manifest.fixture.id === "omp-17.3.7-native-task-hierarchy") {
         assert.equal(expected.status, "hierarchy-complete");
         const projector = new PiFamilyEventProjector(reviewed.runtime);
@@ -483,6 +880,118 @@ describe("checked-in native trace corpus", () => {
         assert.equal(child.usage?.toolCalls, 1);
         assert.isTrue(String(child.id).startsWith("[normalized:id:"));
       }
+      if (manifest.fixture.id === "pi-0.84.2-native-semantic-host-tasks") {
+        assert.equal(expected.status, "semantic-host-tasks-complete");
+        assert.deepEqual(
+          frames
+            .filter((frame) => String(frame.type).startsWith("host_task_"))
+            .map((frame) => frame.type),
+          expected.hostFrames,
+        );
+        assert.deepEqual(
+          frames
+            .filter(
+              (frame) =>
+                String(frame.type).startsWith("host_task_") &&
+                typeof frame.task === "object" &&
+                frame.task !== null &&
+                !Array.isArray(frame.task) &&
+                (frame.task as { readonly kind?: unknown }).kind === "job",
+            )
+            .map((frame) => (frame.task as { readonly status?: unknown }).status),
+          expected.childStatuses,
+        );
+        assert.deepEqual(
+          frames
+            .filter(
+              (frame) =>
+                String(frame.type).startsWith("host_task_") &&
+                typeof frame.task === "object" &&
+                frame.task !== null &&
+                !Array.isArray(frame.task) &&
+                (frame.task as { readonly kind?: unknown }).kind === "workflow",
+            )
+            .map((frame) => (frame.task as { readonly status?: unknown }).status),
+          expected.parentStatuses,
+        );
+        const projector = new PiFamilyEventProjector(reviewed.runtime);
+        const projected = frames.flatMap((frame) => projector.project(frame));
+        assert.deepEqual(
+          projected.map((event) => event.kind),
+          expected.projectedKinds,
+        );
+        assert.equal(projector.diagnostics().activeTasks, 0);
+        assert.equal(expected.hasToolFrames, false);
+        const snapshots = projector.snapshotTasks();
+        assert.lengthOf(snapshots, 2);
+        const parent = snapshots.find((task) => task.kind === "workflow");
+        const child = snapshots.find((task) => task.kind === "job");
+        assert.isDefined(parent);
+        assert.isDefined(child);
+        assert.equal(parent?.status, "completed");
+        assert.equal(child?.status, "completed");
+        assert.isUndefined(parent?.parentToolCallId);
+        assert.isDefined(child?.parentToolCallId);
+        assert.isTrue(String(child?.parentToolCallId).startsWith("[normalized:toolcall:"));
+      }
+      if (manifest.fixture.id === "pi-0.84.2-native-portable-extension-ui") {
+        assert.equal(expected.status, "portable-extension-ui-complete");
+        assert.deepEqual(
+          frames
+            .filter((frame) => frame.type === "extension_ui_request")
+            .map((frame) => frame.method),
+          expected.uiMethods,
+        );
+        const stdinFrames = fixture.capture.chunks
+          .filter((chunk) => chunk.stream === "stdin")
+          .flatMap((chunk) =>
+            Buffer.from(chunk.bytesBase64, "base64")
+              .toString("utf8")
+              .split("\\n")
+              .filter((line) => line.length > 0)
+              .map((line) => JSON.parse(line) as Record<string, unknown>),
+          );
+        assert.deepEqual(
+          stdinFrames
+            .filter((frame) => frame.type === "extension_ui_response")
+            .map((frame) =>
+              "confirmed" in frame
+                ? "confirmed"
+                : "cancelled" in frame
+                  ? "cancelled"
+                  : "value" in frame
+                    ? "value"
+                    : "other",
+            ),
+          expected.responseKinds,
+        );
+        assert.include(expected.capabilityFallbacks, "arbitraryTerminalComponents:false");
+        assert.include(expected.capabilityFallbacks, "terminalInput:unsupported");
+        assert.include(expected.capabilityFallbacks, "custom:unsupported");
+        assert.equal(expected.customUiFrame, false);
+        assert.equal(expected.factoryUiFrames, false);
+        assert.equal(
+          frames.some(
+            (frame) =>
+              frame.type === "extension_ui_request" &&
+              [
+                "custom",
+                "onTerminalInput",
+                "setFooter",
+                "setHeader",
+                "setEditorComponent",
+              ].includes(String(frame.method)),
+          ),
+          false,
+        );
+        const projector = new PiFamilyEventProjector(reviewed.runtime);
+        const projected = frames.flatMap((frame) => projector.project(frame));
+        assert.deepEqual(
+          projected.map((event) => event.kind),
+          expected.projectedKinds,
+        );
+        assert.equal(projector.diagnostics().activeTasks, 0);
+      }
       if (manifest.fixture.id.endsWith("-native-root")) {
         assert.isDefined(expected.eventTypes);
         assert.isDefined(expected.adapterEventTypes);
@@ -526,6 +1035,56 @@ describe("checked-in native trace corpus", () => {
 
       const normalized = normalizeNativeTrace(frames);
       assert.deepEqual(normalizeNativeTrace(normalized), normalized);
+    }
+  });
+  it("projects direct Pi/OMP wire parsing identically to production replay", () => {
+    // The direct path parses each captured stdout line as the native process
+    // emits it. The replay path uses the production StrictJsonlDecoder and,
+    // for OMP, the production chunk assembler. Both paths must yield the same
+    // canonical events and durable task/UI/unknown state.
+    for (const fixture of fixtures) {
+      const fixtureId = fixture.manifest?.fixture.id;
+      const reviewed = reviewedProvenance[fixtureId ?? ""];
+      assert.isDefined(reviewed);
+      const runtime = fixture.manifest?.runtime.kind;
+      assert.isDefined(runtime);
+      const directAssembler = runtime === "omp" ? new OmpChunkAssembler() : undefined;
+      const directFrames = fixture.capture.chunks
+        .filter((chunk) => chunk.stream === "stdout")
+        .sort((left, right) => left.sequence - right.sequence)
+        .flatMap((chunk) =>
+          Buffer.from(chunk.bytesBase64, "base64")
+            .toString("utf8")
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .map((line) => {
+              const parsed = JSON.parse(line) as RpcEnvelope;
+              return directAssembler ? directAssembler.accept(parsed) : parsed;
+            })
+            .filter((frame): frame is RpcEnvelope => frame !== undefined),
+        );
+      assert.equal(directAssembler?.pendingMessageCount ?? 0, 0);
+      const replayedFrames = replayStdout(fixture);
+      assert.deepEqual(directFrames, replayedFrames);
+      const directProjector = new PiFamilyEventProjector(runtime);
+      const replayProjector = new PiFamilyEventProjector(runtime);
+      assert.deepEqual(
+        directFrames.flatMap((frame) => directProjector.project(frame)),
+        replayedFrames.flatMap((frame) => replayProjector.project(frame)),
+      );
+      assert.deepEqual(directProjector.snapshotTasks(), replayProjector.snapshotTasks());
+      assert.deepEqual(
+        directProjector.snapshotUnknownEvents(),
+        replayProjector.snapshotUnknownEvents(),
+      );
+      assert.deepEqual(directProjector.diagnostics(), replayProjector.diagnostics());
+      assert.deepEqual(fixture.capture.exits, [
+        {
+          sequence: fixture.capture.totalEvents - 1,
+          code: reviewed.exitCode,
+          signal: null,
+        },
+      ]);
     }
   });
 });

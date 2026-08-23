@@ -1005,7 +1005,12 @@ const NATIVE_TRACE_CONTAINER_KEYS = new Set(["payload", "task"]);
  * key-based redaction (leak scan still applies) so id normalization can bind
  * requests to their targets consistently across streams.
  */
-const NATIVE_TRACE_IDENTITY_KEYS = new Set(["taskid", "subagentid"]);
+const NATIVE_TRACE_IDENTITY_KEYS = new Set([
+  "taskid",
+  "parenttaskid",
+  "subagentid",
+  "checkpointid",
+]);
 
 export interface NativeTraceRedactionResult {
   readonly value: unknown;
@@ -1311,7 +1316,7 @@ export function normalizeNativeTrace(value: unknown): unknown {
   const pathValues = new Map<string, string>();
   const placeholder = /^\[normalized:[^\]]+\]$/u;
   const idKey =
-    /(?:(request|session|task|turn|item|tool(?:Call)?|run|event|parent)(?:_?id)$)|^id$/iu;
+    /(?:(request|session|task|turn|item|tool(?:Call)?|run|event|parent|checkpoint)(?:_?id)$)|^id$/iu;
   const pathKey = /(?:cwd|path|file|directory|temp|home)$/iu;
   const timeKey =
     /(?:timestamp|startedAt|endedAt|createdAt|updatedAt|duration|elapsed|deadline|at)$/iu;

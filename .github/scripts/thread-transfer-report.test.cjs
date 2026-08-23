@@ -13,16 +13,23 @@ function result(overrides = {}) {
     totalWireBytes: 2_200_000,
     threadSnapshotWireBytes: 1_950_000,
     threadSnapshotDecodedBytes: 9_100_000,
+    resumedThreadSnapshotWireBytes: 1_940_000,
+    resumedThreadSnapshotDecodedBytes: 9_000_000,
     measuredTurnWebSocketWireBytes: 250_000,
     measuredTurnWebSocketDecodedBytes: 1_150_000,
     measuredTurnWebSocketMessages: 15,
+    measuredTurnWebSocketLargestMessageBytes: 90_000,
+    fanoutClients: 2,
   };
   const ceiling = {
     totalWireBytes: 2_900_000,
     threadSnapshotWireBytes: 2_600_000,
+    resumedThreadSnapshotWireBytes: 2_600_000,
     measuredTurnWebSocketWireBytes: 320_000,
     measuredTurnWebSocketDecodedBytes: 1_550_000,
     measuredTurnWebSocketMessages: 20,
+    measuredTurnWebSocketLargestMessageBytes: 120_000,
+    fanoutClients: 2,
   };
   return {
     schemaVersion: 1,
@@ -35,9 +42,43 @@ function result(overrides = {}) {
       measuredMcpResultBytes: 1_100_000,
     },
     providers: {
-      codex: { observed: { ...observed, ...overrides }, ceiling },
-      claudeAgent: { observed, ceiling },
+      codex: { observed: { ...observed, ...overrides }, ceiling: { ...ceiling } },
+      claudeAgent: { observed: { ...observed }, ceiling: { ...ceiling } },
+      pi: { observed: { ...observed }, ceiling: { ...ceiling } },
+      omp: { observed: { ...observed }, ceiling: { ...ceiling } },
     },
+  };
+}
+
+function legacyResult() {
+  const current = result();
+  const observedKeys = [
+    "totalWireBytes",
+    "threadSnapshotWireBytes",
+    "threadSnapshotDecodedBytes",
+    "measuredTurnWebSocketWireBytes",
+    "measuredTurnWebSocketDecodedBytes",
+    "measuredTurnWebSocketMessages",
+  ];
+  const ceilingKeys = [
+    "totalWireBytes",
+    "threadSnapshotWireBytes",
+    "measuredTurnWebSocketWireBytes",
+    "measuredTurnWebSocketDecodedBytes",
+    "measuredTurnWebSocketMessages",
+  ];
+  const pick = (value, keys) => Object.fromEntries(keys.map((key) => [key, value[key]]));
+  return {
+    ...current,
+    providers: Object.fromEntries(
+      ["codex", "claudeAgent"].map((provider) => [
+        provider,
+        {
+          observed: pick(current.providers[provider].observed, observedKeys),
+          ceiling: pick(current.providers[provider].ceiling, ceilingKeys),
+        },
+      ]),
+    ),
   };
 }
 
@@ -51,6 +92,27 @@ test("validates the fixed artifact schema", () => {
     () => validateResult(result({ totalWireBytes: "lots" })),
     /non-negative safe integer/,
   );
+});
+test("accepts a legacy two-provider baseline during schema rollout", () => {
+  const baseline = legacyResult();
+  assert.equal(validateResult(baseline).schemaVersion, 1);
+  const comment = renderComment({
+    current: result(),
+    baseline,
+    currentRun: {
+      sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      conclusion: "success",
+      url: "https://github.com/pingdotgg/t3code/actions/runs/2",
+    },
+    baselineRun: {
+      sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      matchesBase: false,
+      url: "https://github.com/pingdotgg/t3code/actions/runs/1",
+    },
+  });
+  assert.match(comment, /Pi \|/);
+  assert.match(comment, /OMP \|/);
+  assert.match(comment, /Pi \| Cold snapshot wire \| — \|/);
 });
 
 test("renders baseline, impact, ceiling, and ceiling changes", () => {
@@ -79,6 +141,8 @@ test("renders baseline, impact, ceiling, and ceiling changes", () => {
   assert.match(comment, /\+9\.8 KiB \(\+4\.0%\)/);
   assert.match(comment, /This PR changes transfer ceilings/);
   assert.match(comment, /312\.5 KiB → 322\.3 KiB/);
+  assert.match(comment, /Pi \|/);
+  assert.match(comment, /OMP \|/);
   assert.match(comment, /<!-- t3-thread-transfer-report -->/);
   assert.match(
     comment,
@@ -105,7 +169,7 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
       if (method === listWorkflowRunArtifacts) {
         return [
           {
-            name: "thread-transfer-results",
+            name: "thread-transfer-results-v2",
             expired: false,
             runId: input.run_id,
           },

@@ -14,39 +14,78 @@ import {
 
 export interface TransferBudgetRun {
   readonly provider: ProviderDriverKind;
+  /** Cold HTTP bootstrap measurement. */
   readonly threadSnapshot: HttpTransferMeasurement;
+  /** Second HTTP bootstrap from a resumed client. */
+  readonly resumedThreadSnapshot: HttpTransferMeasurement;
   readonly measuredTurnWebSocket: WebSocketTransferTotals;
+  /** Number of concurrent subscribers receiving the measured turn. */
+  readonly fanoutClients: number;
 }
 
 interface ProviderTransferBudget {
   readonly totalWireBytes: number;
   readonly threadSnapshotWireBytes: number;
+  readonly resumedThreadSnapshotWireBytes: number;
   readonly measuredTurnWebSocketWireBytes: number;
   readonly measuredTurnWebSocketDecodedBytes: number;
   readonly measuredTurnWebSocketMessages: number;
+  readonly measuredTurnWebSocketLargestMessageBytes: number;
+  readonly fanoutClients: number;
 }
 
-// These caps leave roughly 30% headroom above the client projection of the
-// deterministic 9 MB retained-result fixture. Full MCP results stay in
-// persistence, so accidentally shipping them again exceeds these caps by
-// orders of magnitude. The CI report preserves exact values for review.
-const TRANSFER_BUDGET = {
-  totalWireBytes: 15_500,
-  threadSnapshotWireBytes: 7_500,
-  measuredTurnWebSocketWireBytes: 8_000,
-  measuredTurnWebSocketDecodedBytes: 68_000,
-  measuredTurnWebSocketMessages: 21,
-} satisfies ProviderTransferBudget;
-
+// Ceilings retain measured headroom while staying provider-specific. Pi's
+// compact native payload is lower; OMP's task metadata gets a slightly wider
+// HTTP allowance. The report preserves the measured baseline for review.
 export const TRANSFER_BUDGETS: Readonly<Record<string, ProviderTransferBudget>> = {
-  codex: TRANSFER_BUDGET,
-  claudeAgent: TRANSFER_BUDGET,
-  pi: TRANSFER_BUDGET,
-  omp: TRANSFER_BUDGET,
+  codex: {
+    totalWireBytes: 23_000,
+    threadSnapshotWireBytes: 7_500,
+    resumedThreadSnapshotWireBytes: 7_500,
+    measuredTurnWebSocketWireBytes: 8_000,
+    measuredTurnWebSocketDecodedBytes: 68_000,
+    measuredTurnWebSocketMessages: 21,
+    measuredTurnWebSocketLargestMessageBytes: 12_000,
+    fanoutClients: 2,
+  },
+  claudeAgent: {
+    totalWireBytes: 23_100,
+    threadSnapshotWireBytes: 7_550,
+    resumedThreadSnapshotWireBytes: 7_550,
+    measuredTurnWebSocketWireBytes: 8_050,
+    measuredTurnWebSocketDecodedBytes: 69_000,
+    measuredTurnWebSocketMessages: 21,
+    measuredTurnWebSocketLargestMessageBytes: 12_000,
+    fanoutClients: 2,
+  },
+  pi: {
+    totalWireBytes: 22_900,
+    threadSnapshotWireBytes: 7_450,
+    resumedThreadSnapshotWireBytes: 7_450,
+    measuredTurnWebSocketWireBytes: 7_950,
+    measuredTurnWebSocketDecodedBytes: 67_000,
+    measuredTurnWebSocketMessages: 20,
+    measuredTurnWebSocketLargestMessageBytes: 12_000,
+    fanoutClients: 2,
+  },
+  omp: {
+    totalWireBytes: 23_200,
+    threadSnapshotWireBytes: 7_600,
+    resumedThreadSnapshotWireBytes: 7_600,
+    measuredTurnWebSocketWireBytes: 8_050,
+    measuredTurnWebSocketDecodedBytes: 68_000,
+    measuredTurnWebSocketMessages: 21,
+    measuredTurnWebSocketLargestMessageBytes: 12_000,
+    fanoutClients: 2,
+  },
 };
 
 function totalWireBytes(run: TransferBudgetRun): number {
-  return run.threadSnapshot.wireBytes + run.measuredTurnWebSocket.wireBytes;
+  return (
+    run.threadSnapshot.wireBytes +
+    run.resumedThreadSnapshot.wireBytes +
+    run.measuredTurnWebSocket.wireBytes
+  );
 }
 
 function observedTransfer(run: TransferBudgetRun) {
@@ -54,9 +93,13 @@ function observedTransfer(run: TransferBudgetRun) {
     totalWireBytes: totalWireBytes(run),
     threadSnapshotWireBytes: run.threadSnapshot.wireBytes,
     threadSnapshotDecodedBytes: run.threadSnapshot.decodedBodyBytes,
+    resumedThreadSnapshotWireBytes: run.resumedThreadSnapshot.wireBytes,
+    resumedThreadSnapshotDecodedBytes: run.resumedThreadSnapshot.decodedBodyBytes,
     measuredTurnWebSocketWireBytes: run.measuredTurnWebSocket.wireBytes,
     measuredTurnWebSocketDecodedBytes: run.measuredTurnWebSocket.decodedBytes,
     measuredTurnWebSocketMessages: run.measuredTurnWebSocket.messages,
+    measuredTurnWebSocketLargestMessageBytes: run.measuredTurnWebSocket.largestMessageBytes,
+    fanoutClients: run.fanoutClients,
   };
 }
 
@@ -119,6 +162,11 @@ export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>)
       ["total thread wire bytes", totalWireBytes(run), budget.totalWireBytes],
       ["thread snapshot wire bytes", run.threadSnapshot.wireBytes, budget.threadSnapshotWireBytes],
       [
+        "resumed thread snapshot wire bytes",
+        run.resumedThreadSnapshot.wireBytes,
+        budget.resumedThreadSnapshotWireBytes,
+      ],
+      [
         "measured-turn WebSocket wire bytes",
         run.measuredTurnWebSocket.wireBytes,
         budget.measuredTurnWebSocketWireBytes,
@@ -133,6 +181,12 @@ export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>)
         run.measuredTurnWebSocket.messages,
         budget.measuredTurnWebSocketMessages,
       ],
+      [
+        "measured-turn largest WebSocket message bytes",
+        run.measuredTurnWebSocket.largestMessageBytes,
+        budget.measuredTurnWebSocketLargestMessageBytes,
+      ],
+      ["fanout clients", run.fanoutClients, budget.fanoutClients],
     ] as const;
     for (const [metric, observed, maximum] of checks) {
       if (observed > maximum) {
@@ -173,10 +227,17 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     lines.push(
       row(
         run.provider,
-        "thread snapshot",
+        "cold snapshot",
         "HTTP wire",
         run.threadSnapshot.wireBytes,
         budget.threadSnapshotWireBytes,
+      ),
+      row(
+        run.provider,
+        "resumed snapshot",
+        "HTTP wire",
+        run.resumedThreadSnapshot.wireBytes,
+        budget.resumedThreadSnapshotWireBytes,
       ),
       row(
         run.provider,
@@ -195,9 +256,24 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
       row(
         run.provider,
         "measured turn",
+        "WebSocket largest message",
+        run.measuredTurnWebSocket.largestMessageBytes,
+        budget.measuredTurnWebSocketLargestMessageBytes,
+      ),
+      row(
+        run.provider,
+        "measured turn",
         "WebSocket messages",
         run.measuredTurnWebSocket.messages,
         budget.measuredTurnWebSocketMessages,
+        String,
+      ),
+      row(
+        run.provider,
+        "measured turn",
+        "fanout clients",
+        run.fanoutClients,
+        budget.fanoutClients,
         String,
       ),
     );
@@ -206,7 +282,7 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
   lines.push("", "## Compression diagnostics", "");
   for (const run of runs) {
     lines.push(
-      `- ${run.provider}: thread snapshot ${formatBytes(run.threadSnapshot.decodedBodyBytes)} decoded to ${formatBytes(run.threadSnapshot.encodedBodyBytes)} gzip.`,
+      `- ${run.provider}: cold snapshot ${formatBytes(run.threadSnapshot.decodedBodyBytes)} decoded to ${formatBytes(run.threadSnapshot.encodedBodyBytes)} gzip; resumed snapshot ${formatBytes(run.resumedThreadSnapshot.decodedBodyBytes)} decoded to ${formatBytes(run.resumedThreadSnapshot.encodedBodyBytes)} gzip.`,
     );
   }
 

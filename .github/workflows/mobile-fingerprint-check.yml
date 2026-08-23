@@ -42,7 +42,7 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # Default pull_request checkout is the merge commit (PR applied on
           # top of base), so the "head" fingerprint is the state main would
@@ -50,7 +50,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@8a7496fd44e8a1b0a88a7459e36213b2fefc1d15 # v1.0.0
         with:
           node-version-file: package.json
           cache: true
@@ -117,7 +117,7 @@ jobs:
         # advisory there (summary only). This workflow must not move to
         # pull_request_target — it installs and runs PR code.
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           CHANGED_PLATFORMS: ${{ steps.compare.outputs.changed_platforms }}
         with:

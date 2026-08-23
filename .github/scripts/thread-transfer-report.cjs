@@ -1,11 +1,40 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const ARTIFACT_NAME = "thread-transfer-results";
+const ARTIFACT_NAME = "thread-transfer-results-v2";
 const RESULT_FILE = "thread-transfer-result.json";
 const COMMENT_MARKER = "<!-- t3-thread-transfer-report -->";
-const PROVIDERS = ["codex", "claudeAgent"];
+const PROVIDERS = ["codex", "claudeAgent", "pi", "omp"];
+const PROVIDER_LABELS = {
+  codex: "Codex",
+  claudeAgent: "Claude",
+  pi: "Pi",
+  omp: "OMP",
+};
 const OBSERVED_KEYS = [
+  "totalWireBytes",
+  "threadSnapshotWireBytes",
+  "threadSnapshotDecodedBytes",
+  "resumedThreadSnapshotWireBytes",
+  "resumedThreadSnapshotDecodedBytes",
+  "measuredTurnWebSocketWireBytes",
+  "measuredTurnWebSocketDecodedBytes",
+  "measuredTurnWebSocketMessages",
+  "measuredTurnWebSocketLargestMessageBytes",
+  "fanoutClients",
+];
+const CEILING_KEYS = [
+  "totalWireBytes",
+  "threadSnapshotWireBytes",
+  "resumedThreadSnapshotWireBytes",
+  "measuredTurnWebSocketWireBytes",
+  "measuredTurnWebSocketDecodedBytes",
+  "measuredTurnWebSocketMessages",
+  "measuredTurnWebSocketLargestMessageBytes",
+  "fanoutClients",
+];
+const LEGACY_PROVIDERS = ["codex", "claudeAgent"];
+const LEGACY_OBSERVED_KEYS = [
   "totalWireBytes",
   "threadSnapshotWireBytes",
   "threadSnapshotDecodedBytes",
@@ -13,7 +42,7 @@ const OBSERVED_KEYS = [
   "measuredTurnWebSocketDecodedBytes",
   "measuredTurnWebSocketMessages",
 ];
-const CEILING_KEYS = [
+const LEGACY_CEILING_KEYS = [
   "totalWireBytes",
   "threadSnapshotWireBytes",
   "measuredTurnWebSocketWireBytes",
@@ -54,6 +83,22 @@ function assertMetric(value, label) {
   }
 }
 
+function validateProviderEntries(providers, providerNames, observedKeys, ceilingKeys) {
+  assertExactKeys(providers, providerNames, "result.providers");
+  for (const provider of providerNames) {
+    const entry = providers[provider];
+    assertExactKeys(entry, ["observed", "ceiling"], `result.providers.${provider}`);
+    assertExactKeys(entry.observed, observedKeys, `result.providers.${provider}.observed`);
+    assertExactKeys(entry.ceiling, ceilingKeys, `result.providers.${provider}.ceiling`);
+    for (const key of observedKeys) {
+      assertMetric(entry.observed[key], `result.providers.${provider}.observed.${key}`);
+    }
+    for (const key of ceilingKeys) {
+      assertMetric(entry.ceiling[key], `result.providers.${provider}.ceiling.${key}`);
+    }
+  }
+}
+
 function validateResult(value) {
   assertExactKeys(value, ["schemaVersion", "scenario", "providers"], "result");
   if (value.schemaVersion !== 1) {
@@ -68,18 +113,29 @@ function validateResult(value) {
     assertMetric(value.scenario[key], `result.scenario.${key}`);
   }
 
-  assertExactKeys(value.providers, PROVIDERS, "result.providers");
-  for (const provider of PROVIDERS) {
-    const entry = value.providers[provider];
-    assertExactKeys(entry, ["observed", "ceiling"], `result.providers.${provider}`);
-    assertExactKeys(entry.observed, OBSERVED_KEYS, `result.providers.${provider}.observed`);
-    assertExactKeys(entry.ceiling, CEILING_KEYS, `result.providers.${provider}.ceiling`);
-    for (const key of OBSERVED_KEYS) {
-      assertMetric(entry.observed[key], `result.providers.${provider}.observed.${key}`);
-    }
-    for (const key of CEILING_KEYS) {
-      assertMetric(entry.ceiling[key], `result.providers.${provider}.ceiling.${key}`);
-    }
+  assertObject(value.providers, "result.providers");
+  const providerNames = Object.keys(value.providers).sort();
+  const currentProviderNames = [...PROVIDERS].sort();
+  const legacyProviderNames = [...LEGACY_PROVIDERS].sort();
+  if (
+    providerNames.every((name, index) => name === currentProviderNames[index]) &&
+    providerNames.length === currentProviderNames.length
+  ) {
+    validateProviderEntries(value.providers, PROVIDERS, OBSERVED_KEYS, CEILING_KEYS);
+  } else if (
+    providerNames.length === legacyProviderNames.length &&
+    providerNames.every((name, index) => name === legacyProviderNames[index])
+  ) {
+    // Keep old two-provider artifacts usable as baselines while the fork
+    // transitions to the Pi/OMP-expanded result schema.
+    validateProviderEntries(
+      value.providers,
+      LEGACY_PROVIDERS,
+      LEGACY_OBSERVED_KEYS,
+      LEGACY_CEILING_KEYS,
+    );
+  } else {
+    throw new Error("result.providers has unexpected fields");
   }
 
   return value;
@@ -115,25 +171,27 @@ function formatImpact(current, baseline, kind) {
     baseline === 0 ? "" : ` (${prefix}${Math.abs((delta / baseline) * 100).toFixed(1)}%)`;
   return `${prefix}${magnitude}${percent}`;
 }
-
 function sameScenario(left, right) {
   return SCENARIO_KEYS.every((key) => left[key] === right[key]);
 }
 
 const METRICS = [
   { key: "totalWireBytes", label: "Total thread wire", kind: "bytes" },
-  { key: "threadSnapshotWireBytes", label: "Thread snapshot wire", kind: "bytes" },
-  {
-    key: "measuredTurnWebSocketWireBytes",
-    label: "Live turn WebSocket wire",
-    kind: "bytes",
-  },
+  { key: "threadSnapshotWireBytes", label: "Cold snapshot wire", kind: "bytes" },
+  { key: "resumedThreadSnapshotWireBytes", label: "Resumed snapshot wire", kind: "bytes" },
+  { key: "measuredTurnWebSocketWireBytes", label: "Live turn WebSocket wire", kind: "bytes" },
   {
     key: "measuredTurnWebSocketDecodedBytes",
     label: "Live turn WebSocket decoded",
     kind: "bytes",
   },
+  {
+    key: "measuredTurnWebSocketLargestMessageBytes",
+    label: "Largest WebSocket message",
+    kind: "bytes",
+  },
   { key: "measuredTurnWebSocketMessages", label: "Live turn messages", kind: "messages" },
+  { key: "fanoutClients", label: "Fanout clients", kind: "messages" },
 ];
 
 function renderComment(input) {
@@ -145,21 +203,27 @@ function renderComment(input) {
   let failed = false;
 
   for (const provider of PROVIDERS) {
+    const label = PROVIDER_LABELS[provider] ?? provider;
+    const currentProvider = current.providers[provider];
+    const baselineProvider = baseline?.providers?.[provider];
     for (const metric of METRICS) {
-      const observed = current.providers[provider].observed[metric.key];
-      const ceiling = current.providers[provider].ceiling[metric.key];
-      const baselineObserved = comparable
-        ? baseline.providers[provider].observed[metric.key]
-        : undefined;
+      const observed = currentProvider.observed[metric.key];
+      const ceiling = currentProvider.ceiling[metric.key];
+      const baselineObserved =
+        comparable && baselineProvider ? baselineProvider.observed[metric.key] : undefined;
       const pass = observed <= ceiling;
       failed ||= !pass;
       rows.push(
-        `| ${provider === "codex" ? "Codex" : "Claude"} | ${metric.label} | ${baselineObserved === undefined ? "—" : formatValue(baselineObserved, metric.kind)} | ${formatValue(observed, metric.kind)} | ${formatImpact(observed, baselineObserved, metric.kind)} | ${formatValue(ceiling, metric.kind)} | ${pass ? "✅" : "❌"} |`,
+        `| ${label} | ${metric.label} | ${baselineObserved === undefined ? "—" : formatValue(baselineObserved, metric.kind)} | ${formatValue(observed, metric.kind)} | ${formatImpact(observed, baselineObserved, metric.kind)} | ${formatValue(ceiling, metric.kind)} | ${pass ? "✅" : "❌"} |`,
       );
 
-      if (baseline && baseline.providers[provider].ceiling[metric.key] !== ceiling) {
+      if (
+        baselineProvider &&
+        baselineProvider.ceiling[metric.key] !== undefined &&
+        baselineProvider.ceiling[metric.key] !== ceiling
+      ) {
         ceilingChanges.push(
-          `- ${provider === "codex" ? "Codex" : "Claude"} ${metric.label}: ${formatValue(baseline.providers[provider].ceiling[metric.key], metric.kind)} → ${formatValue(ceiling, metric.kind)}`,
+          `- ${label} ${metric.label}: ${formatValue(baselineProvider.ceiling[metric.key], metric.kind)} → ${formatValue(ceiling, metric.kind)}`,
         );
       }
     }
@@ -209,10 +273,9 @@ function renderComment(input) {
     "<summary>Scenario and decoded snapshot size</summary>",
     "",
     `${current.scenario.historyTurns} historical turns, ${current.scenario.historyCommandToolsPerTurn} command tools per turn, ${formatBytes(current.scenario.historyMcpResultBytes)} retained MCP result per historical turn, and a ${formatBytes(current.scenario.measuredMcpResultBytes)} retained result in the measured turn.`,
-    "",
     ...PROVIDERS.map(
       (provider) =>
-        `- ${provider === "codex" ? "Codex" : "Claude"} decoded thread snapshot: ${formatBytes(current.providers[provider].observed.threadSnapshotDecodedBytes)}`,
+        `- ${PROVIDER_LABELS[provider] ?? provider} cold decoded snapshot: ${formatBytes(current.providers[provider].observed.threadSnapshotDecodedBytes)}; resumed decoded snapshot: ${formatBytes(current.providers[provider].observed.resumedThreadSnapshotDecodedBytes)}`,
     ),
     "",
     "</details>",

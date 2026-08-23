@@ -112,6 +112,28 @@ After publishing, verify the generated manifest contains `kind: "runtime"` entri
 `OMP_BINARY_PATH` values explicitly in the Pi/OMP provider settings; the installer never mutates
 native configuration.
 
+## Failure-loop policy
+
+CI failures are classified before any fix:
+
+1. Classify the failure as infrastructure, code, fixture/protocol, release/configuration, or
+   evidence drift. Reproduce with the narrowest focused command.
+2. Rerun infrastructure failures once. A second failure is evidence of an unresolved issue, not
+   permission to loop indefinitely.
+3. Review at most three fix rounds for one head. Invalidate prior review and release evidence after
+   every functional commit or changed artifact.
+4. Verify producer and consumer commit heads, artifact names, sizes, SHA-256 values, and manifest
+   membership before accepting downloaded output.
+5. Never publish production artifacts automatically from a failed or stale gate. Release publication
+   requires an explicit stable/nightly tag or manual dispatch with the selected profile.
+6. Record the exact command, exit status, revision, artifact path/URL, and redacted failure output in
+   the release evidence index. Do not upload databases, credentials, raw native captures, or model
+   output.
+
+`vp run classify-ci-change` is the path classifier used by CI. Provider, decoder, projector,
+fixture, and transfer-report changes enable replay/budget gates; distribution changes enable release
+checks; documentation-only changes cannot enable publication.
+
 ## Required release credentials
 
 Upstream stable releases require these GitHub Actions secrets in addition to the platform and

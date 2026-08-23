@@ -109,6 +109,19 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - The server is event-sourced and its async flows emit typed receipts. Wait on receipts and worker drains, never on sleeps or polling. A test that needs a timeout to pass is wrong.
 - Upon request, user-visible frontend changes should get one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile. The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use or spinning up browsers.
 
+## Pi and OMP validation
+
+- Pi and OMP are distinct provider kinds. Preserve native protocol semantics; do not make one runtime stand in for the other.
+- Native captures are scrubbed structural fixtures only. Keep raw captures in mode-0700 temporary directories with mode-0600 files; never commit prompts, paths, credentials, or raw model output.
+- Provider changes must cover the provider enum/settings, native adapter, canonical projection, HTTP bootstrap/WebSocket updates, and the relevant web/desktop/mobile surface or explicitly document why a surface is unsupported.
+- Never open or write the live `~/.t3/userdata` database. Use `VACUUM INTO` into a disposable private directory, stop writers first, and keep canary evidence aggregate-only.
+- Run focused proof before broad validation:
+  - `vp test run apps/server/src/provider/piFamily/NativeTraceCorpus.test.ts apps/server/src/provider/piFamily/NativeTraceReplay.test.ts`
+  - `vp test run apps/server/integration/TransferBudgetReport.integration.test.ts`
+  - `vp test run apps/server/src/server.test.ts -t "reports thread HTTP and WebSocket transfer budgets"`
+  - `vp run test-pi-omp`
+- Native binary, credential, target-host, and release claims require exact version/revision evidence. If a runtime or platform was not exercised, keep it out of supported/shipped language.
+
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.

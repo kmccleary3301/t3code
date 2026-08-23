@@ -45,8 +45,10 @@ jobs:
       - name: Product identity contract tests
         run: vp test run packages/contracts/src/productIdentity.test.ts
 
-      # No relative-import checker exists in the package scripts; do not invent
-      # a CI-only replacement that could drift from the supported Vite+ graph.
+      - name: Check TypeScript relative-import policy
+        run: vp run check:ts-relative-imports
+      - name: Check workflow action pins and trusted publishers
+        run: vp run check:workflow-action-pins
 
       - name: Check
         run: vp check
@@ -120,13 +122,80 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: thread-transfer-results
+          name: thread-transfer-results-v2
           path: ${{ runner.temp }}/thread-transfer-result.json
           if-no-files-found: ignore
           retention-days: 30
 
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
+
+  focused_pi_omp_gate:
+    name: Pi OMP Focused Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - id: classify
+        name: Classify changes
+        env:
+          T3_CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          T3_CHANGE_HEAD: ${{ github.sha }}
+        run: vp run classify-ci-change
+
+      - name: Replay scrubbed Pi and OMP traces
+        if: steps.classify.outputs.replay_gate == 'true'
+        run: >-
+          vp test run
+          apps/server/src/provider/piFamily/NativeTraceCorpus.test.ts
+          apps/server/src/provider/piFamily/NativeTraceReplay.test.ts
+
+      - name: Run credential-free native process smoke
+        if: steps.classify.outputs.replay_gate == 'true'
+        run: >-
+          vp test run apps/server/src/provider/piFamily/NativeAdapter.test.ts
+          -t "starts pi, negotiates capabilities, and completes a prompt|starts omp, negotiates capabilities, and completes a prompt"
+
+      - name: Run transfer and convergence gates
+        if: steps.classify.outputs.budget_gate == 'true'
+        env:
+          T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
+          T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
+        run: >-
+          vp test run
+          apps/server/integration/TransferBudgetReport.integration.test.ts
+          apps/server/src/server.test.ts
+          -t "reports thread HTTP and WebSocket transfer budgets|keeps authenticated thread subscribers converged across bounded reconnect replay"
+
+      - name: Measure deterministic performance baseline
+        if: steps.classify.outputs.replay_gate == 'true'
+        run: vp run performance-baseline | tee "${RUNNER_TEMP}/pi-omp-performance.json"
+
+      - name: Upload focused aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pi-omp-focused-evidence
+          path: |
+            ${{ runner.temp }}/t3code-transfer-budget.md
+            ${{ runner.temp }}/thread-transfer-result.json
+            ${{ runner.temp }}/pi-omp-performance.json
+          if-no-files-found: ignore
+          retention-days: 30
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis

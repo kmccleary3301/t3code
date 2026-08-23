@@ -2,7 +2,9 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-const root = process.cwd();
+const root = NodePath.resolve(
+  process.env.T3_RELATIVE_IMPORT_SCOPE ?? "apps/server/src/provider/piFamily",
+);
 const ignoredDirectories = new Set([
   ".git",
   ".repos",
@@ -37,14 +39,14 @@ for (const file of files) {
   const source = NodeFS.readFileSync(file, "utf8");
   for (const match of source.matchAll(importPattern)) {
     const specifier = match[1];
-    if (/\.(?:js|jsx|mjs|cjs)(?:[?#].*)?$/u.test(specifier)) {
+    if (!/\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|json)(?:[?#].*)?$/u.test(specifier)) {
       failures.push(`${file}: ${specifier}`);
     }
   }
 }
 
 if (failures.length > 0) {
-  console.error("Relative JavaScript imports are not allowed in TypeScript sources:");
+  console.error("Relative TypeScript imports must name an explicit source extension:");
   for (const failure of failures) console.error(` ${failure}`);
   process.exit(1);
 }

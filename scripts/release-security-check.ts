@@ -12,6 +12,10 @@ const upstreamSyncWorkflow = NodeFS.readFileSync(
   "utf8",
 );
 const installer = NodeFS.readFileSync(NodePath.join(root, "scripts/install.sh"), "utf8");
+const workflowDir = NodePath.join(root, ".github/workflows");
+const workflowSources = NodeFS.readdirSync(workflowDir)
+  .filter((name) => name.endsWith(".yml"))
+  .map((name) => [name, NodeFS.readFileSync(NodePath.join(workflowDir, name), "utf8")] as const);
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -63,6 +67,26 @@ assert(
 assert(
   !/\bwget\b[^\n|]*\|\s*(?:ba)?sh\b/u.test(installer),
   "Installer must not pipe wget directly into a shell.",
+);
+for (const [name, source] of workflowSources) {
+  for (const [index, line] of source.split("\n").entries()) {
+    const match = line.match(/^\s*uses:\s*\S+@([^\s#]+)\s*(?:#\s*(.*))?$/u);
+    if (match === null) continue;
+    assert(
+      /^[0-9a-f]{40}$/u.test(match[1] ?? ""),
+      `${name}:${index + 1}: workflow actions must use immutable commit SHAs`,
+    );
+    assert(
+      (match[2] ?? "").trim().length > 0,
+      `${name}:${index + 1}: immutable actions need version/revision comments`,
+    );
+  }
+}
+const threadPublisher =
+  workflowSources.find(([name]) => name === "thread-transfer-report.yml")?.[1] ?? "";
+assert(
+  threadPublisher.includes("ref: ${{ github.event.repository.default_branch }}"),
+  "workflow_run publisher must checkout the trusted default branch",
 );
 assert(/set -eu(?:o pipefail)?\b/u.test(installer), "Installer must use strict shell options.");
 

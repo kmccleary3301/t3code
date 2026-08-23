@@ -91,6 +91,8 @@ export interface WebSocketTransferTotals {
   readonly wireBytes: number;
   readonly decodedBytes: number;
   readonly messages: number;
+  /** Largest decoded application message observed on this connection. */
+  readonly largestMessageBytes: number;
 }
 
 export interface WebSocketTransferRecorder {
@@ -121,6 +123,7 @@ export function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
   let socket: NodeWebSocketWithTransport | null = null;
   let decodedBytes = 0;
   let messages = 0;
+  let largestMessageBytes = 0;
 
   return {
     connect: (url, protocols, cookie) => {
@@ -133,6 +136,7 @@ export function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
         const bytes = rawDataBytes(data);
         decodedBytes += bytes;
         messages += 1;
+        largestMessageBytes = Math.max(largestMessageBytes, bytes);
       });
       return nextSocket as unknown as globalThis.WebSocket;
     },
@@ -140,6 +144,7 @@ export function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
       wireBytes: socket?._socket?.bytesRead ?? 0,
       decodedBytes,
       messages,
+      largestMessageBytes,
     }),
     negotiatedExtensions: () => socket?.extensions ?? "",
     terminate: () => socket?.terminate(),
@@ -154,6 +159,7 @@ export function transferDelta(
     wireBytes: Math.max(0, end.wireBytes - start.wireBytes),
     decodedBytes: Math.max(0, end.decodedBytes - start.decodedBytes),
     messages: Math.max(0, end.messages - start.messages),
+    largestMessageBytes: end.largestMessageBytes,
   };
 }
 

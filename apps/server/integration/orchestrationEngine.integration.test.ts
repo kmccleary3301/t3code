@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeSqlite from "node:sqlite";
 import * as NodePath from "node:path";
 
 import {
@@ -1122,6 +1123,52 @@ it.live("recovers claudeAgent sessions after provider stopAll using persisted re
         assert.equal(recoveredThread.session?.threadId, "thread-1");
       }),
     CLAUDE_AGENT_PROVIDER,
+  ),
+);
+it.live("reprojects persisted events after a server restart", () =>
+  withHarness((harness) =>
+    Effect.gen(function* () {
+      yield* seedProjectAndThread(harness);
+      const beforeRestart = yield* harness.waitForThread(
+        THREAD_ID,
+        (thread) => thread.title === "Integration Thread",
+      );
+      const rootDir = harness.rootDir;
+      yield* harness.dispose;
+
+      const database = new NodeSqlite.DatabaseSync(harness.dbPath);
+      try {
+        database.exec(`
+          DELETE FROM projection_thread_messages;
+          DELETE FROM projection_thread_activities;
+          DELETE FROM projection_thread_proposed_plans;
+          DELETE FROM projection_thread_sessions;
+          DELETE FROM projection_turns;
+          DELETE FROM projection_pending_approvals;
+          DELETE FROM projection_threads;
+          DELETE FROM projection_projects;
+          DELETE FROM projection_state;
+        `);
+      } finally {
+        database.close();
+      }
+
+      yield* Effect.acquireUseRelease(
+        makeOrchestrationIntegrationHarness({
+          provider: CODEX_PROVIDER,
+          rootDir,
+        }),
+        (restarted) =>
+          Effect.gen(function* () {
+            const afterRestart = yield* restarted.waitForThread(
+              THREAD_ID,
+              (thread) => thread.title === "Integration Thread",
+            );
+            assert.deepEqual(afterRestart, beforeRestart);
+          }),
+        (restarted) => restarted.dispose,
+      );
+    }),
   ),
 );
 

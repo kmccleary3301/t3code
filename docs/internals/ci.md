@@ -21,12 +21,14 @@ need:
   - `vp run build:desktop`, followed by assertions that the preload bundle
     exists and exports the expected bridge, passkey, protocol, and WebSocket
     symbols.
-- **Test** runs on Ubuntu 24.04. `vp run test` runs the workspace test scripts,
-  followed by the resource-monitor Rust tests. The job also runs the focused
-  Pi/OMP protocol fixture tests (`ProtocolContract`, `NativeAdapter`,
-  `OmpChunkAssembler`, and `StrictJsonlDecoder`). These fixtures spawn the
-  current Node process; they do not download or invoke stock Pi or OMP
-  binaries.
+- **Test** runs on Ubuntu 24.04. `vp run test` runs the workspace test scripts, followed by the
+  resource-monitor Rust tests. The job also runs the focused Pi/OMP protocol fixture tests
+  (`ProtocolContract`, `NativeAdapter`, `OmpChunkAssembler`, and `StrictJsonlDecoder`). These
+  fixtures spawn the current Node process; they do not download or invoke stock Pi or OMP binaries.
+- **Pi OMP Focused Gate** runs on Ubuntu 24.04 within twelve minutes. It replays the scrubbed Pi
+  and OMP corpora, runs credential-free spawned-process smoke for both dialects, exercises the
+  transfer-budget and authenticated reconnect-convergence tests, and records a deterministic
+  performance baseline. Its artifact contains aggregate transfer/performance data only.
 - **Mobile Native Static Analysis** runs on macOS 26 because the mobile native
   toolchain and `apps/mobile/Brewfile` are macOS-only. It installs those tools
   and runs `vp run lint:mobile`. This is not a mobile simulator/device test and
@@ -37,16 +39,29 @@ need:
   release-workflow, publish, and installer invariants. It does not publish,
   sign, notarize, build an Electron artifact, or use release credentials.
 
-CI has no repository relative-import checker. No such command is present in
-the package scripts, so CI does not invent one or silently skip one. The
-`icons:check` script requires the macOS Icon Composer GUI and is likewise not
-run on the headless runners; generated/product identity coverage in CI is the
-contract test above plus the desktop build/preload assertions.
+The Check job runs `vp run check:ts-relative-imports` against the provider/decoder/projector scope
+(`apps/server/src/provider/piFamily`) and `vp run check:workflow-action-pins`. The former requires
+explicit relative source extensions under the provider scope; the latter requires immutable action
+SHAs with revision comments and verifies the workflow-run publisher checks out only the trusted
+default branch.
 
 These jobs use GitHub-hosted runner labels so they execute in the owner-controlled fork without
 requiring the upstream Blacksmith runner integration. The production relay workflow skips fork
 pushes unless `T3_ENABLE_RELAY_DEPLOY=true`; fork releases consume their separately configured relay
 metadata instead of deploying upstream infrastructure.
+
+## Private state canary
+
+[`private-state-canary.yml`](../../.github/workflows/private-state-canary.yml) is a scheduled,
+owner-controlled lane, not a pull-request gate. It requires a Linux self-hosted runner labeled
+`private-state` and the repository variable `T3_PRIVATE_STATE_DB`, whose value is an absolute path
+to a stopped local `state.sqlite`. The lane fails closed when either is absent.
+
+The job snapshots the source with SQLite `VACUUM INTO`, migrates and reprojects disposable copies,
+compares aggregate state, and deletes every copied database in a shell `trap`. It publishes no
+artifact and logs no private rows, prompts, paths, or native output. The `migration` injection
+must fail while preserving the source digest and leaving only a mode-0600 aggregate report in the
+mode-0700 temporary directory.
 
 ## Compatibility matrix
 
@@ -63,19 +78,27 @@ name when `T3_PRODUCT_PROFILE` is absent. Neither path infers behavior from a pr
 | Production scheme | `t3code`                  | `t3code-pi-omp`                |
 | State directory   | `t3code`                  | `t3code-pi-omp`                |
 
+### Native runtime lanes
+
+The supported native-runtime claim is intentionally narrow. The lane is selected by the
+configured binary path and is never inferred from a provider label:
+
+| Runtime lane           | Version/revision                                                                            | Protocol proof                                                                               | Support status                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Pi audited binary      | `0.84.2` / `binary-sha256:840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521` | Pi RPC v1; strict LF JSONL; model/state/capability discovery                                 | Supported                                          |
+| OMP integration binary | `17.3.7` / `binary-sha256:c1434d85392024aab964220b3c3fd27afe1241d13d5488dac84b489d1f052b0d` | ready v1, v1/v2 advertisement, v2 negotiation, bounded chunk transport, capability discovery | Supported                                          |
+| OMP default binary     | `18.0.0` / `binary-sha256:78870640abcb930e1abbe128baf1b636ecd1fe8326af42ac3652e4a4654112f7` | emits ready v1 but does not implement the T3 `get_capabilities` RPC contract                 | Unsupported; select the audited integration binary |
+
+The Pi and OMP rows were probed through their native RPC entrypoints on the current
+arm64 workstation. The probe verified version, framing, capability/discovery responses,
+and clean stdin-close teardown. It is not a substitute for the authenticated T3
+root-turn gate; that remains an external compatibility check.
+
 ### Node and package manager
 
-- The repository root declares Node.js `^24.13.1` and `pnpm@11.10.0`.
-  Pull-request CI uses `setup-vp` with that root declaration and Vite Plus for
-  installation and tasks.
-- The server package additionally declares
-  `^22.16 || ^23.11 || >=24.10`; that wider runtime range does not change the
-  Node declaration used by root CI.
-- The POSIX installer does not install Node.js. It requires Node.js and npm for the
-  profile-specific CLI package path. Routine CI uses a fake release server/package; the published
-  `fork-v0.0.40` path was separately exercised through GitHub on isolated prefixes, including
-  manifest/checksum verification, desktop selection, binary execution, update, rollback, uninstall,
-  and confirmation that the discovered Pi and OMP installations remained unchanged.
+The repository root declares Node.js `^24.13.1` and `pnpm@11.10.0`.
+Pull-request CI uses `setup-vp` with that root declaration and Vite Plus for
+installation and tasks.
 
 ### Pi and OMP runtime protocol baseline
 

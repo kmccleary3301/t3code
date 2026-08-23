@@ -64,7 +64,23 @@ authenticated.
 - `node apps/server/scripts/t3-sqlite-state.ts <query|exec> --base-dir <path> ...`: Inspects or seeds
   an isolated T3 SQLite database; writes create a private backup first.
 
-## Desktop artifacts
+## Provider, canary, and CI evidence
+
+- `vp run test-pi-omp`: Runs scrubbed Pi/OMP replay, transfer-budget, reconnect-convergence, and
+  credential-free spawned native-process checks. It never reads credentials or invokes stock
+  binaries.
+- `vp run performance-baseline`: Emits aggregate fixture load/decode/replay/projection, SQLite
+  snapshot, WebSocket compression, and process-memory measurements. Compare reports only when the
+  Node version and fixture revisions match; do not promote an arbitrary timing into a gate.
+- `vp run classify-ci-change`: Classifies changed paths. Provider/decoder/projector/fixture/report
+  changes enable replay and budget checks; distribution changes enable release checks; docs-only
+  changes cannot publish.
+- `vp run private-state-canary --source /absolute/path/state.sqlite --output-dir /tmp/t3-canary`:
+  local/manual only. Stop all writers first. The source is opened read-only, copied with
+  `VACUUM INTO`, migrated and reprojected in separate disposable databases, compared by aggregate
+  state, and hashed before/after. The output directory is mode `0700`, the aggregate
+  `REPORT.json` is mode `0600`, and copied databases/attachments are removed before exit. The
+  report never contains rows, prompts, paths, credentials, or raw native output.
 
 - `vp run dist:desktop:artifact --platform <mac|linux|win> --target <target> --arch <arch>`: Builds a desktop artifact for a specific platform/target/arch.
 - `vp run dist:desktop:dmg`: Builds a shareable macOS `.dmg` into `./release`. Architecture defaults

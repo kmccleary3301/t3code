@@ -8663,6 +8663,19 @@ it.live(
                       TRANSFER_HISTORY_TURN_COUNT * 2,
                     );
 
+                    const resumedThreadSnapshot = yield* measureHttpGet({
+                      url: `${baseUrl}/api/orchestration/threads/${TRANSFER_THREAD_ID}`,
+                      headers: { cookie },
+                    });
+                    assert.equal(resumedThreadSnapshot.status, 200);
+                    assert.equal(resumedThreadSnapshot.contentEncoding, "gzip");
+                    const resumedDecodedThread = yield* decodeTransferThreadSnapshot(
+                      Buffer.from(resumedThreadSnapshot.decodedBody).toString("utf8"),
+                    );
+                    assert.equal(
+                      resumedDecodedThread.thread.messages.length,
+                      TRANSFER_HISTORY_TURN_COUNT * 2,
+                    );
                     const threadItems = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
                     yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
                       threadId: TRANSFER_THREAD_ID,
@@ -8681,9 +8694,42 @@ it.live(
                     );
                     assert.isFalse(initialThreadItems.some((item) => item.kind === "snapshot"));
                     assert.include(recorder.negotiatedExtensions(), "permessage-deflate");
+                    const fanoutRecorder = makeWebSocketTransferRecorder();
+                    const fanoutItems = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                    const fanoutFiber = yield* Effect.scoped(
+                      Effect.gen(function* () {
+                        const fanoutClient = yield* makeCountingWsRpcClient;
+                        yield* fanoutClient[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                          threadId: TRANSFER_THREAD_ID,
+                          afterSequence: decodedThread.snapshotSequence,
+                          requestCompletionMarker: true,
+                        }).pipe(
+                          Stream.runForEach((item) =>
+                            Queue.offer(fanoutItems, item).pipe(Effect.asVoid),
+                          ),
+                        );
+                      }).pipe(
+                        Effect.provide(
+                          countingWsRpcProtocolLayer({
+                            url: wsUrl,
+                            cookie,
+                            recorder: fanoutRecorder,
+                          }),
+                        ),
+                      ),
+                    ).pipe(Effect.forkScoped);
+                    const fanoutInitialItems = yield* collectQueueUntil(
+                      fanoutItems,
+                      (item) => item.kind === "synchronized",
+                      `${provider} fanout subscription to synchronize`,
+                    );
+                    assert.isFalse(fanoutInitialItems.some((item) => item.kind === "snapshot"));
+                    assert.include(fanoutRecorder.negotiatedExtensions(), "permessage-deflate");
 
                     yield* queueMeasuredTransferTurn(harness, provider);
                     const turnStartTotals = recorder.totals();
+                    const fanoutStartTotals = fanoutRecorder.totals();
+
                     yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
                       type: "thread.turn.start",
                       commandId: CommandId.make(`transfer:${provider}:measured-turn`),
@@ -8719,6 +8765,24 @@ it.live(
                         item.kind === "event" && item.event.sequence === finalThreadSequence,
                       `${provider} thread stream to reach sequence ${finalThreadSequence}`,
                     );
+                    const fanoutTurnItems = yield* collectQueueUntil(
+                      fanoutItems,
+                      (item) =>
+                        item.kind === "event" && item.event.sequence === finalThreadSequence,
+                      `${provider} fanout stream to reach sequence ${finalThreadSequence}`,
+                    );
+                    assert.isTrue(
+                      fanoutTurnItems.some(
+                        (item) =>
+                          item.kind === "event" && item.event.sequence === finalThreadSequence,
+                      ),
+                    );
+                    assert.isAbove(
+                      fanoutRecorder.totals().messages,
+                      fanoutStartTotals.messages,
+                      `${provider} fanout client received measured-turn messages`,
+                    );
+                    yield* Fiber.interrupt(fanoutFiber);
                     const measuredTurnWebSocket = transferDelta(turnStartTotals, recorder.totals());
 
                     const finalThreadSnapshot = yield* harness.snapshotQuery
@@ -8743,7 +8807,9 @@ it.live(
                     return {
                       provider,
                       threadSnapshot,
+                      resumedThreadSnapshot,
                       measuredTurnWebSocket,
+                      fanoutClients: 2,
                     } satisfies TransferBudgetRun;
                   }).pipe(Effect.provide(protocolLayer)),
                 );
