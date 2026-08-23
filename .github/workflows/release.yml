@@ -449,8 +449,7 @@ jobs:
           mkdir -p wsl-prebuild node-pty-package
           cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
           cp "$pty_dir/build/Release/pty.node" node-pty-package/pty.node
-          cp "$pty_dir/build/Release/spawn-helper" node-pty-package/spawn-helper
-          tar -czf node-pty-linux-x64.tar.gz -C node-pty-package pty.node spawn-helper
+          tar -czf node-pty-linux-x64.tar.gz -C node-pty-package pty.node
           file wsl-prebuild/pty.node node-pty-linux-x64.tar.gz
 
       - name: Upload node-pty linux-x64 WSL prebuild
@@ -501,8 +500,7 @@ jobs:
           ( cd "$pty_dir" && npx --yes node-gyp rebuild )
           mkdir -p node-pty-package
           cp "$pty_dir/build/Release/pty.node" node-pty-package/pty.node
-          cp "$pty_dir/build/Release/spawn-helper" node-pty-package/spawn-helper
-          tar -czf node-pty-linux-arm64.tar.gz -C node-pty-package pty.node spawn-helper
+          tar -czf node-pty-linux-arm64.tar.gz -C node-pty-package pty.node
           file node-pty-linux-arm64.tar.gz
 
       - name: Upload node-pty linux-arm64 release asset

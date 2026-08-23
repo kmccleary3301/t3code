@@ -645,7 +645,6 @@ if [ "$platform" = linux ]; then
     verify_extracted_tree "$native_unpack" ||
       fail "native node-pty archive contains unsafe links"
     [ -f "$native_unpack/pty.node" ] || fail "native node-pty archive has no pty.node"
-    [ -f "$native_unpack/spawn-helper" ] || fail "native node-pty archive has no spawn-helper"
     node_pty_dir=$(
       node - "$stage_version" "$package_name" <<'NODE'
 const fs = require("node:fs");
@@ -662,8 +661,10 @@ NODE
     ) || fail "installed CLI has no node-pty package"
     mkdir -p "$node_pty_dir/prebuilds/linux-$arch"
     cp "$native_unpack/pty.node" "$node_pty_dir/prebuilds/linux-$arch/pty.node"
-    cp "$native_unpack/spawn-helper" "$node_pty_dir/prebuilds/linux-$arch/spawn-helper"
-    chmod 755 "$node_pty_dir/prebuilds/linux-$arch/spawn-helper"
+    if [ -f "$native_unpack/spawn-helper" ]; then
+      cp "$native_unpack/spawn-helper" "$node_pty_dir/prebuilds/linux-$arch/spawn-helper"
+      chmod 755 "$node_pty_dir/prebuilds/linux-$arch/spawn-helper"
+    fi
   fi
 fi
 
