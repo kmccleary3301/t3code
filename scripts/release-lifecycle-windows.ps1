@@ -307,6 +307,17 @@ try {
   if (-not $ready) { Get-Content -LiteralPath $serverStdout, $serverStderr -ErrorAction SilentlyContinue | Write-Error; Fail 'server readiness timed out' }
   Stop-ServerTree $serverProcess
   $serverProcess = $null
+  if (-not [string]::IsNullOrWhiteSpace($env:T3_LIFECYCLE_INSTALLED_NATIVE_REPORT)) {
+    if ([string]::IsNullOrWhiteSpace($env:T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT)) {
+      Fail 'T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT is required'
+    }
+    $env:T3_INSTALLED_CLI = $cli
+    $env:T3_INSTALLED_NATIVE_REPORT = $env:T3_LIFECYCLE_INSTALLED_NATIVE_REPORT
+    & 'vp' test run apps/server/integration/installedArtifactNative.integration.test.ts `
+      --reporter=json `
+      "--outputFile=$env:T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT"
+    if ($LASTEXITCODE -ne 0) { Fail 'installed artifact native smoke failed' }
+  }
 
   $desktopRoot = Join-Path $root 'desktop'
   $previousDesktop = Install-Nsis $previous.desktopPath $desktopRoot

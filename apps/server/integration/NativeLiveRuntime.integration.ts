@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
@@ -257,11 +258,14 @@ class NativeLiveRuntimeError extends Schema.TaggedErrorClass<NativeLiveRuntimeEr
 const nativeLiveError = (cause: unknown): NativeLiveRuntimeError =>
   new NativeLiveRuntimeError({ cause });
 export const makeNativeLiveAgentDirectory = (
-  prefix = "/tmp/t3-native-live-",
+  prefix = "t3-native-live-",
 ): Effect.Effect<string, NativeLiveRuntimeError> =>
   Effect.tryPromise({
     try: async () => {
-      const directory = await NodeFS.promises.mkdtemp(prefix);
+      if (NodePath.basename(prefix) !== prefix) {
+        throw new Error(`Native live temp prefix must be a basename: ${prefix}`);
+      }
+      const directory = await NodeFS.promises.mkdtemp(NodePath.join(NodeOS.tmpdir(), prefix));
       await NodeFS.promises.chmod(directory, 0o700);
       return directory;
     },

@@ -522,6 +522,14 @@ if (typeof descriptor.environmentId !== "string" || descriptor.environmentId.len
 }
 NODE
 stop_server
+if [ -n "${T3_LIFECYCLE_INSTALLED_NATIVE_REPORT:-}" ]; then
+  : "${T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT:?T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT is required}"
+  T3_INSTALLED_CLI="$prefix/bin/t3-pi-omp" \
+    T3_INSTALLED_NATIVE_REPORT="$T3_LIFECYCLE_INSTALLED_NATIVE_REPORT" \
+    vp test run apps/server/integration/installedArtifactNative.integration.test.ts \
+    --reporter=json \
+    --outputFile="$T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT"
+fi
 
 sh "$root/releases/$current_tag/install.sh" \
   --profile pi-omp \

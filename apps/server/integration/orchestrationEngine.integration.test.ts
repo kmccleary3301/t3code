@@ -1506,7 +1506,7 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
     makeNativeLiveModelServer,
     (modelServer) =>
       Effect.acquireUseRelease(
-        makeNativeLiveAgentDirectory("/tmp/t3-native-matrix-"),
+        makeNativeLiveAgentDirectory("t3-native-matrix-"),
         (agentDirectory) =>
           Effect.gen(function* () {
             yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
@@ -1981,7 +1981,7 @@ const runNativeCrashMatrix = (config: NativeLiveConfig) =>
     makeNativeLiveModelServer,
     (modelServer) =>
       Effect.acquireUseRelease(
-        makeNativeLiveAgentDirectory(`/tmp/t3-native-crash-${config.runtime}-`),
+        makeNativeLiveAgentDirectory(`t3-native-crash-${config.runtime}-`),
         (agentDirectory) =>
           Effect.gen(function* () {
             yield* writeNativeLiveConfig(config, agentDirectory, modelServer);

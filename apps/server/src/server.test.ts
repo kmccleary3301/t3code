@@ -8911,7 +8911,7 @@ for (const config of configuredNativeLiveConfigurations()) {
         makeNativeLiveModelServer,
         (modelServer) =>
           Effect.acquireUseRelease(
-            makeNativeLiveAgentDirectory(`/tmp/t3-native-matrix-http-${config.runtime}-`),
+            makeNativeLiveAgentDirectory(`t3-native-matrix-http-${config.runtime}-`),
             (agentDirectory) =>
               Effect.gen(function* () {
                 yield* writeNativeLiveConfig(config, agentDirectory, modelServer);

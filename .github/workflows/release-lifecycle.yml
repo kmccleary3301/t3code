@@ -92,7 +92,7 @@ jobs:
             --outputFile="$T3_NATIVE_ROOT_REPORT"
           vp test run \
             apps/server/integration/orchestrationEngine.integration.test.ts \
-            -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers after an isolated stock native process crash" \
+            -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers configured (pi|omp) after an isolated stock native process crash" \
             --reporter=json \
             --outputFile="$T3_NATIVE_MATRIX_REPORT"
 
@@ -102,8 +102,12 @@ jobs:
           T3_LIFECYCLE_RELEASE_TAG: ${{ inputs.release_tag }}
           T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
           T3_LIFECYCLE_REPORT: ${{ runner.temp }}/release-lifecycle-${{ matrix.id }}.json
+          T3_LIFECYCLE_INSTALLED_NATIVE_REPORT: ${{ runner.temp }}/installed-native-${{ matrix.id }}.json
+          T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT: ${{ runner.temp }}/installed-native-test-${{ matrix.id }}.json
         run: |
           export T3_LIFECYCLE_NATIVE_ROOT="$HOME"
+          export T3_NATIVE_PI_BINARY="$(command -v pi)"
+          export T3_NATIVE_OMP_BINARY="$PWD/.native/omp/packages/coding-agent/dist/omp"
           sh scripts/release-lifecycle-posix.sh
 
       - name: Upload lifecycle evidence
@@ -116,6 +120,8 @@ jobs:
             ${{ runner.temp }}/stock-native-root-${{ matrix.id }}.json
             ${{ runner.temp }}/stock-native-matrix-${{ matrix.id }}.json
             ${{ runner.temp }}/stock-native-provenance-${{ matrix.id }}.json
+            ${{ runner.temp }}/installed-native-${{ matrix.id }}.json
+            ${{ runner.temp }}/installed-native-test-${{ matrix.id }}.json
           if-no-files-found: ignore
           retention-days: 30
 
@@ -177,7 +183,7 @@ jobs:
             "--outputFile=$env:T3_NATIVE_ROOT_REPORT"
           vp test run `
             apps/server/integration/orchestrationEngine.integration.test.ts `
-            -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers after an isolated stock native process crash" `
+            -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers configured (pi|omp) after an isolated stock native process crash" `
             --reporter=json `
             "--outputFile=$env:T3_NATIVE_MATRIX_REPORT"
 
@@ -188,8 +194,16 @@ jobs:
           T3_LIFECYCLE_RELEASE_TAG: ${{ inputs.release_tag }}
           T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
           T3_LIFECYCLE_REPORT: ${{ runner.temp }}/release-lifecycle-windows.json
+          T3_LIFECYCLE_INSTALLED_NATIVE_REPORT: ${{ runner.temp }}/installed-native-windows.json
+          T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT: ${{ runner.temp }}/installed-native-test-windows.json
         run: |
           $env:T3_LIFECYCLE_NATIVE_ROOT = Join-Path $env:RUNNER_TEMP "t3-pi-omp-native-state-windows"
+          $env:T3_NATIVE_PI_BINARY = (Get-Command pi.cmd -ErrorAction Stop).Source
+          $ompBinary = Join-Path $PWD ".native/omp/packages/coding-agent/dist/omp.exe"
+          if (-not (Test-Path $ompBinary)) {
+            $ompBinary = Join-Path $PWD ".native/omp/packages/coding-agent/dist/omp"
+          }
+          $env:T3_NATIVE_OMP_BINARY = (Resolve-Path $ompBinary).Path
           ./scripts/release-lifecycle-windows.ps1
 
       - name: Upload lifecycle evidence
@@ -202,5 +216,7 @@ jobs:
             ${{ runner.temp }}/stock-native-root-windows.json
             ${{ runner.temp }}/stock-native-matrix-windows.json
             ${{ runner.temp }}/stock-native-provenance-windows.json
+            ${{ runner.temp }}/installed-native-windows.json
+            ${{ runner.temp }}/installed-native-test-windows.json
           if-no-files-found: ignore
           retention-days: 30
