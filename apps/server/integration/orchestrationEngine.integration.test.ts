@@ -36,12 +36,16 @@ import {
 } from "./OrchestrationEngineHarness.integration.ts";
 import {
   configuredNativeLiveConfigurations,
+  exerciseNativeLiveQueueModes,
   makeNativeLiveAgentDirectory,
   makeNativeLiveModelServer,
+  makeNativeLiveTraceSinkFactory,
   nativeLiveTraceSinkFactory,
   writeNativeCrashWrapper,
   writeNativeLiveConfig,
+  writeNativeLiveExtension,
   type NativeLiveConfig,
+  type NativeLiveCapabilityObservation,
 } from "./NativeLiveRuntime.integration.ts";
 import { checkpointRefForThreadTurn } from "../src/checkpointing/Utils.ts";
 import type {
@@ -1510,17 +1514,37 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
         (agentDirectory) =>
           Effect.gen(function* () {
             yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
+            const queueObservation = yield* exerciseNativeLiveQueueModes(config, agentDirectory);
+            assert.include(queueObservation.responseCommands, "steer");
+            assert.include(queueObservation.responseCommands, "follow_up");
+            if (config.runtime === "pi") {
+              assert.isAtLeast(
+                queueObservation.frameTypes.filter((type) => type === "queue_update").length,
+                2,
+              );
+            } else {
+              assert.include(queueObservation.frameTypes, "agent_end");
+              assert.include(queueObservation.responseCommands, "branch");
+              assert.include(queueObservation.responseCommands, "switch_session");
+            }
+            const extensionPath = yield* writeNativeLiveExtension(agentDirectory);
+            const capabilityObservation: NativeLiveCapabilityObservation = {
+              responseCommands: [],
+              frameTypes: [],
+              stdinFrameTypes: [],
+              uiRequests: [],
+            };
             yield* Effect.acquireUseRelease(
               makeOrchestrationIntegrationHarness({
                 provider: config.provider,
                 nativeLive: {
                   runtime: config.runtime,
                   binaryPath: config.binaryPath,
-                  launchArguments: config.launchArguments,
+                  launchArguments: [...config.launchArguments, "--extension", extensionPath],
                   agentDirectory,
                   environment: { PI_OFFLINE: "1", PI_NO_PTY: "1" },
                   ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
-                  traceSinkFactory: nativeLiveTraceSinkFactory,
+                  traceSinkFactory: makeNativeLiveTraceSinkFactory(capabilityObservation),
                 },
               }),
               (harness) =>
@@ -1679,6 +1703,169 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                       (message) => message.text.includes("NATIVE-MATRIX-OK") && !message.streaming,
                     ),
                   );
+                  assert.isTrue(
+                    capabilityObservation.responseCommands.includes("get_capabilities"),
+                    `${config.runtime} did not negotiate capabilities`,
+                  );
+                  if (config.runtime === "omp") {
+                    assert.isTrue(
+                      capabilityObservation.capabilities !== undefined,
+                      "omp capability response was not observed",
+                    );
+                    const capabilities = capabilityObservation.capabilities!;
+                    const sessions = capabilities.sessions as
+                      | Readonly<Record<string, unknown>>
+                      | undefined;
+                    const tasks = capabilities.tasks as
+                      | Readonly<Record<string, unknown>>
+                      | undefined;
+                    const ui = capabilities.ui as Readonly<Record<string, unknown>> | undefined;
+                    assert.equal(sessions?.resume, true);
+                    assert.equal(sessions?.fork, true);
+                    assert.equal(sessions?.compact, true);
+                    assert.equal(tasks?.nested, true);
+                    assert.equal(tasks?.background, true);
+                    assert.equal(tasks?.targetedCancellation, true);
+                    assert.equal(ui?.arbitraryTerminalComponents, false);
+                    assert.equal(ui?.openUrl, false);
+                  }
+
+                  const nativeToolCompletedFiber = yield* harness.providerService.streamEvents.pipe(
+                    Stream.filter(
+                      (event) =>
+                        event.threadId === threadId &&
+                        event.type === "item.completed" &&
+                        JSON.stringify(event.payload).includes("NATIVE-MATRIX-TOOL-OK"),
+                    ),
+                    Stream.runHead,
+                    Effect.forkChild,
+                  );
+                  yield* startAndWaitForCompleted(
+                    9,
+                    "NATIVE-MATRIX-TOOL: run the local bash command and return its marker.",
+                    "NATIVE-MATRIX-TOOL-OK",
+                    `${config.runtime} native local tool execution`,
+                  );
+                  const nativeToolCompleted = yield* Fiber.join(nativeToolCompletedFiber).pipe(
+                    Effect.timeout("20 seconds"),
+                  );
+                  assert.equal(nativeToolCompleted._tag, "Some");
+                  if (nativeToolCompleted._tag !== "Some") {
+                    return yield* Effect.die("Native tool completion was not projected.");
+                  }
+                  // @effect-diagnostics-next-line preferSchemaOverJson:off - Marker-only test payload inspection.
+                  const nativeToolPayload = JSON.stringify(nativeToolCompleted.value.payload);
+                  assert.match(nativeToolPayload, /NATIVE-MATRIX-TOOL-OK/u);
+
+                  const featureThreadId = ThreadId.make(
+                    `native-matrix-${config.runtime}-feature-thread`,
+                  );
+                  yield* harness.engine.dispatch({
+                    type: "thread.create",
+                    commandId: CommandId.make(
+                      `native-matrix:${config.runtime}:feature-thread-create`,
+                    ),
+                    threadId: featureThreadId,
+                    projectId,
+                    title: `${config.runtime} native feature thread`,
+                    modelSelection,
+                    runtimeMode: "approval-required",
+                    interactionMode: "default",
+                    branch: null,
+                    worktreePath: harness.workspaceDir,
+                    createdAt,
+                  });
+                  const uiAssistantCountBefore = (yield* harness.waitForThread(
+                    featureThreadId,
+                    () => true,
+                  )).messages.filter((message) => message.role === "assistant").length;
+                  yield* startTurn(
+                    10,
+                    "NATIVE-MATRIX-UI: exercise the portable confirmation.",
+                    featureThreadId,
+                  );
+                  const uiRequests = yield* waitForSync(
+                    () => capabilityObservation.uiRequests,
+                    (requests) => requests.some((request) => request.method === "confirm"),
+                    `${config.runtime} native portable UI request`,
+                  );
+                  const uiRequest = uiRequests.find((request) => request.method === "confirm")!;
+                  const uiResponsesBefore = capabilityObservation.stdinFrameTypes.filter(
+                    (type) => type === "extension_ui_response",
+                  ).length;
+                  yield* harness.providerService.respondToRequest({
+                    threadId: featureThreadId,
+                    requestId: asApprovalRequestId(uiRequest.id),
+                    decision: "accept",
+                  });
+                  yield* waitForSync(
+                    () =>
+                      capabilityObservation.stdinFrameTypes.filter(
+                        (type) => type === "extension_ui_response",
+                      ).length,
+                    (count) => count > uiResponsesBefore,
+                    `${config.runtime} native portable UI response`,
+                  );
+                  const uiSettled = yield* harness.waitForThread(
+                    featureThreadId,
+                    (entry) =>
+                      entry.latestTurn?.state === "completed" &&
+                      entry.session?.status === "ready" &&
+                      entry.messages.filter((message) => message.role === "assistant").length >
+                        uiAssistantCountBefore,
+                  );
+                  assert.equal(uiSettled.latestTurn?.state, "completed");
+
+                  const taskAssistantCountBefore = (yield* harness.waitForThread(
+                    featureThreadId,
+                    () => true,
+                  )).messages.filter((message) => message.role === "assistant").length;
+                  const taskFramesBefore = capabilityObservation.frameTypes.length;
+                  const taskUiRequestsBefore = capabilityObservation.uiRequests.length;
+                  yield* startTurn(
+                    11,
+                    "NATIVE-MATRIX-TASK: emit semantic host task lifecycle.",
+                    featureThreadId,
+                  );
+                  const taskObservation = yield* waitForSync(
+                    () => ({
+                      frameTypes: capabilityObservation.frameTypes.slice(taskFramesBefore),
+                      uiRequests: capabilityObservation.uiRequests.slice(taskUiRequestsBefore),
+                    }),
+                    ({ frameTypes, uiRequests }) =>
+                      (frameTypes.includes("host_task_started") &&
+                        frameTypes.includes("host_task_progress") &&
+                        frameTypes.includes("host_task_completed")) ||
+                      uiRequests.some(
+                        (request) => request.message === "NATIVE-MATRIX-TASK-UNSUPPORTED",
+                      ),
+                    `${config.runtime} native semantic task capability`,
+                  );
+                  if (taskObservation.frameTypes.includes("host_task_started")) {
+                    assert.include(taskObservation.frameTypes, "host_task_completed");
+                  } else {
+                    assert.isTrue(
+                      taskObservation.uiRequests.some(
+                        (request) => request.message === "NATIVE-MATRIX-TASK-UNSUPPORTED",
+                      ),
+                    );
+                  }
+                  const taskSettled = yield* harness.waitForThread(
+                    featureThreadId,
+                    (entry) =>
+                      entry.latestTurn?.state === "completed" &&
+                      entry.session?.status === "ready" &&
+                      entry.messages.filter((message) => message.role === "assistant").length >
+                        taskAssistantCountBefore,
+                  );
+                  assert.equal(taskSettled.latestTurn?.state, "completed");
+                  const featureSessions = yield* harness.providerService.listSessions();
+                  assert.isTrue(featureSessions.some((session) => session.threadId === threadId));
+                  assert.isTrue(
+                    featureSessions.some((session) => session.threadId === featureThreadId),
+                  );
+                  yield* harness.providerService.stopSession({ threadId: featureThreadId });
+                  yield* waitForNativeProcessExit(featureThreadId);
 
                   const parallelThreadId = ThreadId.make(
                     `native-matrix-${config.runtime}-parallel-thread`,
@@ -1712,6 +1899,24 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                   assert.isTrue(
                     parallelSessions.some((session) => session.threadId === parallelThreadId),
                   );
+                  const imageThreadId = ThreadId.make(
+                    `native-matrix-${config.runtime}-image-thread`,
+                  );
+                  yield* harness.engine.dispatch({
+                    type: "thread.create",
+                    commandId: CommandId.make(
+                      `native-matrix:${config.runtime}:image-thread-create`,
+                    ),
+                    threadId: imageThreadId,
+                    projectId,
+                    title: `${config.runtime} native image thread`,
+                    modelSelection,
+                    runtimeMode: "approval-required",
+                    interactionMode: "default",
+                    branch: null,
+                    worktreePath: harness.workspaceDir,
+                    createdAt,
+                  });
 
                   const imageBytes = Buffer.from(
                     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -1737,16 +1942,9 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     3,
                     imageMessage,
                     "NATIVE-MATRIX-OK",
-                    `${config.runtime} image, model switch, and thinking turn`,
-                    threadId,
-                    {
-                      attachments: [imageAttachment],
-                      modelSelection: {
-                        instanceId,
-                        model: "local/alternate",
-                        options: [{ id: "thinkingLevel", value: "high" }],
-                      },
-                    },
+                    `${config.runtime} native image turn`,
+                    imageThreadId,
+                    { attachments: [imageAttachment] },
                   );
                   assert.equal(modelServer.imageRequestCount(), imageRequestsBefore + 1);
                   assert.isTrue(
@@ -1766,11 +1964,12 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     threadId,
                   });
                   const hasNativeCheckpoint = nativeCheckpoint !== undefined;
-                  assert.equal(
-                    hasNativeCheckpoint,
-                    config.runtime === "pi",
-                    `${config.runtime} native checkpoint capability mismatch`,
-                  );
+                  if (config.runtime === "omp") {
+                    assert.isFalse(
+                      hasNativeCheckpoint,
+                      "OMP does not advertise native checkpoint capture",
+                    );
+                  }
                   if (nativeCheckpoint !== undefined) {
                     yield* harness.providerService.restoreNativeCheckpoint({
                       threadId,
@@ -1802,7 +2001,37 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                         !message.streaming,
                     ),
                   );
-
+                  const modelCapabilities = capabilityObservation.capabilities?.models as
+                    | Readonly<Record<string, unknown>>
+                    | undefined;
+                  const thinkingCapabilities = capabilityObservation.capabilities?.thinking as
+                    | Readonly<Record<string, unknown>>
+                    | undefined;
+                  if (modelCapabilities?.switch === true && thinkingCapabilities?.switch === true) {
+                    const modelCommandsBefore = capabilityObservation.responseCommands.length;
+                    yield* startAndWaitForCompleted(
+                      14,
+                      "Complete the native model and thinking-level switch.",
+                      "NATIVE-MATRIX-OK",
+                      `${config.runtime} model and thinking switch`,
+                      threadId,
+                      {
+                        modelSelection: {
+                          instanceId,
+                          model: "local/alternate",
+                          options: [{ id: "thinkingLevel", value: "high" }],
+                        },
+                      },
+                    );
+                    const modelCommands =
+                      capabilityObservation.responseCommands.slice(modelCommandsBefore);
+                    assert.include(modelCommands, "set_model");
+                    assert.include(modelCommands, "set_thinking_level");
+                  } else {
+                    assert.isFalse(
+                      modelCapabilities?.switch === true && thinkingCapabilities?.switch === true,
+                    );
+                  }
                   const retryMessage = "Reply after NATIVE-MATRIX-RETRY succeeds.";
                   const modelRequestsBeforeRetry = modelServer.requestCount();
                   yield* startAndWaitForCompleted(
@@ -1985,6 +2214,7 @@ const runNativeCrashMatrix = (config: NativeLiveConfig) =>
         (agentDirectory) =>
           Effect.gen(function* () {
             yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
+            const extensionPath = yield* writeNativeLiveExtension(agentDirectory);
             const crashWrapper = yield* writeNativeCrashWrapper(agentDirectory);
             yield* Effect.acquireUseRelease(
               makeOrchestrationIntegrationHarness({
@@ -1997,6 +2227,8 @@ const runNativeCrashMatrix = (config: NativeLiveConfig) =>
                     crashWrapper.pidPath,
                     config.binaryPath,
                     ...config.launchArguments,
+                    "--extension",
+                    extensionPath,
                   ],
                   agentDirectory,
                   environment: { PI_OFFLINE: "1", PI_NO_PTY: "1" },

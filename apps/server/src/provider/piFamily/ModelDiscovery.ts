@@ -1,6 +1,7 @@
 import type { ServerProviderModel } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Result from "effect/Result";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -54,7 +55,8 @@ export type PiFamilyModelDiscoveryErrorCode =
   | "protocol"
   | "native"
   | "limit"
-  | "empty";
+  | "empty"
+  | "unsupported";
 
 export class PiFamilyModelDiscoveryError extends Error {
   public readonly code: PiFamilyModelDiscoveryErrorCode;
@@ -151,7 +153,15 @@ export function modelDiscoverySnapshotMessage(provider: string, error: unknown):
   if (code === "empty") {
     return `${provider} returned no selectable models. Verify this provider instance's binary, profile, and authentication, then refresh models.`;
   }
-  if (code === "protocol") return `${provider} returned invalid model discovery data.`;
+  if (code === "unsupported") {
+    return error instanceof PiFamilyModelDiscoveryError
+      ? error.message
+      : `${provider} native runtime is unsupported.`;
+  }
+  if (code === "protocol") {
+    const auditedVersion = provider === "omp" ? "17.3.7" : "0.84.2";
+    return `${provider} returned invalid native protocol data. Configure the audited ${provider} ${auditedVersion} binary and refresh models.`;
+  }
   if (code === "limit") return `${provider} model discovery exceeded its output limit.`;
   return `${provider} model discovery failed.`;
 }
@@ -240,7 +250,10 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
       const routeFrame = (frame: JsonRecord) =>
         Effect.gen(function* () {
           if (config.runtime === "omp" && frame.type === "ready") {
-            validateOmpReadyFrame(frame);
+            yield* Effect.try({
+              try: () => validateOmpReadyFrame(frame),
+              catch: (cause) => asError(cause),
+            });
             if (ready) yield* Deferred.succeed(ready, undefined).pipe(Effect.ignore);
             return;
           }
@@ -250,6 +263,18 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
               new PiFamilyModelDiscoveryError(
                 "protocol",
                 "Native model discovery returned a malformed RPC response.",
+              ),
+            );
+          }
+          const expectedProtocolVersion = config.runtime === "omp" ? 2 : 1;
+          if (
+            frame.protocolVersion !== undefined &&
+            frame.protocolVersion !== expectedProtocolVersion
+          ) {
+            return yield* Effect.fail(
+              new PiFamilyModelDiscoveryError(
+                "protocol",
+                `Native model discovery returned unsupported protocol version ${String(frame.protocolVersion)}.`,
               ),
             );
           }
@@ -393,6 +418,34 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
           try: () => validateOmpNegotiateProtocolResponse(negotiation),
           catch: (cause) => asError(cause),
         });
+      }
+
+      const capabilitiesResponse = yield* request("get_capabilities", {
+        id: "get_capabilities-1",
+        type: "get_capabilities",
+      }).pipe(Effect.result);
+      if (Result.isFailure(capabilitiesResponse)) {
+        if (config.runtime === "omp") {
+          const cause = capabilitiesResponse.failure;
+          if (cause.code === "protocol") return yield* Effect.fail(cause);
+          return yield* Effect.fail(
+            new PiFamilyModelDiscoveryError(
+              "unsupported",
+              "OMP does not implement the T3 `get_capabilities` discovery contract. Configure the audited OMP 17.3.7 integration binary instead of the default OMP 18.0.0 binary.",
+            ),
+          );
+        }
+      } else if (
+        config.runtime === "omp" &&
+        (!asRecord(capabilitiesResponse.success.data) ||
+          Object.keys(asRecord(capabilitiesResponse.success.data) ?? {}).length === 0)
+      ) {
+        return yield* Effect.fail(
+          new PiFamilyModelDiscoveryError(
+            "unsupported",
+            "OMP does not implement the T3 `get_capabilities` discovery contract. Configure the audited OMP 17.3.7 integration binary instead of the default OMP 18.0.0 binary.",
+          ),
+        );
       }
 
       const stateResponse = yield* request("get_state", { type: "get_state" });

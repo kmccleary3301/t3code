@@ -60,7 +60,7 @@ const decodeIssuedSession = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ token: Schema.String, sessionId: Schema.String })),
 );
 
-it.live(
+it.live.skipIf(process.env.T3_INSTALLED_CLI === undefined)(
   "runs installed release artifact through Pi and OMP root turns",
   () =>
     Effect.acquireUseRelease(

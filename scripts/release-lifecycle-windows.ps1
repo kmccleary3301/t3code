@@ -48,6 +48,25 @@ function Verify-File([string] $Path, [string] $SumsPath, [string] $Name) {
   return $actual
 }
 
+function Select-DesktopArtifact(
+  [object] $Manifest,
+  [string] $Platform,
+  [string] $Architecture
+) {
+  $artifact = @(
+    $Manifest.artifacts | Where-Object {
+      $_.kind -eq 'desktop' -and
+      $_.platform -eq $Platform -and
+      $_.arch -eq $Architecture -and
+      $_.path -notmatch '\.blockmap$'
+    }
+  ) | Select-Object -First 1
+  if ($null -eq $artifact) {
+    throw "manifest has no desktop artifact for $Platform/$Architecture"
+  }
+  return $artifact
+}
+
 function Download-Release([string] $Tag, [string] $Version) {
   $destination = Join-Path $root "releases\$Tag"
   New-Item -ItemType Directory -Force -Path $destination | Out-Null
@@ -64,9 +83,8 @@ function Download-Release([string] $Tag, [string] $Version) {
   if ($manifest.profile -ne "pi-omp") { Fail "unexpected manifest profile $($manifest.profile)" }
   if ($manifest.clientVersion -ne $Version) { Fail "unexpected manifest version $($manifest.clientVersion)" }
   $cli = @($manifest.artifacts | Where-Object { $_.kind -eq "cli" }) | Select-Object -First 1
-  $desktop = @($manifest.artifacts | Where-Object { $_.kind -eq "desktop" -and $_.path -match 'x64\.exe$' }) | Select-Object -First 1
+  $desktop = Select-DesktopArtifact $manifest 'windows' 'x64'
   if ($null -eq $cli) { Fail "manifest has no CLI artifact" }
-  if ($null -eq $desktop) { Fail "manifest has no Windows x64 desktop artifact" }
   $cliPath = Join-Path $destination $cli.path
   $desktopPath = Join-Path $destination $desktop.path
   Invoke-WebRequest -UseBasicParsing -Uri "$base/$($cli.path)" -OutFile $cliPath
@@ -225,6 +243,17 @@ try {
   $cli = Resolve-Cli $cliPrefix
   Assert-Cli $cli $previousVersion
   $previousPrefixDigest = Get-TreeDigest $cliPrefix
+  $unsupportedPlatformRejected = $false
+  try {
+    $currentManifest = Get-Content -Raw -LiteralPath $current.manifest | ConvertFrom-Json
+    Select-DesktopArtifact $currentManifest 'windows' 'arm64' | Out-Null
+  } catch {
+    $unsupportedPlatformRejected = $true
+  }
+  if (-not $unsupportedPlatformRejected) {
+    Fail 'unsupported Windows arm64 desktop selection unexpectedly succeeded'
+  }
+  Assert-CliPrefixUnchanged $cliPrefix $previousPrefixDigest $previousVersion
 
   $tamperedCli = Join-Path $root 'tampered-cli.tgz'
   Copy-Item -LiteralPath $current.cliPath -Destination $tamperedCli
@@ -353,8 +382,9 @@ try {
     previousTag = $previousTag
     checks = @(
       'fresh-cli-install', 'private-version-upgrade', 'version-help', 'server-health',
-      'tampered-checksum-no-mutation', 'partial-download-no-mutation',
-      'missing-asset-no-mutation', 'missing-node-runtime',
+      'tampered-checksum-no-mutation', 'partial-interrupted-download-no-mutation',
+      'missing-asset-no-mutation', 'unsupported-platform-no-mutation',
+      'missing-node-runtime',
       'side-by-side-official-t3-installation', 'preexisting-t3-command-preservation',
       'fresh-desktop-install', 'desktop-upgrade',
       'desktop-rollback', 'desktop-uninstall', 'cli-uninstall',
