@@ -372,6 +372,18 @@ desktop_identity_smoke() {
   detach_desktop_mount
 }
 
+official_prefix="$root/official-t3"
+official_bin="$official_prefix/bin"
+mkdir -p "$official_bin"
+cat > "$official_bin/t3" <<'SH'
+#!/bin/sh
+printf '%s\n' 'official-t3-sentinel'
+SH
+chmod 755 "$official_bin/t3"
+official_t3_before=$(sha256_file "$official_bin/t3")
+PATH="$official_bin:$PATH"
+export PATH
+
 prefix="$root/prefix"
 run_installer "$previous_tag" "$prefix"
 assert_version "$prefix" "$previous_version"
@@ -475,12 +487,51 @@ then
   fail "missing release unexpectedly succeeded"
 fi
 [ ! -e "$bad_prefix" ] || fail "missing release mutated its prefix"
+unsupported_bin="$root/unsupported-platform-bin"
+unsupported_prefix="$root/unsupported-platform-prefix"
+mkdir -p "$unsupported_bin"
+cat > "$unsupported_bin/uname" <<'SH'
+#!/bin/sh
+printf '%s\n' 'Plan9'
+SH
+chmod 755 "$unsupported_bin/uname"
+if PATH="$unsupported_bin:$PATH" sh "$root/releases/$current_tag/install.sh" \
+  --profile pi-omp \
+  --release-base-url "https://github.com/$repository/releases/download/$current_tag" \
+  --version "$current_version" \
+  --prefix "$unsupported_prefix" >/dev/null 2>&1
+then
+  fail "unsupported platform unexpectedly succeeded"
+fi
+[ ! -e "$unsupported_prefix" ] || fail "unsupported platform mutated its prefix"
+
+missing_node_bin="$root/missing-node-bin"
+missing_node_prefix="$root/missing-node-prefix"
+mkdir -p "$missing_node_bin"
+cat > "$missing_node_bin/node" <<'SH'
+#!/bin/sh
+printf '%s\n' 'node unavailable' >&2
+exit 127
+SH
+chmod 755 "$missing_node_bin/node"
+if PATH="$missing_node_bin:$PATH" sh "$root/releases/$current_tag/install.sh" \
+  --profile pi-omp \
+  --release-base-url "https://github.com/$repository/releases/download/$current_tag" \
+  --version "$current_version" \
+  --prefix "$missing_node_prefix" >/dev/null 2>&1
+then
+  fail "missing Node runtime unexpectedly succeeded"
+fi
+[ ! -e "$missing_node_prefix" ] || fail "missing Node runtime mutated its prefix"
+
 
 sh "$root/releases/$current_tag/install.sh" --profile pi-omp --prefix "$prefix" --uninstall
 [ ! -e "$prefix" ] || fail "uninstall left the owned prefix"
 
 [ "$(sha256_file "$pi_state")" = "$pi_before" ] || fail "Pi native state changed"
 [ "$(sha256_file "$omp_state")" = "$omp_before" ] || fail "OMP native state changed"
+[ "$(sha256_file "$official_bin/t3")" = "$official_t3_before" ] ||
+  fail "side-by-side official T3 installation changed"
 
 node - "$report_path" "$root/release-hashes.tsv" "$root/desktop-hashes.tsv" "$current_tag" "$previous_tag" <<'NODE'
 const fs = require("node:fs");
@@ -503,7 +554,9 @@ fs.writeFileSync(report, JSON.stringify({
   checks: [
     "fresh-install", "upgrade", "version-help", "server-health", "rollback",
     "tampered-checksum-no-mutation", "missing-asset-no-mutation",
-    "partial-download-no-mutation", "missing-release-no-mutation", "desktop-install", "desktop-upgrade",
+    "partial-download-no-mutation", "missing-release-no-mutation",
+    "unsupported-platform-no-mutation", "missing-node-no-mutation",
+    "side-by-side-official-t3", "desktop-install", "desktop-upgrade",
     "desktop-identity", "desktop-rollback", "desktop-uninstall", "uninstall",
     "native-config-preservation",
   ],

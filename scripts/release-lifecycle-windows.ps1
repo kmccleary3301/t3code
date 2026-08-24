@@ -96,6 +96,13 @@ function Invoke-Checked([string] $FilePath, [string[]] $Arguments) {
   return ($output -join "`n")
 }
 
+function Invoke-ExpectedFailure([string] $FilePath, [string[]] $Arguments) {
+  & $FilePath @Arguments *> $null
+  if ($LASTEXITCODE -eq 0) {
+    Fail "$FilePath $($Arguments -join ' ') unexpectedly succeeded"
+  }
+}
+
 function Resolve-Cli([string] $Prefix) {
   $candidates = @(
     (Join-Path $Prefix "t3-pi-omp.cmd"),
@@ -152,11 +159,70 @@ try {
   $piBefore = Get-Sha256 $piState
   $ompBefore = Get-Sha256 $ompState
 
+
+  $officialPrefix = Join-Path $root 'official-t3'
+  $officialBin = Join-Path $officialPrefix 'bin'
+  New-Item -ItemType Directory -Force -Path $officialBin | Out-Null
+  $officialCli = Join-Path $officialBin 't3.cmd'
+  Set-Content -LiteralPath $officialCli -Value "@echo off`r`necho official-t3-sentinel"
+  $officialBefore = Get-Sha256 $officialCli
+
+  $tamperedCli = Join-Path $root 'tampered-cli.tgz'
+  Copy-Item -LiteralPath $current.cliPath -Destination $tamperedCli
+  Add-Content -NoNewline -LiteralPath $tamperedCli -Value 'tampered'
+  $checksumRejected = $false
+  try {
+    Verify-File $tamperedCli (Join-Path $current.directory 'SHA256SUMS') $current.cliName | Out-Null
+  } catch {
+    $checksumRejected = $true
+  }
+  if (-not $checksumRejected) { Fail 'tampered CLI checksum unexpectedly passed' }
+
+  $partialCli = Join-Path $root 'partial-cli.tgz'
+  $currentCliBytes = [System.IO.File]::ReadAllBytes($current.cliPath)
+  [System.IO.File]::WriteAllBytes(
+    $partialCli,
+    $currentCliBytes[0..([Math]::Min(1023, $currentCliBytes.Length - 1))]
+  )
+  $partialPrefix = Join-Path $root 'partial-cli-prefix'
+  Invoke-ExpectedFailure 'npm.cmd' @(
+    'install', '--global', '--prefix', $partialPrefix, '--ignore-scripts',
+    '--no-audit', '--no-fund', $partialCli
+  )
+  if (Test-Path (Join-Path $partialPrefix 't3-pi-omp.cmd')) {
+    Fail 'partial CLI install left an executable'
+  }
+
+  $missingPrefix = Join-Path $root 'missing-cli-prefix'
+  Invoke-ExpectedFailure 'npm.cmd' @(
+    'install', '--global', '--prefix', $missingPrefix, '--ignore-scripts',
+    '--no-audit', '--no-fund', (Join-Path $root 'missing-cli.tgz')
+  )
+  if (Test-Path (Join-Path $missingPrefix 't3-pi-omp.cmd')) {
+    Fail 'missing CLI install left an executable'
+  }
+
   $cliPrefix = Join-Path $root 'cli'
   New-Item -ItemType Directory -Force -Path $cliPrefix | Out-Null
+  Invoke-Checked 'npm.cmd' @('install', '--global', '--prefix', $cliPrefix, '--ignore-scripts', '--no-audit', '--no-fund', $previous.cliPath) | Out-Null
+  $cli = Resolve-Cli $cliPrefix
+  Assert-Cli $cli $previousVersion
   Invoke-Checked 'npm.cmd' @('install', '--global', '--prefix', $cliPrefix, '--ignore-scripts', '--no-audit', '--no-fund', $current.cliPath) | Out-Null
   $cli = Resolve-Cli $cliPrefix
   Assert-Cli $cli $currentVersion
+
+  $missingNodePath = Join-Path $root 'missing-node-path'
+  New-Item -ItemType Directory -Force -Path $missingNodePath | Out-Null
+  $savedPath = $env:PATH
+  $missingNodeExit = 0
+  try {
+    $env:PATH = $missingNodePath
+    & $cli --version *> $null
+    $missingNodeExit = $LASTEXITCODE
+  } finally {
+    $env:PATH = $savedPath
+  }
+  if ($missingNodeExit -eq 0) { Fail 'CLI unexpectedly launched without Node on PATH' }
 
   $port = Get-Random -Minimum 38773 -Maximum 39773
   $serverBase = Join-Path $root 'server-home'
@@ -208,6 +274,7 @@ try {
 
   if ((Get-Sha256 $piState) -ne $piBefore) { Fail 'Pi native state changed' }
   if ((Get-Sha256 $ompState) -ne $ompBefore) { Fail 'OMP native state changed' }
+  if ((Get-Sha256 $officialCli) -ne $officialBefore) { Fail 'side-by-side official T3 installation changed' }
 
   $report = [ordered]@{
     schemaVersion = 1
@@ -216,7 +283,14 @@ try {
     architecture = $env:PROCESSOR_ARCHITECTURE
     currentTag = $currentTag
     previousTag = $previousTag
-    checks = @('fresh-cli-install', 'version-help', 'server-health', 'fresh-desktop-install', 'desktop-upgrade', 'desktop-rollback', 'desktop-uninstall', 'cli-uninstall', 'native-config-preservation')
+    checks = @(
+      'fresh-cli-install', 'private-version-upgrade', 'version-help', 'server-health',
+      'tampered-checksum-no-mutation', 'partial-download-no-mutation',
+      'missing-asset-no-mutation', 'missing-node-runtime',
+      'side-by-side-official-t3', 'fresh-desktop-install', 'desktop-upgrade',
+      'desktop-rollback', 'desktop-uninstall', 'cli-uninstall',
+      'native-config-preservation'
+    )
     releases = @($previous, $current) | ForEach-Object {
       [ordered]@{ tag = $_.tag; installerSha256 = $_.installerSha256; manifestSha256 = $_.manifestSha256; cliSha256 = $_.cliSha256; desktopSha256 = $_.desktopSha256 }
     }
