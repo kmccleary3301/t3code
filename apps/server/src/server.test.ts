@@ -179,6 +179,13 @@ import {
 } from "../integration/TransferBudgetScenario.integration.ts";
 import { nativeReplayLaunchArguments } from "../integration/NativeReplayRuntime.integration.ts";
 import {
+  configuredNativeLiveConfigurations,
+  makeNativeLiveAgentDirectory,
+  makeNativeLiveModelServer,
+  nativeLiveTraceSinkFactory,
+  writeNativeLiveConfig,
+} from "../integration/NativeLiveRuntime.integration.ts";
+import {
   formatTransferBudgetReport,
   formatTransferBudgetResult,
   type TransferBudgetRun,
@@ -8893,6 +8900,334 @@ for (const runtime of nativeReplayProviders) {
         (harness) => harness.dispose,
       ).pipe(Effect.provide(Layer.merge(NodeHttpServerTestWithWsDeflate, NodeServices.layer))),
     30_000,
+  );
+}
+for (const config of configuredNativeLiveConfigurations()) {
+  it.live(
+    `projects configured ${config.runtime} native process through T3 HTTP and WebSocket`,
+    () =>
+      Effect.acquireUseRelease(
+        makeNativeLiveModelServer,
+        (modelServer) =>
+          Effect.acquireUseRelease(
+            makeNativeLiveAgentDirectory(`/tmp/t3-native-matrix-http-${config.runtime}-`),
+            (agentDirectory) =>
+              Effect.gen(function* () {
+                yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
+                yield* Effect.acquireUseRelease(
+                  makeOrchestrationIntegrationHarness({
+                    provider: config.provider,
+                    nativeLive: {
+                      runtime: config.runtime,
+                      binaryPath: config.binaryPath,
+                      launchArguments: config.launchArguments,
+                      agentDirectory,
+                      environment: { PI_OFFLINE: "1", PI_NO_PTY: "1" },
+                      ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
+                      traceSinkFactory: nativeLiveTraceSinkFactory,
+                    },
+                  }),
+                  (harness) =>
+                    Effect.gen(function* () {
+                      const projectId = ProjectId.make(
+                        `native-live-http-${config.runtime}-project`,
+                      );
+                      const threadId = ThreadId.make(`native-live-http-${config.runtime}-thread`);
+                      const modelSelection = {
+                        instanceId: ProviderInstanceId.make(config.runtime),
+                        model: "local/test",
+                      } as const;
+                      const createdAt = "2026-08-24T00:00:00.000Z";
+                      yield* harness.engine.dispatch({
+                        type: "project.create",
+                        commandId: CommandId.make(`native-live-http:${config.runtime}:project`),
+                        projectId,
+                        title: `${config.runtime} native live HTTP project`,
+                        workspaceRoot: harness.workspaceDir,
+                        defaultModelSelection: modelSelection,
+                        createdAt,
+                      });
+                      yield* harness.engine.dispatch({
+                        type: "thread.create",
+                        commandId: CommandId.make(`native-live-http:${config.runtime}:thread`),
+                        threadId,
+                        projectId,
+                        title: `${config.runtime} native live HTTP thread`,
+                        modelSelection,
+                        runtimeMode: "approval-required",
+                        interactionMode: "default",
+                        branch: null,
+                        worktreePath: harness.workspaceDir,
+                        createdAt,
+                      });
+                      yield* buildAppUnderTest({
+                        layers: {
+                          orchestrationEngine: harness.engine,
+                          projectionSnapshotQuery: harness.snapshotQuery,
+                        },
+                      });
+
+                      const baseUrl = yield* getHttpServerUrl();
+                      const cookie = yield* getAuthenticatedSessionCookieHeader();
+                      const authenticatedWsUrl = appendSessionCookieToWsUrl(
+                        baseUrl.replace(/^http:/, "ws:") + "/ws",
+                        cookie,
+                      );
+                      const wsBaseUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+                      const readThreadSnapshot = Effect.fn(
+                        `NativeLiveHttp.${config.runtime}.readThreadSnapshot`,
+                      )(function* () {
+                        const response = yield* fetchEffect(
+                          `${baseUrl}/api/orchestration/threads/${threadId}`,
+                          { headers: { cookie } },
+                        );
+                        assert.equal(response.status, 200);
+                        return yield* responseJsonEffect<OrchestrationThreadDetailSnapshot>(
+                          response,
+                        );
+                      });
+                      const initialSnapshot = yield* readThreadSnapshot();
+                      const makeSubscription = (
+                        afterSequence: number,
+                        queue: Queue.Queue<OrchestrationThreadStreamItem>,
+                        recorder: WebSocketTransferRecorder,
+                        stopWhen: (item: OrchestrationThreadStreamItem) => boolean,
+                      ) =>
+                        Effect.scoped(
+                          Effect.gen(function* () {
+                            const client = yield* makeCountingWsRpcClient;
+                            yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                              threadId,
+                              afterSequence,
+                              requestCompletionMarker: true,
+                            }).pipe(
+                              Stream.takeUntil(stopWhen),
+                              Stream.runForEach((item) =>
+                                Queue.offer(queue, item).pipe(Effect.asVoid),
+                              ),
+                            );
+                          }).pipe(
+                            Effect.provide(
+                              countingWsRpcProtocolLayer({
+                                url: wsBaseUrl,
+                                cookie,
+                                recorder,
+                              }),
+                            ),
+                          ),
+                        );
+                      const clientAQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                      const clientBQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                      const clientARecorder = makeWebSocketTransferRecorder();
+                      const clientBRecorder = makeWebSocketTransferRecorder();
+                      const clientAItems: OrchestrationThreadStreamItem[] = [];
+                      const clientBItems: OrchestrationThreadStreamItem[] = [];
+                      const clientAFiber = yield* makeSubscription(
+                        initialSnapshot.snapshotSequence,
+                        clientAQueue,
+                        clientARecorder,
+                        () => false,
+                      ).pipe(Effect.forkScoped);
+                      clientAItems.push(
+                        ...(yield* collectQueueUntil(
+                          clientAQueue,
+                          (item) => item.kind === "synchronized",
+                          `${config.runtime} native live client A synchronization`,
+                        )),
+                      );
+                      const clientBFiber = yield* makeSubscription(
+                        initialSnapshot.snapshotSequence,
+                        clientBQueue,
+                        clientBRecorder,
+                        (item) => item.kind === "synchronized",
+                      ).pipe(Effect.forkScoped);
+                      clientBItems.push(
+                        ...(yield* collectQueueUntil(
+                          clientBQueue,
+                          (item) => item.kind === "synchronized",
+                          `${config.runtime} native live client B synchronization`,
+                        )),
+                      );
+                      yield* Effect.sync(() => clientBRecorder.terminate());
+                      yield* Fiber.await(clientBFiber).pipe(Effect.timeout("5 seconds"));
+
+                      yield* Effect.scoped(
+                        withWsRpcClient(authenticatedWsUrl, (client) =>
+                          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                            type: "thread.turn.start",
+                            commandId: CommandId.make(`native-live-http:${config.runtime}:turn`),
+                            threadId,
+                            message: {
+                              messageId: MessageId.make(`native-live-http-${config.runtime}-user`),
+                              role: "user",
+                              text: `Reply with the NATIVE-MATRIX-OK marker for ${config.runtime}.`,
+                              attachments: [],
+                            },
+                            modelSelection,
+                            runtimeMode: "approval-required",
+                            interactionMode: "default",
+                            createdAt,
+                          }),
+                        ),
+                      );
+                      const completed = yield* harness.waitForThread(
+                        threadId,
+                        (thread) =>
+                          thread.latestTurn?.state === "completed" &&
+                          thread.session?.status === "ready" &&
+                          thread.messages.some(
+                            (message) =>
+                              message.role === "assistant" &&
+                              !message.streaming &&
+                              message.text.includes("NATIVE-MATRIX-OK"),
+                          ),
+                        30_000,
+                      );
+                      assert.equal(completed.session?.providerName, config.runtime);
+                      assert.isAbove(modelServer.requestCount(), 0);
+
+                      const expectedEvents = yield* harness.engine
+                        .readEvents(initialSnapshot.snapshotSequence, 10_000)
+                        .pipe(
+                          Stream.filter(
+                            (event) => event.aggregateId === threadId && isThreadDetailEvent(event),
+                          ),
+                          Stream.runCollect,
+                          Effect.map((events) => Array.from(events)),
+                        );
+                      const targetSequence = expectedEvents.reduce(
+                        (sequence, event) => Math.max(sequence, event.sequence),
+                        initialSnapshot.snapshotSequence,
+                      );
+                      assert.isAbove(
+                        targetSequence,
+                        initialSnapshot.snapshotSequence,
+                        `${config.runtime} native live turn emitted no thread events`,
+                      );
+                      clientAItems.push(
+                        ...(yield* collectQueueUntil(
+                          clientAQueue,
+                          (item) => item.kind === "event" && item.event.sequence >= targetSequence,
+                          `${config.runtime} native live client A turn`,
+                        )),
+                      );
+                      yield* Effect.sync(() => clientARecorder.terminate());
+                      yield* Fiber.await(clientAFiber).pipe(Effect.timeout("5 seconds"));
+
+                      const reconnectQueue =
+                        yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                      const reconnectRecorder = makeWebSocketTransferRecorder();
+                      const reconnectFiber = yield* makeSubscription(
+                        initialSnapshot.snapshotSequence,
+                        reconnectQueue,
+                        reconnectRecorder,
+                        (item) => item.kind === "event" && item.event.sequence >= targetSequence,
+                      ).pipe(Effect.forkScoped);
+                      const reconnectItems = yield* collectQueueUntil(
+                        reconnectQueue,
+                        (item) => item.kind === "event" && item.event.sequence >= targetSequence,
+                        `${config.runtime} native live bounded reconnect`,
+                      );
+                      yield* Effect.sync(() => reconnectRecorder.terminate());
+                      yield* Fiber.await(reconnectFiber).pipe(Effect.timeout("5 seconds"));
+                      const eventsFromItems = (
+                        items: ReadonlyArray<OrchestrationThreadStreamItem>,
+                      ) => items.flatMap((item) => (item.kind === "event" ? [item.event] : []));
+                      const eventKey = (event: OrchestrationEvent) =>
+                        `${event.sequence}:${String(event.eventId)}:${event.type}`;
+                      const assertOrdered = (
+                        items: ReadonlyArray<OrchestrationThreadStreamItem>,
+                        description: string,
+                      ) => {
+                        const events = eventsFromItems(items);
+                        const sequences = events.map((event) => event.sequence);
+                        assert.isTrue(
+                          sequences.every(
+                            (sequence, index) => index === 0 || sequence > sequences[index - 1]!,
+                          ),
+                          `${description} sequences must be strictly increasing`,
+                        );
+                        const eventIds = events.map((event) => String(event.eventId));
+                        assert.equal(
+                          new Set(eventIds).size,
+                          eventIds.length,
+                          `${description} must not duplicate event IDs`,
+                        );
+                        assert.isTrue(
+                          events.every((event) => event.aggregateId === threadId),
+                          `${description} must stay isolated to the target thread`,
+                        );
+                      };
+                      assert.isFalse(
+                        reconnectItems.some((item) => item.kind === "snapshot"),
+                        `${config.runtime} bounded reconnect must not send a snapshot`,
+                      );
+                      const clientAEvents = eventsFromItems(clientAItems);
+                      const reconnectEvents = eventsFromItems(reconnectItems);
+                      assertOrdered(clientAItems, `${config.runtime} client A`);
+                      assertOrdered(reconnectItems, `${config.runtime} reconnect`);
+                      assert.deepEqual(
+                        reconnectEvents.map(eventKey),
+                        clientAEvents.map(eventKey),
+                        `${config.runtime} reconnect must receive the same bounded event tail`,
+                      );
+                      assert.deepEqual(
+                        reconnectEvents.map(eventKey),
+                        expectedEvents.map(eventKey),
+                        `${config.runtime} WebSocket tail must match persisted thread events`,
+                      );
+                      assert.isTrue(
+                        clientBItems.every((item) => item.kind === "synchronized"),
+                        `${config.runtime} disconnected client must not receive live events`,
+                      );
+                      const finalSnapshot = yield* readThreadSnapshot();
+                      assert.equal(finalSnapshot.thread.latestTurn?.state, "completed");
+                      assert.equal(finalSnapshot.thread.session?.status, "ready");
+                      assert.isTrue(
+                        finalSnapshot.thread.messages.some(
+                          (message) =>
+                            message.role === "assistant" &&
+                            !message.streaming &&
+                            message.text.includes("NATIVE-MATRIX-OK"),
+                        ),
+                      );
+
+                      yield* harness.engine.dispatch({
+                        type: "thread.session.stop",
+                        commandId: CommandId.make(`native-live-http:${config.runtime}:stop`),
+                        threadId,
+                        createdAt,
+                      });
+                      const stopped = yield* harness.waitForThread(
+                        threadId,
+                        (thread) => thread.session?.status === "stopped",
+                        30_000,
+                      );
+                      assert.equal(stopped.session?.status, "stopped");
+                      const deadline = (yield* Clock.currentTimeMillis) + 30_000;
+                      while (true) {
+                        const sessions = yield* harness.providerService.listSessions();
+                        if (!sessions.some((session) => session.threadId === threadId)) break;
+                        if ((yield* Clock.currentTimeMillis) >= deadline) {
+                          return yield* Effect.die(
+                            `${config.runtime} native live session did not exit`,
+                          );
+                        }
+                        yield* Effect.sleep(10);
+                      }
+                    }),
+                  (harness) => harness.dispose,
+                );
+              }),
+            (agentDirectory) =>
+              Effect.gen(function* () {
+                const fileSystem = yield* FileSystem.FileSystem;
+                yield* fileSystem.remove(agentDirectory, { recursive: true });
+              }),
+          ),
+        (modelServer) => Effect.tryPromise(() => modelServer.close()),
+      ).pipe(Effect.provide(Layer.merge(NodeHttpServerTestWithWsDeflate, NodeServices.layer))),
+    60_000,
   );
 }
 
