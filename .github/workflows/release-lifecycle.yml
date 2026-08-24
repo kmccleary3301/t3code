@@ -26,7 +26,7 @@ jobs:
   posix:
     name: POSIX ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -47,10 +47,27 @@ jobs:
       - name: Checkout lifecycle harness
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
-          node-version: 24.13.1
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Install pinned Pi and OMP runtimes
+        run: npm install --global @earendil-works/pi-coding-agent@0.84.2 @oh-my-pi/pi-coding-agent@17.3.7
+
+      - name: Run stock native lifecycle and convergence
+        env:
+          T3_NATIVE_LIFECYCLE_REPORT: ${{ runner.temp }}/stock-native-lifecycle-${{ matrix.id }}.json
+        run: |
+          T3_NATIVE_PI_BINARY="$(command -v pi)" \
+          T3_NATIVE_OMP_BINARY="$(command -v omp)" \
+          vp test run \
+            apps/server/src/server.test.ts \
+            -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket" \
+            --reporter=json \
+            --outputFile="$T3_NATIVE_LIFECYCLE_REPORT"
 
       - name: Run release lifecycle
         env:
@@ -67,22 +84,42 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-lifecycle-${{ matrix.id }}
-          path: ${{ runner.temp }}/release-lifecycle-${{ matrix.id }}.json
+          path: |
+            ${{ runner.temp }}/release-lifecycle-${{ matrix.id }}.json
+            ${{ runner.temp }}/stock-native-lifecycle-${{ matrix.id }}.json
           if-no-files-found: ignore
           retention-days: 30
 
   windows:
     name: Windows x64
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout lifecycle harness
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
-          node-version: 24.13.1
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Install pinned Pi and OMP runtimes
+        run: npm install --global @earendil-works/pi-coding-agent@0.84.2 @oh-my-pi/pi-coding-agent@17.3.7
+
+      - name: Run stock native lifecycle and convergence
+        shell: pwsh
+        env:
+          T3_NATIVE_LIFECYCLE_REPORT: ${{ runner.temp }}/stock-native-lifecycle-windows.json
+        run: |
+          $env:T3_NATIVE_PI_BINARY = (Get-Command pi.cmd -ErrorAction Stop).Source
+          $env:T3_NATIVE_OMP_BINARY = (Get-Command omp.cmd -ErrorAction Stop).Source
+          vp test run `
+            apps/server/src/server.test.ts `
+            -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket" `
+            --reporter=json `
+            "--outputFile=$env:T3_NATIVE_LIFECYCLE_REPORT"
 
       - name: Run release lifecycle
         shell: pwsh
@@ -100,6 +137,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-lifecycle-windows
-          path: ${{ runner.temp }}/release-lifecycle-windows.json
+          path: |
+            ${{ runner.temp }}/release-lifecycle-windows.json
+            ${{ runner.temp }}/stock-native-lifecycle-windows.json
           if-no-files-found: ignore
           retention-days: 30
