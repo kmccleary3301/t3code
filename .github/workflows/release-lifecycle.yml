@@ -54,15 +54,25 @@ jobs:
           cache: true
           run-install: true
 
-      - name: Install pinned Pi and OMP runtimes
-        run: npm install --global @earendil-works/pi-coding-agent@0.84.2 @oh-my-pi/pi-coding-agent@17.3.7
+      - name: Checkout pinned OMP runtime
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: kmccleary3301/oh-my-pi
+          ref: c53cd2c2bf521f6eb70cac5484e6474d827498d6
+          path: .native/omp
+
+      - name: Build pinned Pi and OMP runtimes
+        run: |
+          npm install --global bun@1.3.14 @earendil-works/pi-coding-agent@0.84.2
+          bun install --cwd .native/omp --frozen-lockfile
+          bun --cwd=.native/omp/packages/coding-agent run build
 
       - name: Run stock native lifecycle and convergence
         env:
           T3_NATIVE_LIFECYCLE_REPORT: ${{ runner.temp }}/stock-native-lifecycle-${{ matrix.id }}.json
         run: |
           T3_NATIVE_PI_BINARY="$(command -v pi)" \
-          T3_NATIVE_OMP_BINARY="$(command -v omp)" \
+          T3_NATIVE_OMP_BINARY="$PWD/.native/omp/packages/coding-agent/dist/omp" \
           vp test run \
             apps/server/src/server.test.ts \
             -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket" \
@@ -105,8 +115,18 @@ jobs:
           cache: true
           run-install: true
 
-      - name: Install pinned Pi and OMP runtimes
-        run: npm install --global @earendil-works/pi-coding-agent@0.84.2 @oh-my-pi/pi-coding-agent@17.3.7
+      - name: Checkout pinned OMP runtime
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: kmccleary3301/oh-my-pi
+          ref: c53cd2c2bf521f6eb70cac5484e6474d827498d6
+          path: .native/omp
+
+      - name: Build pinned Pi and OMP runtimes
+        run: |
+          npm install --global bun@1.3.14 @earendil-works/pi-coding-agent@0.84.2
+          bun install --cwd .native/omp --frozen-lockfile
+          bun --cwd=.native/omp/packages/coding-agent run build
 
       - name: Run stock native lifecycle and convergence
         shell: pwsh
@@ -114,7 +134,11 @@ jobs:
           T3_NATIVE_LIFECYCLE_REPORT: ${{ runner.temp }}/stock-native-lifecycle-windows.json
         run: |
           $env:T3_NATIVE_PI_BINARY = (Get-Command pi.cmd -ErrorAction Stop).Source
-          $env:T3_NATIVE_OMP_BINARY = (Get-Command omp.cmd -ErrorAction Stop).Source
+          $ompBinary = Join-Path $PWD ".native/omp/packages/coding-agent/dist/omp.exe"
+          if (-not (Test-Path $ompBinary)) {
+            $ompBinary = Join-Path $PWD ".native/omp/packages/coding-agent/dist/omp"
+          }
+          $env:T3_NATIVE_OMP_BINARY = (Resolve-Path $ompBinary).Path
           vp test run `
             apps/server/src/server.test.ts `
             -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket" `
