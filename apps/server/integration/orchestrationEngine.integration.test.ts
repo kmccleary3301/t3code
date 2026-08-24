@@ -2205,6 +2205,64 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
     (modelServer) => Effect.tryPromise(() => modelServer.close()),
   ).pipe(Effect.provide(NodeServices.layer));
 
+interface NativeCrashProcessRecord {
+  readonly wrapperPid?: unknown;
+  readonly childPid?: unknown;
+}
+
+const readNativeCrashProcessRecords = (pidPath: string) =>
+  Effect.sync(
+    () =>
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Private PID fixture written by the crash wrapper.
+      JSON.parse(NodeFS.readFileSync(pidPath, "utf8")) as ReadonlyArray<NativeCrashProcessRecord>,
+  );
+
+const waitForNativeCrashProcessesToExit = (
+  runtime: NativeLiveConfig["runtime"],
+  processRecords: ReadonlyArray<NativeCrashProcessRecord>,
+  phase: string,
+) =>
+  Effect.gen(function* () {
+    for (const [recordIndex, processRecord] of processRecords.entries()) {
+      for (const [label, candidate] of [
+        ["wrapper", processRecord.wrapperPid],
+        ["native child", processRecord.childPid],
+      ] as const) {
+        assert.isTrue(
+          Number.isInteger(candidate) && Number(candidate) > 0,
+          `${runtime} crash wrapper recorded an invalid ${label} PID`,
+        );
+        const pid = Number(candidate);
+        const deadline = (yield* Clock.currentTimeMillis) + 10_000;
+        while (true) {
+          const running = yield* Effect.sync(() => {
+            try {
+              process.kill(pid, 0);
+              return true;
+            } catch (error) {
+              if (
+                typeof error === "object" &&
+                error !== null &&
+                "code" in error &&
+                error.code === "ESRCH"
+              ) {
+                return false;
+              }
+              throw error;
+            }
+          });
+          if (!running) break;
+          assert.isBelow(
+            yield* Clock.currentTimeMillis,
+            deadline,
+            `${runtime} ${phase} left ${label} process ${pid} running (record ${recordIndex})`,
+          );
+          yield* Effect.sleep(10);
+        }
+      }
+    }
+  });
+
 const runNativeCrashMatrix = (config: NativeLiveConfig) =>
   Effect.acquireUseRelease(
     makeNativeLiveModelServer,
@@ -2319,50 +2377,17 @@ const runNativeCrashMatrix = (config: NativeLiveConfig) =>
                   assert.equal(crashed.latestTurn?.state, "error");
                   assert.isTrue((crashed.session?.lastError?.length ?? 0) > 0);
                   assert.isTrue(crashed.messages.some((message) => message.role === "user"));
-                  const processRecord = yield* Effect.sync(
-                    () =>
-                      // @effect-diagnostics-next-line preferSchemaOverJson:off - Private PID fixture written by the crash wrapper.
-                      JSON.parse(NodeFS.readFileSync(crashWrapper.pidPath, "utf8")) as {
-                        readonly wrapperPid?: unknown;
-                        readonly childPid?: unknown;
-                      },
+                  const processRecords = yield* readNativeCrashProcessRecords(crashWrapper.pidPath);
+                  assert.isAtLeast(
+                    processRecords.length,
+                    1,
+                    `${config.runtime} crash wrapper did not record a process`,
                   );
-                  for (const [label, candidate] of [
-                    ["wrapper", processRecord.wrapperPid],
-                    ["native child", processRecord.childPid],
-                  ] as const) {
-                    assert.isTrue(
-                      Number.isInteger(candidate) && Number(candidate) > 0,
-                      `${config.runtime} crash wrapper recorded an invalid ${label} PID`,
-                    );
-                    const pid = Number(candidate);
-                    const deadline = (yield* Clock.currentTimeMillis) + 10_000;
-                    while (true) {
-                      const running = yield* Effect.sync(() => {
-                        try {
-                          process.kill(pid, 0);
-                          return true;
-                        } catch (error) {
-                          if (
-                            typeof error === "object" &&
-                            error !== null &&
-                            "code" in error &&
-                            error.code === "ESRCH"
-                          ) {
-                            return false;
-                          }
-                          throw error;
-                        }
-                      });
-                      if (!running) break;
-                      assert.isBelow(
-                        yield* Clock.currentTimeMillis,
-                        deadline,
-                        `${config.runtime} crash left ${label} process ${pid} running`,
-                      );
-                      yield* Effect.sleep(10);
-                    }
-                  }
+                  yield* waitForNativeCrashProcessesToExit(
+                    config.runtime,
+                    [processRecords[processRecords.length - 1]!],
+                    "isolated crash",
+                  );
                   const sessionsAfterCrash = yield* harness.providerService.listSessions();
                   assert.isTrue(
                     sessionsAfterCrash.some((session) => session.threadId === controlThreadId),
@@ -2433,6 +2458,11 @@ const runNativeCrashMatrix = (config: NativeLiveConfig) =>
                     }
                     yield* Effect.sleep(10);
                   }
+                  yield* waitForNativeCrashProcessesToExit(
+                    config.runtime,
+                    yield* readNativeCrashProcessRecords(crashWrapper.pidPath),
+                    "cleanup",
+                  );
                 }),
               (harness) => harness.dispose,
             );

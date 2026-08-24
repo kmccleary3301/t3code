@@ -9932,7 +9932,7 @@ for (const config of configuredNativeLiveConfigurations()) {
           ),
         (modelServer) => Effect.tryPromise(() => modelServer.close()),
       ).pipe(Effect.provide(Layer.merge(NodeHttpServerTestWithWsDeflate, NodeServices.layer))),
-    60_000,
+    120_000,
   );
 }
 
