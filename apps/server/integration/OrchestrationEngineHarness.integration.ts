@@ -236,6 +236,14 @@ interface MakeOrchestrationIntegrationHarnessOptions {
     readonly runtime: PiFamilyRuntimeKind;
     readonly launchArguments: ReadonlyArray<string>;
   };
+  readonly nativeLive?: {
+    readonly runtime: PiFamilyRuntimeKind;
+    readonly binaryPath: string;
+    readonly launchArguments: ReadonlyArray<string>;
+    readonly agentDirectory?: string;
+    readonly environment?: Readonly<Record<string, string | undefined>>;
+    readonly trustMode?: string;
+  };
   readonly rootDir?: string;
 }
 
@@ -249,13 +257,17 @@ export const makeOrchestrationIntegrationHarness = (
     const provider = options?.provider ?? ProviderDriverKind.make("codex");
     const useRealCodex = options?.realCodex === true;
     const nativeReplay = options?.nativeReplay;
-    if (useRealCodex && nativeReplay !== undefined) {
+    const nativeLive = options?.nativeLive;
+    if (
+      [useRealCodex, nativeReplay !== undefined, nativeLive !== undefined].filter(Boolean).length >
+      1
+    ) {
       return yield* Effect.die(
-        "The orchestration harness cannot combine real Codex and native replay adapters.",
+        "The orchestration harness cannot combine multiple real provider adapters.",
       );
     }
     const adapterHarness =
-      useRealCodex || nativeReplay !== undefined
+      useRealCodex || nativeReplay !== undefined || nativeLive !== undefined
         ? null
         : yield* makeTestProviderAdapterHarness({
             provider,
@@ -308,38 +320,67 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
+    const nativeAdapterRegistry = (config: {
+      readonly runtime: PiFamilyRuntimeKind;
+      readonly binaryPath: string;
+      readonly launchArguments: ReadonlyArray<string>;
+      readonly agentDirectory: string;
+      readonly environment: Readonly<Record<string, string | undefined>>;
+      readonly trustMode?: string;
+    }) =>
+      Layer.effect(
+        ProviderAdapterRegistry,
+        Effect.gen(function* () {
+          const adapter = yield* makePiFamilyAdapter({
+            provider,
+            runtime: config.runtime,
+            binaryPath: config.binaryPath,
+            cwd: workspaceDir,
+            agentDirectory: config.agentDirectory,
+            attachmentsDir,
+            environment: config.environment,
+            launchArguments: config.launchArguments,
+            ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
+            requestTimeoutMs: 5_000,
+            startupTimeoutMs: 5_000,
+            maxLineBytes: 1_048_576,
+            maxMessageBytes: 67_108_864,
+            stderrLimitBytes: 16_384,
+            instanceId: ProviderInstanceId.make(String(provider)),
+          });
+          return makeAdapterRegistryMock({ [provider]: adapter });
+        }),
+      ).pipe(
+        Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(providerSessionDirectoryLayer),
+      );
     const nativeReplayRegistry = nativeReplay
-      ? Layer.effect(
-          ProviderAdapterRegistry,
-          Effect.gen(function* () {
-            const adapter = yield* makePiFamilyAdapter({
-              provider,
-              runtime: nativeReplay.runtime,
-              binaryPath: process.execPath,
-              cwd: workspaceDir,
-              agentDirectory: nativeAgentDirectory,
-              attachmentsDir,
-              environment: {},
-              launchArguments: nativeReplay.launchArguments,
-              trustMode: "approve-for-this-run",
-              requestTimeoutMs: 5_000,
-              startupTimeoutMs: 5_000,
-              maxLineBytes: 1_048_576,
-              maxMessageBytes: 67_108_864,
-              stderrLimitBytes: 16_384,
-              instanceId: ProviderInstanceId.make(String(provider)),
-            });
-            return makeAdapterRegistryMock({ [provider]: adapter });
-          }),
-        ).pipe(
-          Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
-          Layer.provideMerge(NodeServices.layer),
-          Layer.provideMerge(providerSessionDirectoryLayer),
-        )
+      ? nativeAdapterRegistry({
+          runtime: nativeReplay.runtime,
+          binaryPath: process.execPath,
+          launchArguments: nativeReplay.launchArguments,
+          agentDirectory: nativeAgentDirectory,
+          environment: {},
+          trustMode: "approve-for-this-run",
+        })
+      : null;
+    const nativeLiveRegistry = nativeLive
+      ? nativeAdapterRegistry({
+          runtime: nativeLive.runtime,
+          binaryPath: nativeLive.binaryPath,
+          launchArguments: nativeLive.launchArguments,
+          agentDirectory: nativeLive.agentDirectory ?? nativeAgentDirectory,
+          environment: nativeLive.environment ?? {},
+          ...(nativeLive.trustMode === undefined ? {} : { trustMode: nativeLive.trustMode }),
+        })
       : null;
     const providerRegistry =
-      nativeReplayRegistry ?? (useRealCodex ? realCodexRegistry : fakeRegistry!);
+      nativeLiveRegistry ??
+      nativeReplayRegistry ??
+      (useRealCodex ? realCodexRegistry : fakeRegistry!);
     const providerEventLoggersLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
+
     const providerLayer = makeProviderServiceLive().pipe(
       Layer.provide(providerSessionDirectoryLayer),
       Layer.provide(providerRegistry),

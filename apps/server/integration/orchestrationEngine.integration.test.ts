@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
 import {
@@ -20,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -1488,3 +1490,512 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
     CLAUDE_AGENT_PROVIDER,
   ),
 );
+class NativeMatrixHarnessError extends Schema.TaggedErrorClass<NativeMatrixHarnessError>()(
+  "NativeMatrixHarnessError",
+  {
+    cause: Schema.Defect(),
+  },
+) {}
+
+const nativeMatrixHarnessError = (cause: unknown) => new NativeMatrixHarnessError({ cause });
+type NativeMatrixRuntime = "pi" | "omp";
+
+interface NativeMatrixConfig {
+  readonly runtime: NativeMatrixRuntime;
+  readonly provider: ProviderDriverKind;
+  readonly binaryPath: string;
+  readonly launchArguments: ReadonlyArray<string>;
+  readonly trustMode?: string;
+}
+
+interface NativeMatrixModelServer {
+  readonly baseUrl: string;
+  readonly requestCount: () => number;
+  readonly close: () => Promise<void>;
+}
+
+const makeNativeMatrixModelServer = Effect.tryPromise<
+  NativeMatrixModelServer,
+  NativeMatrixHarnessError
+>({
+  try: () =>
+    new Promise((resolve, reject) => {
+      let requestCount = 0;
+      const pendingTimers = new Set<NodeJS.Timeout>();
+      const server = NodeHttp.createServer((request, response) => {
+        if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+          response.writeHead(404);
+          response.end();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer | string) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        request.on("error", () => response.destroy());
+        request.on("end", () => {
+          requestCount += 1;
+          let message = "";
+          try {
+            const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+              readonly messages?: ReadonlyArray<{
+                readonly content?: unknown;
+              }>;
+            };
+            const content = body.messages?.at(-1)?.content;
+            message = typeof content === "string" ? content : JSON.stringify(content ?? "");
+          } catch {
+            response.writeHead(400);
+            response.end();
+            return;
+          }
+          const delayMs = message.includes("NATIVE-MATRIX-HOLD")
+            ? 3_000
+            : message.includes("NATIVE-MATRIX-WRITE")
+              ? 500
+              : 0;
+          let timer: NodeJS.Timeout | undefined;
+          const send = () => {
+            if (timer !== undefined) {
+              pendingTimers.delete(timer);
+              timer = undefined;
+            }
+            const marker = message.includes("RESTORED")
+              ? "NATIVE-MATRIX-RESTORED-OK"
+              : "NATIVE-MATRIX-OK";
+            const frames = [
+              {
+                id: `native-matrix-${requestCount}`,
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "test",
+                choices: [
+                  {
+                    index: 0,
+                    delta: { role: "assistant", content: marker },
+                    finish_reason: null,
+                  },
+                ],
+              },
+              {
+                id: `native-matrix-${requestCount}`,
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "test",
+                choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+              },
+            ];
+            response.writeHead(200, {
+              "content-type": "text/event-stream",
+              "cache-control": "no-cache",
+              connection: "keep-alive",
+            });
+            response.end(
+              `${frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("")}data: [DONE]\n\n`,
+            );
+          };
+          if (delayMs > 0) {
+            // @effect-diagnostics-next-line globalTimers:off - Native HTTP test server delay.
+            timer = setTimeout(send, delayMs);
+            pendingTimers.add(timer);
+            request.once("close", () => {
+              if (timer !== undefined) {
+                clearTimeout(timer);
+                pendingTimers.delete(timer);
+                timer = undefined;
+              }
+            });
+          } else {
+            send();
+          }
+        });
+      });
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (address === null || typeof address === "string") {
+          reject(new Error("Native matrix model server did not expose a TCP address."));
+          return;
+        }
+        resolve({
+          baseUrl: `http://127.0.0.1:${address.port}/v1`,
+          requestCount: () => requestCount,
+          close: () =>
+            new Promise<void>((closeResolve) => {
+              for (const timer of pendingTimers) clearTimeout(timer);
+              pendingTimers.clear();
+              server.closeAllConnections();
+              server.closeIdleConnections();
+              server.close(() => closeResolve());
+            }),
+        });
+      });
+    }),
+  catch: nativeMatrixHarnessError,
+});
+
+const makeNativeMatrixAgentDirectory = Effect.tryPromise({
+  try: async () => {
+    const directory = await NodeFS.promises.mkdtemp("/tmp/t3-native-matrix-");
+    await NodeFS.promises.chmod(directory, 0o700);
+    return directory;
+  },
+  catch: nativeMatrixHarnessError,
+});
+
+const writeNativeMatrixConfig = (
+  config: NativeMatrixConfig,
+  agentDirectory: string,
+  modelServer: NativeMatrixModelServer,
+) =>
+  Effect.tryPromise({
+    try: async () => {
+      if (config.runtime === "pi") {
+        await NodeFS.promises.writeFile(
+          NodePath.join(agentDirectory, "models.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Pi model test config is JSON.
+          JSON.stringify({
+            providers: {
+              local: {
+                baseUrl: modelServer.baseUrl,
+                api: "openai-completions",
+                apiKey: "native-matrix",
+                models: [
+                  {
+                    id: "test",
+                    name: "Native Matrix Test",
+                    reasoning: false,
+                    input: ["text"],
+                    contextWindow: 128_000,
+                    maxTokens: 1024,
+                  },
+                ],
+              },
+            },
+          }),
+          { mode: 0o600 },
+        );
+        await NodeFS.promises.writeFile(
+          NodePath.join(agentDirectory, "settings.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - Pi settings test config is JSON.
+          JSON.stringify({
+            defaultProvider: "local",
+            defaultModel: "test",
+            defaultThinkingLevel: "off",
+          }),
+          { mode: 0o600 },
+        );
+        return;
+      }
+      await NodeFS.promises.writeFile(
+        NodePath.join(agentDirectory, "models.yml"),
+        [
+          "providers:",
+          "  local:",
+          `    baseUrl: ${modelServer.baseUrl}`,
+          "    api: openai-completions",
+          "    auth: none",
+          "    models:",
+          "      - id: test",
+          "        name: Native Matrix Test",
+          "        reasoning: false",
+          "        input: [text]",
+          "        contextWindow: 128000",
+          "        maxTokens: 1024",
+        ].join("\n") + "\n",
+        { mode: 0o600 },
+      );
+    },
+    catch: nativeMatrixHarnessError,
+  });
+
+const nativeMatrixConfiguration = (
+  runtime: NativeMatrixRuntime,
+): NativeMatrixConfig | undefined => {
+  const binaryPath = process.env[`T3_NATIVE_${runtime.toUpperCase()}_BINARY`]?.trim();
+  if (!binaryPath) return undefined;
+  return {
+    runtime,
+    provider: ProviderDriverKind.make(runtime),
+    binaryPath,
+    launchArguments:
+      runtime === "pi"
+        ? [
+            "--mode",
+            "rpc",
+            "--no-tools",
+            "--no-extensions",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-context-files",
+            "--offline",
+            "--provider",
+            "local",
+            "--model",
+            "local/test",
+          ]
+        : [
+            "--mode",
+            "rpc",
+            "--no-tools",
+            "--no-extensions",
+            "--no-skills",
+            "--no-rules",
+            "--no-title",
+            "--provider",
+            "local",
+            "--model",
+            "local/test",
+          ],
+    ...(runtime === "pi" ? { trustMode: "approve-for-this-run" } : {}),
+  };
+};
+
+const runNativeMatrix = (config: NativeMatrixConfig) =>
+  Effect.acquireUseRelease(
+    Effect.all({
+      modelServer: makeNativeMatrixModelServer,
+      agentDirectory: makeNativeMatrixAgentDirectory,
+    }),
+    ({ modelServer, agentDirectory }) =>
+      Effect.gen(function* () {
+        yield* writeNativeMatrixConfig(config, agentDirectory, modelServer);
+        yield* Effect.acquireUseRelease(
+          makeOrchestrationIntegrationHarness({
+            provider: config.provider,
+            nativeLive: {
+              runtime: config.runtime,
+              binaryPath: config.binaryPath,
+              launchArguments: config.launchArguments,
+              agentDirectory,
+              environment: { PI_OFFLINE: "1", PI_NO_PTY: "1" },
+              ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
+            },
+          }),
+          (harness) =>
+            Effect.gen(function* () {
+              const projectId = ProjectId.make(`native-matrix-${config.runtime}-project`);
+              const threadId = ThreadId.make(`native-matrix-${config.runtime}-thread`);
+              const instanceId = ProviderInstanceId.make(config.runtime);
+              const modelSelection = {
+                instanceId,
+                model: "local/test",
+              } as const;
+              const createdAt = "2026-08-23T00:00:00.000Z";
+              yield* harness.engine.dispatch({
+                type: "project.create",
+                commandId: CommandId.make(`native-matrix:${config.runtime}:project-create`),
+                projectId,
+                title: `${config.runtime} native matrix project`,
+                workspaceRoot: harness.workspaceDir,
+                defaultModelSelection: modelSelection,
+                createdAt,
+              });
+              yield* harness.engine.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make(`native-matrix:${config.runtime}:thread-create`),
+                threadId,
+                projectId,
+                title: `${config.runtime} native matrix thread`,
+                modelSelection,
+                runtimeMode: "approval-required",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: harness.workspaceDir,
+                createdAt,
+              });
+              const startTurn = (ordinal: number, text: string, targetThreadId = threadId) =>
+                harness.engine.dispatch({
+                  type: "thread.turn.start",
+                  commandId: CommandId.make(`native-matrix:${config.runtime}:turn:${ordinal}`),
+                  threadId: targetThreadId,
+                  message: {
+                    messageId: MessageId.make(`native-matrix-${config.runtime}-user-${ordinal}`),
+                    role: "user",
+                    text,
+                    attachments: [],
+                  },
+                  modelSelection,
+                  runtimeMode: "approval-required",
+                  interactionMode: "default",
+                  createdAt,
+                });
+              const waitForCompleted = (
+                messageText: string,
+                description: string,
+                targetThreadId = threadId,
+              ) =>
+                harness
+                  .waitForThread(
+                    targetThreadId,
+                    (thread) =>
+                      thread.latestTurn?.state === "completed" &&
+                      thread.session?.status === "ready" &&
+                      thread.messages.some(
+                        (message) =>
+                          message.role === "user" &&
+                          message.text === messageText &&
+                          thread.messages.some(
+                            (candidate) => candidate.role === "assistant" && !candidate.streaming,
+                          ),
+                      ),
+                    30_000,
+                  )
+                  .pipe(Effect.tap(() => Effect.logInfo(description)));
+              const waitForQuiesced = (turnId: string) =>
+                harness.waitForReceipt(
+                  (receipt): receipt is TurnProcessingQuiescedReceipt =>
+                    receipt.type === "turn.processing.quiesced" &&
+                    receipt.threadId === threadId &&
+                    String(receipt.turnId) === turnId,
+                  30_000,
+                );
+
+              const firstMessage = "Reply with the native matrix marker.";
+              yield* startTurn(1, firstMessage);
+              const first = yield* waitForCompleted(
+                firstMessage,
+                `${config.runtime} native root turn`,
+              );
+              assert.equal(first.session?.providerName, config.runtime);
+              assert.isAbove(modelServer.requestCount(), 0);
+              assert.isTrue(
+                first.messages.some(
+                  (message) => message.text.includes("NATIVE-MATRIX-OK") && !message.streaming,
+                ),
+              );
+
+              const secondMessage = "Complete a second native turn for checkpoint capture.";
+              yield* startTurn(2, secondMessage);
+              const second = yield* waitForCompleted(
+                secondMessage,
+                `${config.runtime} second native turn`,
+              );
+              if (config.runtime === "pi") {
+                const secondTurnId = second.latestTurn?.turnId;
+                assert.isDefined(secondTurnId);
+                if (secondTurnId !== undefined) {
+                  yield* waitForQuiesced(String(secondTurnId));
+                }
+                const nativeCheckpoint = yield* harness.providerService.captureNativeCheckpoint({
+                  threadId,
+                });
+                assert.isNotNull(nativeCheckpoint, `${config.runtime} native checkpoint missing`);
+                yield* harness.providerService.restoreNativeCheckpoint({
+                  threadId,
+                  checkpoint: nativeCheckpoint,
+                });
+              }
+
+              const restoredMessage =
+                config.runtime === "pi"
+                  ? "Reply with the RESTORED native matrix marker."
+                  : "Continue with the native matrix turn.";
+              const restoredDescription =
+                config.runtime === "pi"
+                  ? `${config.runtime} restored turn`
+                  : `${config.runtime} continuation turn`;
+              yield* startTurn(3, restoredMessage);
+              const restored = yield* waitForCompleted(restoredMessage, restoredDescription);
+              assert.isTrue(
+                restored.messages.some(
+                  (message) =>
+                    message.role === "assistant" && message.text.length > 0 && !message.streaming,
+                ),
+              );
+              const holdMessage = "NATIVE-MATRIX-HOLD";
+              const interruptStartFiber = yield* startTurn(4, holdMessage).pipe(Effect.forkChild);
+              const running = yield* harness.waitForThread(
+                threadId,
+                (thread) =>
+                  thread.latestTurn?.state === "running" &&
+                  thread.messages.some(
+                    (message) => message.role === "user" && message.text === holdMessage,
+                  ),
+                10_000,
+              );
+              const runningTurnId = running.latestTurn?.turnId;
+              assert.isDefined(runningTurnId);
+              yield* harness.engine.dispatch({
+                type: "thread.turn.interrupt",
+                commandId: CommandId.make(`native-matrix:${config.runtime}:interrupt`),
+                threadId,
+                turnId: runningTurnId,
+                createdAt,
+              });
+              yield* harness.waitForDomainEvent(
+                (event) => event.type === "thread.turn-interrupt-requested",
+                10_000,
+              );
+              const interrupted = yield* harness.waitForThread(
+                threadId,
+                (thread) =>
+                  thread.latestTurn?.state === "interrupted" && thread.session?.status === "ready",
+                10_000,
+              );
+              yield* Fiber.join(interruptStartFiber).pipe(Effect.ignore);
+              assert.equal(interrupted.session?.status, "ready");
+
+              yield* harness.engine.dispatch({
+                type: "thread.session.stop",
+                commandId: CommandId.make(`native-matrix:${config.runtime}:stop`),
+                threadId,
+                createdAt,
+              });
+              yield* harness.waitForThread(
+                threadId,
+                (thread) => thread.session?.status === "stopped",
+                30_000,
+              );
+              const restartedThreadId = ThreadId.make(
+                `native-matrix-${config.runtime}-restart-thread`,
+              );
+              yield* harness.engine.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make(`native-matrix:${config.runtime}:restart-thread-create`),
+                threadId: restartedThreadId,
+                projectId,
+                title: `${config.runtime} native restart thread`,
+                modelSelection,
+                runtimeMode: "approval-required",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: harness.workspaceDir,
+                createdAt,
+              });
+              const restartedMessage = "Reply after the native session restart.";
+              yield* startTurn(5, restartedMessage, restartedThreadId);
+              const restarted = yield* waitForCompleted(
+                restartedMessage,
+                `${config.runtime} restarted turn`,
+                restartedThreadId,
+              );
+              assert.equal(restarted.session?.providerName, config.runtime);
+            }),
+          (harness) => harness.dispose,
+        );
+      }),
+    ({ modelServer, agentDirectory }) =>
+      Effect.all([
+        Effect.tryPromise({ try: modelServer.close, catch: nativeMatrixHarnessError }),
+        Effect.tryPromise({
+          try: () => NodeFS.promises.rm(agentDirectory, { recursive: true, force: true }),
+          catch: nativeMatrixHarnessError,
+        }),
+      ]).pipe(Effect.asVoid),
+  ).pipe(Effect.provide(NodeServices.layer));
+
+const nativeMatrixConfigurations = (["pi", "omp"] as const)
+  .map(nativeMatrixConfiguration)
+  .filter((config): config is NativeMatrixConfig => config !== undefined);
+if (nativeMatrixConfigurations.length === 2) {
+  it.live(
+    "runs stock Pi and OMP through the native T3 lifecycle matrices",
+    () =>
+      Effect.forEach(nativeMatrixConfigurations, runNativeMatrix, {
+        concurrency: 1,
+        discard: true,
+      }),
+    120_000,
+  );
+}
