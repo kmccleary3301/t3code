@@ -67,9 +67,12 @@ it.live.skipIf(process.env.T3_INSTALLED_CLI === undefined)(
       makeNativeLiveModelServer,
       (modelServer) =>
         Effect.acquireUseRelease(
-          Effect.promise(() =>
-            NodeFS.promises.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-installed-native-")),
-          ),
+          Effect.promise(async () => {
+            const root = await NodeFS.promises.mkdtemp(
+              NodePath.join(NodeOS.tmpdir(), "t3-installed-native-"),
+            );
+            return NodeFS.promises.realpath(root);
+          }),
           (root) =>
             Effect.gen(function* () {
               const platform = yield* HostProcessPlatform;
