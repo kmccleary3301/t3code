@@ -1555,6 +1555,8 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     worktreePath: harness.workspaceDir,
                     createdAt,
                   });
+                  const turnCreatedAt = (ordinal: number) =>
+                    `2026-08-23T00:00:${String(ordinal).padStart(2, "0")}.000Z`;
                   const startTurn = (
                     ordinal: number,
                     text: string,
@@ -1579,60 +1581,71 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                       modelSelection: options?.modelSelection ?? modelSelection,
                       runtimeMode: "approval-required",
                       interactionMode: "default",
-                      createdAt: `2026-08-23T00:00:${String(ordinal).padStart(2, "0")}.000Z`,
+                      createdAt: turnCreatedAt(ordinal),
                     });
-                  const completedAssistantCounts = new Map<string, number>();
-                  const waitForCompleted = (
+                  const startAndWaitForCompleted = (
+                    ordinal: number,
                     messageText: string,
                     assistantMarker: string,
                     description: string,
                     targetThreadId = threadId,
-                  ) => {
-                    const markerKey = `${String(targetThreadId)}:${assistantMarker}`;
-                    const previousAssistantCount = completedAssistantCounts.get(markerKey) ?? 0;
-                    const countMatchingAssistants = (thread: {
-                      messages: ReadonlyArray<{ role: string; streaming: boolean; text: string }>;
-                    }) =>
-                      thread.messages.filter(
+                    options?: {
+                      readonly attachments?: ReadonlyArray<ChatAttachment>;
+                      readonly modelSelection?: ModelSelection;
+                    },
+                  ) =>
+                    Effect.gen(function* () {
+                      const before = yield* harness.waitForThread(
+                        targetThreadId,
+                        () => true,
+                        10_000,
+                      );
+                      const assistantCountBefore = before.messages.filter(
                         (message) =>
                           message.role === "assistant" &&
                           !message.streaming &&
                           message.text.includes(assistantMarker),
                       ).length;
-                    return harness
-                      .waitForThread(
-                        targetThreadId,
-                        (thread) => {
-                          const latestTurn = thread.latestTurn;
-                          if (
-                            latestTurn === null ||
-                            latestTurn.state !== "completed" ||
-                            thread.session?.status !== "ready"
-                          ) {
-                            return false;
-                          }
-                          const userMessageIndex = thread.messages.findLastIndex(
-                            (message) => message.role === "user" && message.text === messageText,
-                          );
-                          return (
-                            userMessageIndex >= 0 &&
-                            countMatchingAssistants(thread) > previousAssistantCount
-                          );
-                        },
-                        30_000,
-                      )
-                      .pipe(
-                        Effect.tap((thread) =>
-                          Effect.sync(() => {
-                            completedAssistantCounts.set(
-                              markerKey,
-                              countMatchingAssistants(thread),
-                            );
-                          }),
+                      const completedFiber = yield* harness.providerService.streamEvents.pipe(
+                        Stream.filter(
+                          (event) =>
+                            event.threadId === targetThreadId && event.type === "turn.completed",
                         ),
-                        Effect.tap(() => Effect.logInfo(description)),
+                        Stream.runHead,
+                        Effect.forkChild,
                       );
-                  };
+                      yield* startTurn(ordinal, messageText, targetThreadId, options);
+                      const completed = yield* Fiber.join(completedFiber).pipe(
+                        Effect.timeout("30 seconds"),
+                      );
+                      assert.equal(
+                        completed._tag,
+                        "Some",
+                        `${config.runtime} native turn did not complete`,
+                      );
+                      if (completed._tag !== "Some" || completed.value.type !== "turn.completed") {
+                        return yield* Effect.die("Native matrix turn did not complete.");
+                      }
+                      assert.equal(completed.value.payload.state, "completed");
+                      const thread = yield* harness.waitForThread(
+                        targetThreadId,
+                        (entry) =>
+                          entry.latestTurn?.state === "completed" &&
+                          entry.session?.status === "ready" &&
+                          entry.messages.some(
+                            (message) => message.role === "user" && message.text === messageText,
+                          ) &&
+                          entry.messages.filter(
+                            (message) =>
+                              message.role === "assistant" &&
+                              !message.streaming &&
+                              message.text.includes(assistantMarker),
+                          ).length > assistantCountBefore,
+                        30_000,
+                      );
+                      yield* Effect.logInfo(description);
+                      return thread;
+                    });
                   const waitForNativeProcessExit = (targetThreadId = threadId) =>
                     Effect.gen(function* () {
                       const deadline = (yield* Clock.currentTimeMillis) + 30_000;
@@ -1653,8 +1666,8 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     });
 
                   const firstMessage = "Reply with the native matrix marker.";
-                  yield* startTurn(1, firstMessage);
-                  const first = yield* waitForCompleted(
+                  const first = yield* startAndWaitForCompleted(
+                    1,
                     firstMessage,
                     "NATIVE-MATRIX-OK",
                     `${config.runtime} native root turn`,
@@ -1686,8 +1699,8 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     createdAt,
                   });
                   const parallelMessage = "Reply from the isolated parallel native session.";
-                  yield* startTurn(2, parallelMessage, parallelThreadId);
-                  const parallel = yield* waitForCompleted(
+                  const parallel = yield* startAndWaitForCompleted(
+                    2,
                     parallelMessage,
                     "NATIVE-MATRIX-OK",
                     `${config.runtime} parallel native session`,
@@ -1720,18 +1733,20 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                   const imageRequestsBefore = modelServer.imageRequestCount();
                   const imageMessage =
                     "Inspect the attached image and reply with the matrix marker.";
-                  yield* startTurn(3, imageMessage, threadId, {
-                    attachments: [imageAttachment],
-                    modelSelection: {
-                      instanceId,
-                      model: "local/alternate",
-                      options: [{ id: "thinkingLevel", value: "high" }],
-                    },
-                  });
-                  const image = yield* waitForCompleted(
+                  const image = yield* startAndWaitForCompleted(
+                    3,
                     imageMessage,
                     "NATIVE-MATRIX-OK",
                     `${config.runtime} image, model switch, and thinking turn`,
+                    threadId,
+                    {
+                      attachments: [imageAttachment],
+                      modelSelection: {
+                        instanceId,
+                        model: "local/alternate",
+                        options: [{ id: "thinkingLevel", value: "high" }],
+                      },
+                    },
                   );
                   assert.equal(modelServer.imageRequestCount(), imageRequestsBefore + 1);
                   assert.isTrue(
@@ -1741,8 +1756,8 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                   );
 
                   const secondMessage = "Complete a second native turn for checkpoint capture.";
-                  yield* startTurn(4, secondMessage);
-                  const second = yield* waitForCompleted(
+                  const second = yield* startAndWaitForCompleted(
+                    4,
                     secondMessage,
                     "NATIVE-MATRIX-OK",
                     `${config.runtime} second native turn`,
@@ -1771,8 +1786,8 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     nativeCheckpoint === undefined
                       ? `${config.runtime} continuation turn`
                       : `${config.runtime} restored turn`;
-                  yield* startTurn(5, restoredMessage);
-                  const restored = yield* waitForCompleted(
+                  const restored = yield* startAndWaitForCompleted(
+                    5,
                     restoredMessage,
                     nativeCheckpoint === undefined
                       ? "NATIVE-MATRIX-OK"
@@ -1786,6 +1801,20 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                         message.text.length > 0 &&
                         !message.streaming,
                     ),
+                  );
+
+                  const retryMessage = "Reply after NATIVE-MATRIX-RETRY succeeds.";
+                  const modelRequestsBeforeRetry = modelServer.requestCount();
+                  yield* startAndWaitForCompleted(
+                    6,
+                    retryMessage,
+                    "NATIVE-MATRIX-OK",
+                    `${config.runtime} transient retry turn`,
+                  );
+                  assert.isAtLeast(
+                    modelServer.requestCount(),
+                    modelRequestsBeforeRetry + 2,
+                    `${config.runtime} native retry did not issue a second model request`,
                   );
                   const holdMessage = "NATIVE-MATRIX-HOLD";
                   const turnStartedFiber = yield* harness.providerService.streamEvents.pipe(
@@ -1803,7 +1832,7 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     Effect.forkChild,
                   );
                   const modelRequestsBeforeHold = modelServer.requestCount();
-                  const interruptStartFiber = yield* startTurn(6, holdMessage).pipe(
+                  const interruptStartFiber = yield* startTurn(7, holdMessage).pipe(
                     Effect.forkChild,
                   );
                   const started = yield* Fiber.join(turnStartedFiber).pipe(
@@ -1927,8 +1956,8 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     createdAt,
                   });
                   const restartedMessage = "Reply after the native session restart.";
-                  yield* startTurn(7, restartedMessage, restartedThreadId);
-                  const restarted = yield* waitForCompleted(
+                  const restarted = yield* startAndWaitForCompleted(
+                    8,
                     restartedMessage,
                     "NATIVE-MATRIX-OK",
                     `${config.runtime} restarted turn`,

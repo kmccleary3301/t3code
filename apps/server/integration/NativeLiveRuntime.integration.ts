@@ -96,6 +96,7 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
   const { promise, resolve, reject } = Promise.withResolvers<NativeLiveModelServer>();
   let requestCount = 0;
   let imageRequestCount = 0;
+  let retryFailureCount = 0;
   const pendingTimers = new Set<NodeJS.Timeout>();
   const server = NodeHttp.createServer((request, response) => {
     if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
@@ -133,6 +134,23 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
         imageRequestCount += 1;
       }
       const requestNumber = requestCount + 1;
+      if (bodyText.includes("NATIVE-MATRIX-RETRY") && retryFailureCount === 0) {
+        retryFailureCount += 1;
+        requestCount = requestNumber;
+        response.writeHead(429, {
+          "content-type": "application/json",
+          "retry-after": "0",
+        });
+        response.end(
+          JSON.stringify({
+            error: {
+              message: "Native matrix transient failure.",
+              type: "rate_limit_error",
+            },
+          }),
+        );
+        return;
+      }
       const delayMs = bodyText.includes("NATIVE-MATRIX-HOLD")
         ? 30_000
         : bodyText.includes("NATIVE-MATRIX-WRITE")
