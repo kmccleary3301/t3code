@@ -101,7 +101,7 @@ interface NativeSession {
   readonly turns: ProviderThreadTurnSnapshot[];
   readonly startedAt: string;
   readonly session: ProviderSession;
-  readonly ready?: Deferred.Deferred<void, never>;
+  readonly ready?: Deferred.Deferred<void, ProviderAdapterError>;
   readonly traceSink?: NativeTraceSink;
   readonly stdoutDrained: Deferred.Deferred<void, never>;
   readonly stderrDrained: Deferred.Deferred<void, never>;
@@ -1006,10 +1006,13 @@ export const makePiFamilyAdapter = (
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const session = sessions.get(threadId);
-        if (!session) return;
+        if (!session || session.stopped) return;
         session.stopped = true;
         session.interruptedTurnIds.clear();
         const error = nativeError(config.provider, "session", "Native session stopped");
+        if (session.ready !== undefined) {
+          yield* Deferred.fail(session.ready, error).pipe(Effect.ignore);
+        }
         yield* failPending(session, error);
         yield* Queue.shutdown(session.input);
         yield* session.child
@@ -1018,6 +1021,7 @@ export const makePiFamilyAdapter = (
         const observedExit = yield* Effect.exit(
           session.child.exitCode.pipe(Effect.timeout("3 seconds")),
         );
+        const streamsDrained = !awaitDrain || (yield* awaitTraceDrain(session));
         if (session.traceSink !== undefined) {
           const traceExit = Exit.isSuccess(observedExit)
             ? { code: Number(observedExit.value), signal: null }
@@ -1026,8 +1030,10 @@ export const makePiFamilyAdapter = (
                 signal: exitSignalFromCause(Cause.squash(observedExit.cause)),
               };
           const exitObserved = Exit.isSuccess(observedExit) || traceExit.signal !== null;
-          let captureComplete = exitObserved && !session.traceInvalidated;
-          if (captureComplete && awaitDrain && !(yield* awaitTraceDrain(session))) {
+          if (!session.startupComplete) yield* invalidateTrace(session);
+          let captureComplete =
+            exitObserved && session.startupComplete && !session.traceInvalidated;
+          if (captureComplete && !streamsDrained) {
             captureComplete = false;
             yield* invalidateTrace(session);
             yield* reportTraceFailure(
@@ -1064,7 +1070,9 @@ export const makePiFamilyAdapter = (
           }
         }
         if (closeScope) {
-          yield* Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore);
+          yield* Effect.forkDetach(
+            Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore),
+          );
         }
         sessions.delete(threadId);
       });
@@ -1388,7 +1396,8 @@ export const makePiFamilyAdapter = (
           );
         const inputQueue = yield* Queue.bounded<Uint8Array>(NATIVE_INPUT_QUEUE_CAPACITY);
         const startedAt = nowIso();
-        const ready = config.runtime === "omp" ? yield* Deferred.make<void>() : undefined;
+        const ready =
+          config.runtime === "omp" ? yield* Deferred.make<void, ProviderAdapterError>() : undefined;
         const stdoutDrained = yield* Deferred.make<void>();
         const stderrDrained = yield* Deferred.make<void>();
         const session: NativeSession = {

@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -640,6 +641,82 @@ describe("Pi-family native adapter", () => {
       assert.isTrue(capture.truncated);
       assert.equal(capture.truncationReason, "lifecycle-error");
       assert.isAbove(capture.chunks.length, 0);
+      assert.deepEqual(capture.exits, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("invalidates a trace when a session is stopped during startup", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("omp");
+      const threadId = ThreadId.make("omp-trace-startup-stop-thread");
+      const instanceId = ProviderInstanceId.make("omp-trace-startup-stop-instance");
+      const recorder = new BoundedNativeTraceRecorder();
+      let invalidations = 0;
+      let finalizations = 0;
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "omp",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", "setInterval(() => {}, 1_000)", "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 10_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        traceSinkFactory: {
+          create: () => ({
+            recordBytes: (stream, bytes) => recorder.recordBytes(stream, bytes),
+            recordExit: (code, signal) => recorder.recordExit(code, signal),
+            invalidate: () => {
+              invalidations += 1;
+              recorder.invalidate();
+            },
+            finalize: () => {
+              finalizations += 1;
+              recorder.finalize();
+            },
+          }),
+        },
+        instanceId,
+      });
+      const startFiber = yield* adapter
+        .startSession({
+          threadId,
+          provider,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      const ownershipDeadline = (yield* Clock.currentTimeMillis) + 2_000;
+      while (!(yield* adapter.hasSession(threadId))) {
+        assert.isBelow(
+          yield* Clock.currentTimeMillis,
+          ownershipDeadline,
+          "OMP startup session was not installed before the ownership deadline",
+        );
+        yield* Effect.sleep(10);
+      }
+
+      yield* adapter.stopSession(threadId).pipe(
+        Effect.timeoutOrElse({
+          duration: "5 seconds",
+          orElse: () => Effect.die("stopSession did not finish within 5 seconds"),
+        }),
+      );
+      const startExit = yield* Fiber.join(startFiber).pipe(
+        Effect.timeoutOrElse({
+          duration: "5 seconds",
+          orElse: () => Effect.die("startSession did not settle within 5 seconds after stop"),
+        }),
+      );
+      assert.isTrue(Exit.isFailure(startExit));
+      assert.equal(invalidations, 1);
+      assert.equal(finalizations, 0);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      const capture = recorder.snapshot().capture;
+      assert.isTrue(capture.truncated);
+      assert.equal(capture.truncationReason, "lifecycle-error");
       assert.deepEqual(capture.exits, []);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
