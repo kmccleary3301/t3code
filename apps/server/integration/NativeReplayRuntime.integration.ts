@@ -101,7 +101,7 @@ export function nativeReplayLaunchArguments(runtime: PiFamilyRuntimeKind): reado
     "    return;",
     "  }",
     '  if (command.type === "abort") { out({ id: command.id, type: "response", command: "abort", success: true }); return; }',
-    '  if (command.type === "capture_checkpoint") { out({ id: command.id, type: "response", command: "capture_checkpoint", success: true, data: { runtime, sessionId: "replay-session", leafEntryId: "replay-leaf" } }); return; }',
+    '  if (command.type === "capture_checkpoint" || command.type === "checkpoint") { const data = runtime === "omp" ? { runtime, sessionId: "replay-session", checkpointId: "replay-leaf" } : { runtime, sessionId: "replay-session", leafEntryId: "replay-leaf" }; out({ id: command.id, type: "response", command: command.type, success: true, data }); return; }',
     '  if (command.type === "restore_checkpoint" || command.type === "rewind") { out({ id: command.id, type: "response", command: command.type, success: true, data: { rewound: true } }); return; }',
     "});",
   ].join("\n");
