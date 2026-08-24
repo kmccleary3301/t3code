@@ -59,15 +59,15 @@ build provenance attestations. Fork npm publication is an explicit opt-in.
 ### Published private release
 
 The current owner-controlled stable release is
-[`fork-v0.0.46`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.46), built from
-`0ef2f9ce8663f59e37ff051daad1e458392e3bec`. Its installer SHA-256 is
+[`fork-v0.0.47`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.47), built from
+`47a70bdf92b307fa6c0541cadbe6470ddf28570c`. Its installer SHA-256 is
 `816a3f0bf94f169a87831a6d73a917364ac5bc2800a8054f5e7a139982e8cb5c`, its release-manifest
-SHA-256 is `295f930d3cb6e3277c6f461b3696e3874cd77d99881c001dfc1e6701d1f513d8`, and its
-`t3-pi-omp-0.0.46.tgz` SHA-256 is
-`56dfdecdd8f7e40056322a4823b65f482cad1c4b48cb87cc69d04df20cf5b63a`.
+SHA-256 is `75e201020468f4116f514151623d9469b9622240b526ea2a2696c1736046d207`, and its
+`t3-pi-omp-0.0.47.tgz` SHA-256 is
+`95868f3be186831ee3be781a100fd11ead50d204db30e223ef3800b38a875be8`.
 
 Release workflow run
-[`32714564102`](https://github.com/kmccleary3301/t3code/actions/runs/32714564102) passed preflight,
+[`32718276003`](https://github.com/kmccleary3301/t3code/actions/runs/32718276003) passed preflight,
 typecheck, tests, all five desktop builds, native Linux packaging, local fork CLI packaging,
 provenance attestation, and GitHub publication. The release contains 21 manifest artifacts plus
 `RELEASE-MANIFEST.json` and `SHA256SUMS` (23 uploaded GitHub assets; GitHub's rendered release
@@ -76,14 +76,15 @@ ZIP artifacts, Linux arm64/x64 AppImages, a Windows x64 NSIS installer, Linux `n
 the CLI tarball, updater metadata, the installer, and builder metadata. No optional Pi/OMP runtime
 bundles were configured.
 
-The current `fork-v0.0.46` lifecycle run
-[`32717044337`](https://github.com/kmccleary3301/t3code/actions/runs/32717044337) passed all five
+The current `fork-v0.0.47` lifecycle run
+[`32721583970`](https://github.com/kmccleary3301/t3code/actions/runs/32721583970) passed all five
 target-host jobs. POSIX macOS arm64/x64 and Linux arm64/x64 verified CLI fresh install, upgrade,
-version/help, server health, rollback, desktop identity, tampered-checksum, missing-asset,
-missing-release no-mutation, uninstall, and native-config preservation. Windows x64 verified the
-CLI and NSIS desktop fresh install, upgrade, rollback, uninstall, server health, and native-config
-preservation. The prior `fork-v0.0.44` lifecycle run
-[`32627901336`](https://github.com/kmccleary3301/t3code/actions/runs/32627901336) remains
+version/help, server health, rollback, desktop identity, tampered-checksum, partial-download,
+missing-asset, and missing-release no-mutation paths, uninstall, and native-config preservation.
+Windows x64 verified the CLI and NSIS desktop fresh install, upgrade, rollback, uninstall, server
+health, and native-config preservation using disposable Pi/OMP state roots. The prior
+`fork-v0.0.46` lifecycle run
+[`32717044337`](https://github.com/kmccleary3301/t3code/actions/runs/32717044337) remains
 separately recorded as historical evidence.
 
 The target-host lifecycle is an installer/desktop lifecycle proof; it does not select or discover

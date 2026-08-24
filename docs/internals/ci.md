@@ -176,20 +176,21 @@ evidence until a release matrix enables them. macOS signing/passkey and Windows 
 depend on release-only credentials. Missing credentials produce unsigned artifacts where the release
 workflow allows that; pull-request CI does not test signing.
 
-The published `fork-v0.0.46` release contains every target in the matrix above plus the
+The published `fork-v0.0.47` release contains every target in the matrix above plus the
 profile-specific CLI/web tarball. Release workflow run
-[`32714564102`](https://github.com/kmccleary3301/t3code/actions/runs/32714564102) built Linux
+[`32718276003`](https://github.com/kmccleary3301/t3code/actions/runs/32718276003) built Linux
 arm64/x64, macOS arm64/x64, and Windows x64 on matching GitHub-hosted runners. GitHub provenance
 attestations cover the release assets. Platform-signing credentials were not configured, so the
 desktop artifacts are unsigned and the macOS artifacts are unnotarized.
 
-The current `fork-v0.0.46` lifecycle run
-[`32717044337`](https://github.com/kmccleary3301/t3code/actions/runs/32717044337) passed all five
+The current `fork-v0.0.47` lifecycle run
+[`32721583970`](https://github.com/kmccleary3301/t3code/actions/runs/32721583970) passed all five
 target-host jobs. POSIX jobs exercised CLI install/upgrade/rollback/uninstall and native-config
 preservation on macOS arm64/x64 and Linux arm64/x64, plus desktop artifact install/upgrade/identity/
-rollback/uninstall and tampered-checksum, missing-asset, and missing-release no-mutation checks;
-the Windows job exercised CLI and NSIS desktop install/upgrade/rollback/uninstall. The prior
-`fork-v0.0.44` lifecycle run remains separately recorded as historical release evidence.
+rollback/uninstall and tampered-checksum, partial-download, missing-asset, and missing-release
+no-mutation checks. The Windows job exercised CLI and NSIS desktop install/upgrade/rollback/uninstall
+with disposable Pi/OMP state roots. The prior `fork-v0.0.46` lifecycle run remains separately
+recorded as historical release evidence.
 
 Optional Pi/OMP runtime bundles are supplied through the owner-controlled
 `T3_PI_OMP_RUNTIME_BUNDLES_JSON` repository variable. The value is a JSON object with a `bundles`
@@ -210,8 +211,8 @@ analysis on macOS; and release-script/manifest/workflow smoke checks.
 compatibility with a particular native runtime version or capability payload;
 real provider credentials and model/UI behavior; clean-machine installs from
 npm or Node archives; installer behavior on musl; execution of desktop artifacts from
-arbitrary releases outside the exercised `fork-v0.0.46` lifecycle matrix (with `fork-v0.0.45` retained as
-historical evidence); notarization, signing, and update delivery beyond the exercised lifecycle; and
+arbitrary releases outside the exercised `fork-v0.0.47` lifecycle matrix (with `fork-v0.0.46`
+retained as historical evidence); notarization, signing, and update delivery beyond the exercised lifecycle; and
 cross-platform desktop integration outside that matrix. A green pull request therefore must not be
 described as proof of any of those properties.
 

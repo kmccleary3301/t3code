@@ -41,24 +41,24 @@ curl -fsSL https://github.com/kmccleary3301/t3code/releases/latest/download/inst
 ```
 
 Do not point the private installer at the official T3 release repository. For a pinned,
-auditable install of the published `fork-v0.0.46` release, download the verification files from
+auditable install of the published `fork-v0.0.47` release, download the verification files from
 that exact release, verify the installer, then run it locally:
 
 ```sh
-base=https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.46
+base=https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.47
 curl -fsSLO "$base/install.sh"
 curl -fsSLO "$base/RELEASE-MANIFEST.json"
 curl -fsSLO "$base/SHA256SUMS"
 expected=$(awk '$2 == "./install.sh" { print $1 }' SHA256SUMS)
 actual=$(shasum -a 256 install.sh | awk '{ print $1 }') # use sha256sum on Linux
 test "$actual" = "$expected"
-sh install.sh --profile pi-omp --repository kmccleary3301/t3code --version 0.0.46
+sh install.sh --profile pi-omp --repository kmccleary3301/t3code --version 0.0.47
 ```
 
-The recorded `fork-v0.0.46` installer SHA-256 is
+The recorded `fork-v0.0.47` installer SHA-256 is
 `816a3f0bf94f169a87831a6d73a917364ac5bc2800a8054f5e7a139982e8cb5c`; its release-manifest
-SHA-256 is `295f930d3cb6e3277c6f461b3696e3874cd77d99881c001dfc1e6701d1f513d8`, and the
-checksummed CLI tarball is `56dfdecdd8f7e40056322a4823b65f482cad1c4b48cb87cc69d04df20cf5b63a`.
+SHA-256 is `75e201020468f4116f514151623d9469b9622240b526ea2a2696c1736046d207`, and the
+checksummed CLI tarball is `95868f3be186831ee3be781a100fd11ead50d204db30e223ef3800b38a875be8`.
 
 Use `--channel nightly` for the newest matching nightly, `--version X.Y.Z` for an exact
 release, `--prefix "$HOME/.local/share/t3code/pi-omp"` for an isolated prefix, and `--dry-run`
@@ -82,15 +82,15 @@ Download the latest release from
 registry.
 
 The private Pi + OMP
-[`fork-v0.0.46`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.46)
+[`fork-v0.0.47`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.47)
 release includes macOS arm64/x64, Linux arm64/x64, and Windows x64 desktop artifacts. Its
 `SHA256SUMS` and GitHub build provenance are verified. The current target-host
 install/update/rollback/uninstall lifecycle passed all five jobs in
-[`32717044337`](https://github.com/kmccleary3301/t3code/actions/runs/32717044337).
+[`32721583970`](https://github.com/kmccleary3301/t3code/actions/runs/32721583970).
 Signing and notarization credentials are not
 configured, so the installers are unsigned and the
-[`macOS arm64 DMG`](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.46/T3-Code-Pi-OMP-0.0.46-arm64.dmg)
-is not notarized. Treat `fork-v0.0.46` as an unsigned personal build; `fork-v0.0.39` had a
+[`macOS arm64 DMG`](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.47/T3-Code-Pi-OMP-0.0.47-arm64.dmg)
+is not notarized. Treat `fork-v0.0.47` as an unsigned personal build; `fork-v0.0.39` had a
 desktop asset-selection defect.
 
 Windows:
@@ -165,10 +165,11 @@ broker token stays in the protected token file; never copy or symlink `agent.db`
 is unavailable, OMP fails with an actionable error instead of silently falling back to local
 credentials.
 
-The five-target `fork-v0.0.46` release lifecycle proves installation, update, rollback, uninstall,
-and native-state preservation. It does not execute Pi/OMP discovery or authenticated root turns on
-every target; the audited native provider lane is local macOS arm64. Do not infer native-provider
-support for an untested runtime, OS, or architecture.
+The five-target `fork-v0.0.47` release lifecycle proves installation, update, rollback, uninstall,
+native-state preservation, and POSIX installer no-mutation behavior after an interrupted partial
+download. It does not execute Pi/OMP discovery or authenticated root turns on every target; the
+audited native provider lane is local macOS arm64. Do not infer native-provider support for an
+untested runtime, OS, or architecture.
 
 Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
 them on in **Settings** → the provider's card when you want to use them.
