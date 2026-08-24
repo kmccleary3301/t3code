@@ -400,6 +400,20 @@ export interface NativeLiveQueueObservation {
   readonly responseCommands: ReadonlyArray<string>;
   readonly frameTypes: ReadonlyArray<string>;
   readonly subagentStatuses: ReadonlyArray<string>;
+  readonly compaction?: {
+    readonly firstKeptEntryId: string;
+    readonly summaryLength: number;
+    readonly tokensBefore: number;
+  };
+  readonly compactionPersisted?: true;
+  readonly processExited?: true;
+  readonly taskCancellation?: {
+    readonly parentTaskId: string;
+    readonly nestedTaskId: string;
+    readonly runId: string;
+    readonly detached: true;
+    readonly terminalStatus: "aborted";
+  };
 }
 
 /**
@@ -440,15 +454,29 @@ export const exerciseNativeLiveQueueModes = (
           | "resume-root"
           | "compacting"
           | "subagent-root"
+          | "listing-task"
           | "cancelling-task"
+          | "awaiting-task-terminal"
+          | "verifying-task-settlement"
           | "stopping" = "starting";
         let steerResponse = false;
         let steerTerminal = false;
         let followUpResponse = false;
         let followUpTerminal = false;
         let originalSessionFile: string | undefined;
+        let parentTaskId: string | undefined;
+        let parentRunId: string | undefined;
         let nestedTaskId: string | undefined;
-        let nestedRunId: string | undefined;
+        let parentTerminalStatus: string | undefined;
+        let cancellationConfirmed = false;
+        let compactionResult:
+          | {
+              readonly firstKeptEntryId: string;
+              readonly summaryLength: number;
+              readonly tokensBefore: number;
+            }
+          | undefined;
+        let compactionSummary: string | undefined;
         const startedTaskIds: string[] = [];
         let outcome: NativeLiveQueueObservation | Error | undefined;
         let hardKillTimer: NodeJS.Timeout | undefined;
@@ -642,10 +670,29 @@ export const exerciseNativeLiveQueueModes = (
               return;
             }
             if (frame.command === "compact") {
-              if (phase !== "compacting" || frame.success !== true) {
+              const data =
+                typeof frame.data === "object" && frame.data !== null
+                  ? (frame.data as Readonly<Record<string, unknown>>)
+                  : undefined;
+              if (
+                phase !== "compacting" ||
+                frame.success !== true ||
+                typeof data?.summary !== "string" ||
+                data.summary.length === 0 ||
+                typeof data.firstKeptEntryId !== "string" ||
+                data.firstKeptEntryId.length === 0 ||
+                typeof data.tokensBefore !== "number" ||
+                data.tokensBefore < 0
+              ) {
                 stop(new Error(`OMP queue probe compaction failed: ${JSON.stringify(frame)}`));
                 return;
               }
+              compactionResult = {
+                firstKeptEntryId: data.firstKeptEntryId,
+                summaryLength: data.summary.length,
+                tokensBefore: data.tokensBefore,
+              };
+              compactionSummary = data.summary;
               phase = "subagent-root";
               send({
                 id: "native-matrix-subagent-root",
@@ -653,6 +700,77 @@ export const exerciseNativeLiveQueueModes = (
                 message: "NATIVE-MATRIX-SUBAGENT-PARENT",
               });
               return;
+            }
+            if (frame.command === "get_subagents") {
+              const data =
+                typeof frame.data === "object" && frame.data !== null
+                  ? (frame.data as Readonly<Record<string, unknown>>)
+                  : undefined;
+              const subagents = Array.isArray(data?.subagents)
+                ? (data.subagents as ReadonlyArray<Readonly<Record<string, unknown>>>)
+                : [];
+              if (phase === "listing-task") {
+                const snapshot = subagents.find(
+                  (entry) => entry.id === startedTaskIds[0] && entry.status === "running",
+                );
+                if (
+                  snapshot === undefined ||
+                  snapshot.detached !== true ||
+                  typeof snapshot.id !== "string" ||
+                  typeof snapshot.runId !== "string" ||
+                  nestedTaskId === undefined ||
+                  snapshot.id === nestedTaskId
+                ) {
+                  stop(
+                    new Error(
+                      `OMP queue probe task hierarchy was incomplete: ${JSON.stringify(data)}`,
+                    ),
+                  );
+                  return;
+                }
+                parentTaskId = snapshot.id;
+                parentRunId = snapshot.runId;
+                phase = "cancelling-task";
+                send({
+                  id: "native-matrix-cancel-task",
+                  type: "cancel_task",
+                  taskId: parentTaskId,
+                  runId: parentRunId,
+                });
+                return;
+              }
+              if (phase === "verifying-task-settlement") {
+                const parent = subagents.find((entry) => entry.id === parentTaskId);
+                if (
+                  parent?.status !== "aborted" ||
+                  subagents.some((entry) => entry.status === "running") ||
+                  parentTaskId === undefined ||
+                  parentRunId === undefined ||
+                  nestedTaskId === undefined ||
+                  compactionResult === undefined
+                ) {
+                  stop(
+                    new Error(
+                      `OMP queue probe task settlement was incomplete: ${JSON.stringify(data)}`,
+                    ),
+                  );
+                  return;
+                }
+                stop({
+                  responseCommands: [...responseCommands],
+                  frameTypes: [...frameTypes],
+                  subagentStatuses: [...subagentStatuses],
+                  compaction: compactionResult,
+                  taskCancellation: {
+                    parentTaskId,
+                    nestedTaskId,
+                    runId: parentRunId,
+                    detached: true,
+                    terminalStatus: "aborted",
+                  },
+                });
+                return;
+              }
             }
             if (frame.command === "cancel_task") {
               const data =
@@ -663,18 +781,20 @@ export const exerciseNativeLiveQueueModes = (
                 phase !== "cancelling-task" ||
                 frame.success !== true ||
                 data?.cancelled !== true ||
-                data.taskId !== nestedTaskId
+                data.taskId !== parentTaskId ||
+                (data.runId !== undefined && data.runId !== parentRunId)
               ) {
                 stop(
                   new Error(`OMP queue probe task cancellation failed: ${JSON.stringify(frame)}`),
                 );
                 return;
               }
-              stop({
-                responseCommands: [...responseCommands],
-                frameTypes: [...frameTypes],
-                subagentStatuses: [...subagentStatuses],
-              });
+              cancellationConfirmed = true;
+              phase = "awaiting-task-terminal";
+              if (parentTerminalStatus === "aborted") {
+                phase = "verifying-task-settlement";
+                send({ id: "native-matrix-settled-subagents", type: "get_subagents" });
+              }
               return;
             }
           }
@@ -685,11 +805,23 @@ export const exerciseNativeLiveQueueModes = (
                 : undefined;
             const id = typeof payload?.id === "string" ? payload.id : undefined;
             const status = typeof payload?.status === "string" ? payload.status : undefined;
-            const runId = typeof payload?.runId === "string" ? payload.runId : undefined;
             if (status !== undefined) subagentStatuses.push(status);
             if (status === "started" && id !== undefined && !startedTaskIds.includes(id)) {
               startedTaskIds.push(id);
-              if (startedTaskIds.length === 1) nestedRunId = runId;
+            }
+            if (
+              id === parentTaskId &&
+              (status === "aborted" || status === "failed" || status === "completed")
+            ) {
+              parentTerminalStatus = status;
+              if (status !== "aborted") {
+                stop(new Error(`OMP queue probe cancelled task settled as ${status}.`));
+                return;
+              }
+              if (cancellationConfirmed && phase === "awaiting-task-terminal") {
+                phase = "verifying-task-settlement";
+                send({ id: "native-matrix-settled-subagents", type: "get_subagents" });
+              }
             }
           }
           if (frame.type === "subagent_event") {
@@ -712,14 +844,27 @@ export const exerciseNativeLiveQueueModes = (
               event.toolName === "task" &&
               startedTaskIds[0] !== undefined
             ) {
-              nestedTaskId = startedTaskIds[0];
-              phase = "cancelling-task";
-              send({
-                id: "native-matrix-cancel-task",
-                type: "cancel_task",
-                ...(nestedRunId === undefined ? {} : { runId: nestedRunId }),
-                taskId: nestedTaskId,
-              });
+              const partialResult =
+                typeof event.partialResult === "object" && event.partialResult !== null
+                  ? (event.partialResult as Readonly<Record<string, unknown>>)
+                  : undefined;
+              const details =
+                typeof partialResult?.details === "object" && partialResult.details !== null
+                  ? (partialResult.details as Readonly<Record<string, unknown>>)
+                  : undefined;
+              const progress = Array.isArray(details?.progress)
+                ? (details.progress as ReadonlyArray<Readonly<Record<string, unknown>>>)
+                : [];
+              const nested = progress.find(
+                (entry) =>
+                  typeof entry.id === "string" &&
+                  entry.id !== startedTaskIds[0] &&
+                  entry.status === "running",
+              );
+              if (nested === undefined || typeof nested.id !== "string") return;
+              nestedTaskId = nested.id;
+              phase = "listing-task";
+              send({ id: "native-matrix-running-subagents", type: "get_subagents" });
               return;
             }
           }
@@ -793,7 +938,36 @@ export const exerciseNativeLiveQueueModes = (
           if (outcome instanceof Error) {
             reject(outcome);
           } else if (outcome !== undefined) {
-            resolve(outcome);
+            if (
+              config.runtime === "omp" &&
+              originalSessionFile !== undefined &&
+              compactionResult !== undefined &&
+              compactionSummary !== undefined
+            ) {
+              const expectedCompaction = compactionResult;
+              const persisted = NodeFS.readFileSync(originalSessionFile, "utf8")
+                .split("\n")
+                .some((line) => {
+                  if (line.length === 0) return false;
+                  try {
+                    const entry = JSON.parse(line) as Readonly<Record<string, unknown>>;
+                    return (
+                      entry.type === "compaction" &&
+                      entry.summary === compactionSummary &&
+                      entry.firstKeptEntryId === expectedCompaction.firstKeptEntryId
+                    );
+                  } catch {
+                    return false;
+                  }
+                });
+              if (!persisted) {
+                reject(new Error("OMP queue probe compaction was not persisted to session state."));
+                return;
+              }
+              resolve({ ...outcome, compactionPersisted: true, processExited: true });
+              return;
+            }
+            resolve({ ...outcome, processExited: true });
           } else {
             reject(
               new Error(

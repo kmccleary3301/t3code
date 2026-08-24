@@ -1533,6 +1533,18 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                 1,
               );
               assert.include(queueObservation.frameTypes, "subagent:tool_execution_update:task");
+              assert.isDefined(queueObservation.compaction);
+              assert.isAtLeast(queueObservation.compaction?.tokensBefore ?? -1, 0);
+              assert.isAbove(queueObservation.compaction?.summaryLength ?? 0, 0);
+              assert.isNotEmpty(queueObservation.compaction?.firstKeptEntryId);
+              assert.equal(queueObservation.compactionPersisted, true);
+              assert.equal(queueObservation.processExited, true);
+              const cancellation = queueObservation.taskCancellation;
+              assert.isDefined(cancellation);
+              assert.notEqual(cancellation?.parentTaskId, cancellation?.nestedTaskId);
+              assert.equal(cancellation?.detached, true);
+              assert.equal(cancellation?.terminalStatus, "aborted");
+              assert.isNotEmpty(cancellation?.runId);
             }
             const extensionPath = yield* writeNativeLiveExtension(agentDirectory);
             const capabilityObservation: NativeLiveCapabilityObservation = {
