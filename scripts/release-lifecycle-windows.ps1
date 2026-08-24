@@ -134,7 +134,13 @@ function Stop-ServerTree([System.Diagnostics.Process] $Process) {
 
 
 $serverProcess = $null
+$nativeRootCreated = $false
 try {
+  if (Test-Path -LiteralPath $nativeRoot) {
+    Fail 'T3_LIFECYCLE_NATIVE_ROOT must identify a non-existing disposable directory'
+  }
+  New-Item -ItemType Directory -Force -Path $nativeRoot | Out-Null
+  $nativeRootCreated = $true
   $previous = Download-Release $previousTag $previousVersion
   $current = Download-Release $currentTag $currentVersion
 
@@ -219,6 +225,9 @@ try {
   Write-Output "Windows release lifecycle passed for $currentTag/$previousTag"
 } finally {
   if ($null -ne $serverProcess) { Stop-ServerTree $serverProcess }
+  if ($nativeRootCreated -and (Test-Path -LiteralPath $nativeRoot)) {
+    Remove-Item -Recurse -Force -LiteralPath $nativeRoot
+  }
   if (Test-Path $root) {
     for ($attempt = 0; $attempt -lt 20 -and (Test-Path $root); $attempt++) {
       try {

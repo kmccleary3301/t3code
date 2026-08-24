@@ -92,7 +92,7 @@ jobs:
           T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
           T3_LIFECYCLE_REPORT: ${{ runner.temp }}/release-lifecycle-windows.json
         run: |
-          $env:T3_LIFECYCLE_NATIVE_ROOT = $env:USERPROFILE
+          $env:T3_LIFECYCLE_NATIVE_ROOT = Join-Path $env:RUNNER_TEMP "t3-pi-omp-native-state-windows"
           ./scripts/release-lifecycle-windows.ps1
 
       - name: Upload lifecycle evidence

@@ -59,15 +59,15 @@ build provenance attestations. Fork npm publication is an explicit opt-in.
 ### Published private release
 
 The current owner-controlled stable release is
-[`fork-v0.0.45`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.45), built from
-`7635c5071ed4513ebb8aa2bfbdfb0a52608950fa`. Its installer SHA-256 is
+[`fork-v0.0.46`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.46), built from
+`0ef2f9ce8663f59e37ff051daad1e458392e3bec`. Its installer SHA-256 is
 `816a3f0bf94f169a87831a6d73a917364ac5bc2800a8054f5e7a139982e8cb5c`, its release-manifest
-SHA-256 is `74db11e597c136550a911262ddb1b94719e9af7a11a13ec5a50c1957eaa71e75`, and its
-`t3-pi-omp-0.0.45.tgz` SHA-256 is
-`176ece8ede8fa5a2f57fcdee1b5b84bcee5d19090bc88665d17cb3b3c5e07ef5`.
+SHA-256 is `295f930d3cb6e3277c6f461b3696e3874cd77d99881c001dfc1e6701d1f513d8`, and its
+`t3-pi-omp-0.0.46.tgz` SHA-256 is
+`56dfdecdd8f7e40056322a4823b65f482cad1c4b48cb87cc69d04df20cf5b63a`.
 
 Release workflow run
-[`32636953731`](https://github.com/kmccleary3301/t3code/actions/runs/32636953731) passed preflight,
+[`32714564102`](https://github.com/kmccleary3301/t3code/actions/runs/32714564102) passed preflight,
 typecheck, tests, all five desktop builds, native Linux packaging, local fork CLI packaging,
 provenance attestation, and GitHub publication. The release contains 21 manifest artifacts plus
 `RELEASE-MANIFEST.json` and `SHA256SUMS` (23 uploaded GitHub assets; GitHub's rendered release
@@ -76,8 +76,8 @@ ZIP artifacts, Linux arm64/x64 AppImages, a Windows x64 NSIS installer, Linux `n
 the CLI tarball, updater metadata, the installer, and builder metadata. No optional Pi/OMP runtime
 bundles were configured.
 
-The current `fork-v0.0.45` lifecycle run
-[`32643088885`](https://github.com/kmccleary3301/t3code/actions/runs/32643088885) passed all five
+The current `fork-v0.0.46` lifecycle run
+[`32717044337`](https://github.com/kmccleary3301/t3code/actions/runs/32717044337) passed all five
 target-host jobs. POSIX macOS arm64/x64 and Linux arm64/x64 verified CLI fresh install, upgrade,
 version/help, server health, rollback, desktop identity, tampered-checksum, missing-asset,
 missing-release no-mutation, uninstall, and native-config preservation. Windows x64 verified the

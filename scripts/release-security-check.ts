@@ -11,6 +11,14 @@ const upstreamSyncWorkflow = NodeFS.readFileSync(
   NodePath.join(root, ".github/workflows/upstream-sync.yml"),
   "utf8",
 );
+const releaseLifecycleWorkflow = NodeFS.readFileSync(
+  NodePath.join(root, ".github/workflows/release-lifecycle.yml"),
+  "utf8",
+);
+const windowsLifecycle = NodeFS.readFileSync(
+  NodePath.join(root, "scripts/release-lifecycle-windows.ps1"),
+  "utf8",
+);
 const installer = NodeFS.readFileSync(NodePath.join(root, "scripts/install.sh"), "utf8");
 const workflowDir = NodePath.join(root, ".github/workflows");
 const workflowSources = NodeFS.readdirSync(workflowDir)
@@ -93,6 +101,18 @@ assert(
   "Runtime bundle publication is not gated.",
 );
 assert(installer.includes("--install-runtimes"), "Installer runtime opt-in is missing.");
+assert(
+  releaseLifecycleWorkflow.includes("$env:T3_LIFECYCLE_NATIVE_ROOT = Join-Path $env:RUNNER_TEMP"),
+  "Windows lifecycle must use a disposable native-state root.",
+);
+assert(
+  windowsLifecycle.includes("if (Test-Path -LiteralPath $nativeRoot)"),
+  "Windows lifecycle must fail closed when its native-state root already exists.",
+);
+assert(
+  windowsLifecycle.includes("Remove-Item -Recurse -Force -LiteralPath $nativeRoot"),
+  "Windows lifecycle must remove its disposable native-state root.",
+);
 
 // Reject the two most common unsafe installer regressions without requiring
 // network-backed scanners on local smoke runs.
