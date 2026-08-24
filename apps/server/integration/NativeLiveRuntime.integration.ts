@@ -239,13 +239,15 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
       if (rawSteerHold) rawSteerHoldDelayCount += 1;
       const delayMs = message.includes("NATIVE-MATRIX-HOLD")
         ? 30_000
-        : rawSteerHold
-          ? 500
-          : message.includes("NATIVE-MATRIX-RAW-FOLLOW-HOLD")
+        : bodyText.includes("NATIVE-MATRIX-SUBAGENT-GRANDCHILD-HOLD")
+          ? 30_000
+          : rawSteerHold
             ? 500
-            : message.includes("NATIVE-MATRIX-WRITE")
+            : message.includes("NATIVE-MATRIX-RAW-FOLLOW-HOLD")
               ? 500
-              : 0;
+              : message.includes("NATIVE-MATRIX-WRITE")
+                ? 500
+                : 0;
       let timer: NodeJS.Timeout | undefined;
       const send = () => {
         requestCount = requestNumber;
@@ -253,7 +255,16 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
           pendingTimers.delete(timer);
           timer = undefined;
         }
-        const toolTurn = message.includes("NATIVE-MATRIX-TOOL") && !hasToolResult;
+        const bashToolTurn = message.includes("NATIVE-MATRIX-TOOL") && !hasToolResult;
+        const parentTaskTurn = message.includes("NATIVE-MATRIX-SUBAGENT-PARENT") && !hasToolResult;
+        const childTaskTurn = bodyText.includes("NATIVE-MATRIX-SUBAGENT-CHILD") && !hasToolResult;
+        const toolTurn = bashToolTurn || parentTaskTurn || childTaskTurn;
+        const toolName = bashToolTurn ? "bash" : "task";
+        const toolArguments = bashToolTurn
+          ? '{"command":"printf NATIVE-MATRIX-TOOL-OK"}'
+          : parentTaskTurn
+            ? '{"name":"MatrixChild","agent":"task","task":"NATIVE-MATRIX-SUBAGENT-CHILD"}'
+            : '{"name":"MatrixGrandchild","agent":"sonic","task":"NATIVE-MATRIX-SUBAGENT-GRANDCHILD-HOLD"}';
         const marker = hasToolResult
           ? "NATIVE-MATRIX-TOOL-OK"
           : message.includes("RESTORED")
@@ -274,11 +285,11 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
                       tool_calls: [
                         {
                           index: 0,
-                          id: "native-matrix-tool",
+                          id: `native-matrix-${toolName}`,
                           type: "function",
                           function: {
-                            name: "bash",
-                            arguments: '{"command":"printf NATIVE-MATRIX-TOOL-OK"}',
+                            name: toolName,
+                            arguments: toolArguments,
                           },
                         },
                       ],
@@ -388,6 +399,7 @@ const nativeLiveError = (cause: unknown): NativeLiveRuntimeError =>
 export interface NativeLiveQueueObservation {
   readonly responseCommands: ReadonlyArray<string>;
   readonly frameTypes: ReadonlyArray<string>;
+  readonly subagentStatuses: ReadonlyArray<string>;
 }
 
 /**
@@ -413,6 +425,7 @@ export const exerciseNativeLiveQueueModes = (
         });
         const responseCommands: string[] = [];
         const frameTypes: string[] = [];
+        const subagentStatuses: string[] = [];
         let stdoutPending = "";
         let stderrTail = "";
         let phase:
@@ -425,12 +438,18 @@ export const exerciseNativeLiveQueueModes = (
           | "branching"
           | "resuming"
           | "resume-root"
+          | "compacting"
+          | "subagent-root"
+          | "cancelling-task"
           | "stopping" = "starting";
         let steerResponse = false;
         let steerTerminal = false;
         let followUpResponse = false;
         let followUpTerminal = false;
         let originalSessionFile: string | undefined;
+        let nestedTaskId: string | undefined;
+        let nestedRunId: string | undefined;
+        const startedTaskIds: string[] = [];
         let outcome: NativeLiveQueueObservation | Error | undefined;
         let hardKillTimer: NodeJS.Timeout | undefined;
         let deadlineTimer: NodeJS.Timeout | undefined;
@@ -470,6 +489,7 @@ export const exerciseNativeLiveQueueModes = (
             stop({
               responseCommands: [...responseCommands],
               frameTypes: [...frameTypes],
+              subagentStatuses: [...subagentStatuses],
             });
           }
         };
@@ -498,9 +518,42 @@ export const exerciseNativeLiveQueueModes = (
                 typeof data?.sessions === "object" && data.sessions !== null
                   ? (data.sessions as Readonly<Record<string, unknown>>)
                   : undefined;
+              const tasks =
+                typeof data?.tasks === "object" && data.tasks !== null
+                  ? (data.tasks as Readonly<Record<string, unknown>>)
+                  : undefined;
               if (sessions?.fork !== true || sessions.resume !== true) {
                 stop(
                   new Error("OMP queue probe requires advertised fork and resume capabilities."),
+                );
+                return;
+              }
+              if (config.runtime === "omp") {
+                if (
+                  sessions.compact !== true ||
+                  tasks?.nested !== true ||
+                  tasks.background !== true ||
+                  tasks.targetedCancellation !== true
+                ) {
+                  stop(new Error("OMP queue probe requires task and compaction capabilities."));
+                  return;
+                }
+                send({
+                  id: "native-matrix-subagent-subscription",
+                  type: "set_subagent_subscription",
+                  level: "events",
+                });
+                return;
+              }
+              send({ id: "native-matrix-state", type: "get_state" });
+              return;
+            }
+            if (frame.command === "set_subagent_subscription") {
+              if (frame.success !== true) {
+                stop(
+                  new Error(
+                    `OMP queue probe could not subscribe to subagents: ${JSON.stringify(frame)}`,
+                  ),
                 );
                 return;
               }
@@ -584,7 +637,88 @@ export const exerciseNativeLiveQueueModes = (
               send({
                 id: "native-matrix-resumed-prompt",
                 type: "prompt",
-                message: "NATIVE-MATRIX-RAW-RESUMED",
+                message: `NATIVE-MATRIX-RAW-RESUMED ${"context ".repeat(20_000)}`,
+              });
+              return;
+            }
+            if (frame.command === "compact") {
+              if (phase !== "compacting" || frame.success !== true) {
+                stop(new Error(`OMP queue probe compaction failed: ${JSON.stringify(frame)}`));
+                return;
+              }
+              phase = "subagent-root";
+              send({
+                id: "native-matrix-subagent-root",
+                type: "prompt",
+                message: "NATIVE-MATRIX-SUBAGENT-PARENT",
+              });
+              return;
+            }
+            if (frame.command === "cancel_task") {
+              const data =
+                typeof frame.data === "object" && frame.data !== null
+                  ? (frame.data as Readonly<Record<string, unknown>>)
+                  : undefined;
+              if (
+                phase !== "cancelling-task" ||
+                frame.success !== true ||
+                data?.cancelled !== true ||
+                data.taskId !== nestedTaskId
+              ) {
+                stop(
+                  new Error(`OMP queue probe task cancellation failed: ${JSON.stringify(frame)}`),
+                );
+                return;
+              }
+              stop({
+                responseCommands: [...responseCommands],
+                frameTypes: [...frameTypes],
+                subagentStatuses: [...subagentStatuses],
+              });
+              return;
+            }
+          }
+          if (frame.type === "subagent_lifecycle") {
+            const payload =
+              typeof frame.payload === "object" && frame.payload !== null
+                ? (frame.payload as Readonly<Record<string, unknown>>)
+                : undefined;
+            const id = typeof payload?.id === "string" ? payload.id : undefined;
+            const status = typeof payload?.status === "string" ? payload.status : undefined;
+            const runId = typeof payload?.runId === "string" ? payload.runId : undefined;
+            if (status !== undefined) subagentStatuses.push(status);
+            if (status === "started" && id !== undefined && !startedTaskIds.includes(id)) {
+              startedTaskIds.push(id);
+              if (startedTaskIds.length === 1) nestedRunId = runId;
+            }
+          }
+          if (frame.type === "subagent_event") {
+            const payload =
+              typeof frame.payload === "object" && frame.payload !== null
+                ? (frame.payload as Readonly<Record<string, unknown>>)
+                : undefined;
+            const event =
+              typeof payload?.event === "object" && payload.event !== null
+                ? (payload.event as Readonly<Record<string, unknown>>)
+                : undefined;
+            if (typeof event?.type === "string") {
+              frameTypes.push(
+                `subagent:${event.type}:${typeof event.toolName === "string" ? event.toolName : ""}`,
+              );
+            }
+            if (
+              phase === "subagent-root" &&
+              event?.type === "tool_execution_update" &&
+              event.toolName === "task" &&
+              startedTaskIds[0] !== undefined
+            ) {
+              nestedTaskId = startedTaskIds[0];
+              phase = "cancelling-task";
+              send({
+                id: "native-matrix-cancel-task",
+                type: "cancel_task",
+                ...(nestedRunId === undefined ? {} : { runId: nestedRunId }),
+                taskId: nestedTaskId,
               });
               return;
             }
@@ -614,9 +748,11 @@ export const exerciseNativeLiveQueueModes = (
           if (phase === "steer-queued") steerTerminal = true;
           else if (phase === "follow-queued") followUpTerminal = true;
           else if (phase === "resume-root") {
-            stop({
-              responseCommands: [...responseCommands],
-              frameTypes: [...frameTypes],
+            phase = "compacting";
+            send({
+              id: "native-matrix-compact",
+              type: "compact",
+              customInstructions: "Retain the native matrix marker.",
             });
             return;
           }
@@ -671,7 +807,7 @@ export const exerciseNativeLiveQueueModes = (
           () =>
             stop(
               new Error(
-                `Native queue probe timed out during ${phase}; responses=${responseCommands.join(",")}; frames=${frameTypes.slice(-12).join(",")}.`,
+                `Native queue probe timed out during ${phase}; responses=${responseCommands.join(",")}; frames=${frameTypes.slice(-12).join(",")}; subagents=${subagentStatuses.join(",")}.`,
               ),
             ),
           20_000,
@@ -816,6 +952,21 @@ export const writeNativeLiveConfig = (
           "        input: [text, image]",
           "        contextWindow: 128000",
           "        maxTokens: 1024",
+        ].join("\n") + "\n",
+        { mode: 0o600 },
+      );
+      await NodeFS.promises.writeFile(
+        NodePath.join(agentDirectory, "config.yml"),
+        [
+          "modelRoles:",
+          "  task: local/test",
+          "  smol: local/test",
+          "async:",
+          "  enabled: true",
+          "task:",
+          "  isolation:",
+          "    mode: none",
+          "  maxRecursionDepth: 2",
         ].join("\n") + "\n",
         { mode: 0o600 },
       );

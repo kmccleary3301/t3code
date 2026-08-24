@@ -1526,6 +1526,13 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
               assert.include(queueObservation.frameTypes, "agent_end");
               assert.include(queueObservation.responseCommands, "branch");
               assert.include(queueObservation.responseCommands, "switch_session");
+              assert.include(queueObservation.responseCommands, "compact");
+              assert.include(queueObservation.responseCommands, "cancel_task");
+              assert.isAtLeast(
+                queueObservation.subagentStatuses.filter((status) => status === "started").length,
+                1,
+              );
+              assert.include(queueObservation.frameTypes, "subagent:tool_execution_update:task");
             }
             const extensionPath = yield* writeNativeLiveExtension(agentDirectory);
             const capabilityObservation: NativeLiveCapabilityObservation = {
