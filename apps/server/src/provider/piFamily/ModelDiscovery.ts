@@ -1,4 +1,5 @@
 import type { ServerProviderModel } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -46,7 +47,13 @@ export interface PiFamilyModelDiscoveryResult {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
-export type PiFamilyModelDiscoveryErrorCode = "spawn" | "timeout" | "protocol" | "native" | "limit";
+export type PiFamilyModelDiscoveryErrorCode =
+  | "spawn"
+  | "timeout"
+  | "protocol"
+  | "native"
+  | "limit"
+  | "empty";
 
 export class PiFamilyModelDiscoveryError extends Error {
   public readonly code: PiFamilyModelDiscoveryErrorCode;
@@ -84,8 +91,10 @@ export function resolvePiFamilyLaunchArguments(
 
 /** Map only native rows with the provider/id identity needed by NativeAdapter. */
 export function mapPiFamilyModels(input: {
+  readonly runtime: PiFamilyRuntimeKind;
   readonly rows: unknown;
   readonly currentModel?: unknown;
+  readonly currentThinkingLevel?: unknown;
 }): ReadonlyArray<ServerProviderModel> {
   if (!Array.isArray(input.rows)) {
     throw new PiFamilyModelDiscoveryError(
@@ -118,16 +127,29 @@ export function mapPiFamilyModels(input: {
       name,
       isCustom: false,
       ...(slug === currentSlug ? { isDefault: true } : {}),
-      capabilities: null,
+      capabilities: nativeThinkingCapabilities(
+        input.runtime,
+        model,
+        slug === currentSlug ? input.currentThinkingLevel : undefined,
+      ),
     });
   }
 
+  if (models.length === 0) {
+    throw new PiFamilyModelDiscoveryError(
+      "empty",
+      "Native model discovery returned no selectable models.",
+    );
+  }
   return models;
 }
 
 export function modelDiscoverySnapshotMessage(provider: string, error: unknown): string {
   const code = error instanceof PiFamilyModelDiscoveryError ? error.code : "native";
   if (code === "timeout") return `${provider} model discovery timed out.`;
+  if (code === "empty") {
+    return `${provider} returned no selectable models. Verify this provider instance's binary, profile, and authentication, then refresh models.`;
+  }
   if (code === "protocol") return `${provider} returned invalid model discovery data.`;
   if (code === "limit") return `${provider} model discovery exceeded its output limit.`;
   return `${provider} model discovery failed.`;
@@ -381,12 +403,23 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
           ),
         );
       }
-      return {
-        models: mapPiFamilyModels({
-          rows: modelsData.models,
-          currentModel: stateData.model,
-        }),
-      } satisfies PiFamilyModelDiscoveryResult;
+      const models = yield* Effect.try({
+        try: () =>
+          mapPiFamilyModels({
+            runtime: config.runtime,
+            rows: modelsData.models,
+            currentModel: stateData.model,
+            currentThinkingLevel: stateData.thinkingLevel,
+          }),
+        catch: (cause) =>
+          cause instanceof PiFamilyModelDiscoveryError
+            ? cause
+            : new PiFamilyModelDiscoveryError(
+                "protocol",
+                "Native model discovery returned invalid model data.",
+              ),
+      });
+      return { models } satisfies PiFamilyModelDiscoveryResult;
     }),
   );
 
@@ -402,6 +435,73 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
     ),
   );
 });
+
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export function piFamilyThinkingLevels(
+  runtime: PiFamilyRuntimeKind,
+  value: unknown,
+): ReadonlyArray<(typeof THINKING_LEVELS)[number]> {
+  const model = asRecord(value);
+  if (model?.reasoning !== true) return [];
+  if (runtime === "omp") {
+    const thinking = asRecord(model.thinking);
+    if (!thinking || !Array.isArray(thinking.efforts)) return [];
+    const advertised = new Set(
+      thinking.efforts.filter(
+        (effort): effort is (typeof THINKING_LEVELS)[number] =>
+          typeof effort === "string" &&
+          effort !== "off" &&
+          THINKING_LEVELS.includes(effort as (typeof THINKING_LEVELS)[number]),
+      ),
+    );
+    return THINKING_LEVELS.filter(
+      (level) => (level === "off" && thinking.requiresEffort !== true) || advertised.has(level),
+    );
+  }
+  const levelMap = asRecord(model.thinkingLevelMap);
+  return THINKING_LEVELS.filter((level) => {
+    const mapped = levelMap?.[level];
+    if (mapped === null) return false;
+    if (level === "xhigh" || level === "max") return mapped !== undefined;
+    return true;
+  });
+}
+
+function nativeThinkingCapabilities(
+  runtime: PiFamilyRuntimeKind,
+  model: JsonRecord | undefined,
+  currentThinkingLevel: unknown,
+): ServerProviderModel["capabilities"] {
+  const levels = piFamilyThinkingLevels(runtime, model);
+  const thinking = runtime === "omp" ? asRecord(model?.thinking) : undefined;
+  const current = nonEmptyString(currentThinkingLevel) ?? nonEmptyString(thinking?.defaultLevel);
+  return thinkingCapabilities(levels, current);
+}
+
+function thinkingCapabilities(
+  levels: ReadonlyArray<(typeof THINKING_LEVELS)[number]>,
+  currentThinkingLevel: unknown,
+): ServerProviderModel["capabilities"] {
+  if (levels.length === 0) return null;
+  const current = nonEmptyString(currentThinkingLevel);
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "thinkingLevel",
+        label: "Thinking",
+        type: "select",
+        options: levels.map((level) => ({
+          id: level,
+          label: level === "xhigh" ? "Extra High" : `${level[0]?.toUpperCase()}${level.slice(1)}`,
+        })),
+        ...(current !== undefined && levels.includes(current as (typeof THINKING_LEVELS)[number])
+          ? { currentValue: current }
+          : {}),
+      },
+    ],
+  });
+}
 
 function nonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;

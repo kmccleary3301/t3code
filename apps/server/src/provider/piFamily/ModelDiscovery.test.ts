@@ -7,6 +7,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   discoverPiFamilyModels,
   mapPiFamilyModels,
+  modelDiscoverySnapshotMessage,
+  PiFamilyModelDiscoveryError,
   resolvePiFamilyLaunchArguments,
   type PiFamilyModelDiscoveryConfig,
 } from "./ModelDiscovery.ts";
@@ -89,14 +91,21 @@ describe("Pi-family model discovery mapping", () => {
   it("maps provider-prefixed slugs and native defaults", () => {
     expect(
       mapPiFamilyModels({
+        runtime: "pi",
         rows: [
-          { provider: "openai", id: "gpt-test", name: "GPT Test" },
-          { provider: "anthropic", id: "claude-test" },
+          { provider: "openai", id: "gpt-test", name: "GPT Test", reasoning: false },
+          {
+            provider: "anthropic",
+            id: "claude-test",
+            reasoning: true,
+            thinkingLevelMap: { xhigh: "enabled", max: null },
+          },
           { provider: "", id: "ignored" },
           { provider: "openai" },
           { provider: 42, id: "ignored" },
         ],
         currentModel: { provider: "anthropic", id: "claude-test" },
+        currentThinkingLevel: "high",
       }),
     ).toEqual([
       { slug: "openai/gpt-test", name: "GPT Test", isCustom: false, capabilities: null },
@@ -105,14 +114,101 @@ describe("Pi-family model discovery mapping", () => {
         name: "claude-test",
         isCustom: false,
         isDefault: true,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "thinkingLevel",
+              label: "Thinking",
+              type: "select",
+              options: [
+                { id: "off", label: "Off" },
+                { id: "minimal", label: "Minimal" },
+                { id: "low", label: "Low" },
+                { id: "medium", label: "Medium" },
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra High" },
+              ],
+              currentValue: "high",
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it("maps OMP's advertised thinking efforts without Pi fallbacks", () => {
+    expect(
+      mapPiFamilyModels({
+        runtime: "omp",
+        rows: [
+          {
+            provider: "openai",
+            id: "reasoning-model",
+            name: "Reasoning Model",
+            reasoning: true,
+            thinking: {
+              mode: "effort",
+              efforts: ["low", "high", "xhigh", "max"],
+              defaultLevel: "high",
+              requiresEffort: true,
+            },
+          },
+          { provider: "openai", id: "fixed-reasoning", reasoning: true },
+        ],
+        currentModel: { provider: "openai", id: "reasoning-model" },
+        currentThinkingLevel: "xhigh",
+      }),
+    ).toEqual([
+      {
+        slug: "openai/reasoning-model",
+        name: "Reasoning Model",
+        isCustom: false,
+        isDefault: true,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "thinkingLevel",
+              label: "Thinking",
+              type: "select",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra High" },
+                { id: "max", label: "Max" },
+              ],
+              currentValue: "xhigh",
+            },
+          ],
+        },
+      },
+      {
+        slug: "openai/fixed-reasoning",
+        name: "fixed-reasoning",
+        isCustom: false,
         capabilities: null,
       },
     ]);
   });
 
-  it("rejects malformed model lists while ignoring malformed rows", () => {
-    expect(() => mapPiFamilyModels({ rows: { models: [] } })).toThrow("malformed model list");
-    expect(mapPiFamilyModels({ rows: [{ provider: "p", id: "m" }, null] })).toHaveLength(1);
+  it("rejects malformed and empty model lists while ignoring malformed rows", () => {
+    expect(() => mapPiFamilyModels({ runtime: "pi", rows: { models: [] } })).toThrow(
+      "malformed model list",
+    );
+    expect(() => mapPiFamilyModels({ runtime: "pi", rows: [] })).toThrow("no selectable models");
+    expect(
+      mapPiFamilyModels({ runtime: "pi", rows: [{ provider: "p", id: "m" }, null] }),
+    ).toHaveLength(1);
+  });
+
+  it("provides actionable empty-catalog recovery without exposing paths", () => {
+    const message = modelDiscoverySnapshotMessage(
+      "pi",
+      new PiFamilyModelDiscoveryError("empty", "internal detail"),
+    );
+    expect(message).toBe(
+      "pi returned no selectable models. Verify this provider instance's binary, profile, and authentication, then refresh models.",
+    );
+    expect(message).not.toContain("/Users/");
   });
 });
 
@@ -151,6 +247,39 @@ describe("Pi-family model discovery RPC", () => {
       expect(killed.value).toBeGreaterThan(0);
       const command = commands[0] as { readonly args: ReadonlyArray<string> };
       expect(command.args.filter((arg) => arg === "--mode")).toHaveLength(1);
+    }),
+  );
+
+  it.effect("fails an empty native catalog with a typed discovery error", () =>
+    Effect.gen(function* () {
+      const failure = yield* discoverPiFamilyModels(makeConfig("pi")).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          makeSpawner(
+            jsonl(
+              {
+                id: "get_state-1",
+                type: "response",
+                command: "get_state",
+                success: true,
+                data: { model: null },
+              },
+              {
+                id: "get_available_models-2",
+                type: "response",
+                command: "get_available_models",
+                success: true,
+                data: { models: [] },
+              },
+            ),
+            [],
+            { value: 0 },
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(failure).toBeInstanceOf(PiFamilyModelDiscoveryError);
+      expect(failure.code).toBe("empty");
     }),
   );
 

@@ -64,7 +64,7 @@ import {
   type RpcResponse,
   type RuntimeCapabilities,
 } from "./protocol.ts";
-import { resolvePiFamilyLaunchArguments } from "./ModelDiscovery.ts";
+import { piFamilyThinkingLevels, resolvePiFamilyLaunchArguments } from "./ModelDiscovery.ts";
 import type { NativeTraceSink, NativeTraceSinkFactory } from "./NativeTrace.ts";
 export interface PiFamilyNativeConfig {
   readonly provider: ProviderDriverKind;
@@ -1748,6 +1748,58 @@ export const makePiFamilyAdapter = (
                 modelId: input.modelSelection.model.slice(slash + 1),
               },
               "set_model",
+            );
+          }
+          const seenOptions = new Set<string>();
+          let thinkingLevel: string | undefined;
+          for (const option of input.modelSelection.options ?? []) {
+            if (seenOptions.has(option.id)) {
+              return yield* new ProviderAdapterValidationError({
+                provider: config.provider,
+                operation: "sendTurn",
+                issue: "Native model selection contains a duplicate option.",
+              });
+            }
+            seenOptions.add(option.id);
+            if (option.id !== "thinkingLevel") {
+              return yield* new ProviderAdapterValidationError({
+                provider: config.provider,
+                operation: "sendTurn",
+                issue: "Native model selection contains an unsupported option.",
+              });
+            }
+            if (typeof option.value !== "string") {
+              return yield* new ProviderAdapterValidationError({
+                provider: config.provider,
+                operation: "sendTurn",
+                issue: 'Native "thinkingLevel" must be a supported level for the selected model.',
+              });
+            }
+            thinkingLevel = option.value;
+          }
+          if (thinkingLevel !== undefined) {
+            if (!session.capabilities.thinking.switch) {
+              return yield* new ProviderAdapterRequestError({
+                provider: config.provider,
+                method: "set_thinking_level",
+                detail: `Native ${config.runtime} does not advertise thinking-level switching.`,
+              });
+            }
+            const stateResponse = yield* request(session, { type: "get_state" }, "get_state");
+            const stateData = asRecord(stateResponse.data);
+            const availableLevels = piFamilyThinkingLevels(config.runtime, stateData?.model);
+            if (!availableLevels.some((level) => level === thinkingLevel)) {
+              return yield* new ProviderAdapterValidationError({
+                provider: config.provider,
+                operation: "sendTurn",
+                issue:
+                  'Native "thinkingLevel" is unavailable for the selected model. Refresh provider models and choose an advertised level.',
+              });
+            }
+            yield* request(
+              session,
+              { type: "set_thinking_level", level: thinkingLevel },
+              "set_thinking_level",
             );
           }
         }

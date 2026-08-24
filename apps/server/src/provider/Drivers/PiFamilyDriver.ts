@@ -151,7 +151,7 @@ function makeSnapshot(
         ...base,
         installed: true,
         version,
-        status: "ready" as const,
+        status: "error" as const,
         auth: { status: "unknown" as const },
         checkedAt,
         message: modelDiscoverySnapshotMessage(provider, discovery.failure),

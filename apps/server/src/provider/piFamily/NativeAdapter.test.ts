@@ -87,6 +87,7 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
   const lines = [
     'const readline = require("node:readline");',
     'const out = value => process.stdout.write(JSON.stringify(value) + "\\n");',
+    'let thinkingLevel = "off";',
   ];
   if (runtime === "omp") {
     lines.push(
@@ -101,7 +102,25 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     '  if (command.type === "get_capabilities") out({ id: command.id, type: "response", command: "get_capabilities", success: true, data: ' +
       JSON.stringify(capabilities(runtime, modelSwitch)) +
       " });",
+    '  if (command.type === "get_state") out({ id: command.id, type: "response", command: "get_state", success: true, data: { model: ' +
+      JSON.stringify(
+        runtime === "omp"
+          ? {
+              provider: "openai-codex",
+              id: "gpt-5.4",
+              reasoning: true,
+              thinking: { mode: "effort", efforts: ["high"] },
+            }
+          : {
+              provider: "openai-codex",
+              id: "gpt-5.4",
+              reasoning: true,
+              thinkingLevelMap: { xhigh: null, max: null },
+            },
+      ) +
+      " } });",
     '  if (command.type === "set_subagent_subscription") out({ id: command.id, type: "response", command: "set_subagent_subscription", success: true });',
+    '  if (command.type === "set_thinking_level") { thinkingLevel = command.level; out({ id: command.id, type: "response", command: "set_thinking_level", success: true }); }',
     ...(runtime === "omp"
       ? [
           '  if (command.type === "checkpoint") out({ id: command.id, type: "response", command: "checkpoint", success: true, data: { sessionId: "test-session", checkpointId: "checkpoint-1" } });',
@@ -114,6 +133,10 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     '  if (command.type === "extension_ui_response" && command.id === "approval-1" && command.confirmed === true) out({ type: "message_update", delta: { text: "confirmed" } });',
     '  if (command.type === "extension_ui_response" && command.id.startsWith("ui-")) out({ type: "message_update", delta: { text: command.id + ":" + String(command.confirmed ?? command.value) } });',
     '  if (command.type === "prompt") {',
+    '    if (command.message === "thinking-option" && thinkingLevel !== "high") {',
+    '      out({ id: command.id, type: "response", command: "prompt", success: false, error: "thinking level was not forwarded" });',
+    "      return;",
+    "    }",
     '    if (command.message === "local-command") {',
     '      out({ id: command.id, type: "response", command: "prompt", success: true, data: { agentInvoked: false } });',
     "      return;",
@@ -1044,12 +1067,16 @@ describe("Pi-family native adapter", () => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.effect("accepts the configured startup model when native switching is unsupported", () =>
+  it.effect("forwards thinking while retaining the configured startup model", () =>
     Effect.gen(function* () {
       const provider = ProviderDriverKind.make("omp");
       const threadId = ThreadId.make("omp-startup-model-thread");
       const instanceId = ProviderInstanceId.make("omp-startup-model-instance");
-      const modelSelection = { instanceId, model: "openai-codex/gpt-5.4" };
+      const modelSelection = {
+        instanceId,
+        model: "openai-codex/gpt-5.4",
+        options: [{ id: "thinkingLevel", value: "high" }],
+      };
       const adapter = yield* makePiFamilyAdapter({
         provider,
         runtime: "omp",
@@ -1076,7 +1103,7 @@ describe("Pi-family native adapter", () => {
 
       const turn = yield* adapter.sendTurn({
         threadId,
-        input: "hello",
+        input: "thinking-option",
         modelSelection,
       });
       assert.equal(turn.threadId, threadId);
@@ -1086,6 +1113,44 @@ describe("Pi-family native adapter", () => {
         if (Option.isSome(event)) events.push(event.value);
       }
       assert.equal(events.at(-1)?.type, "turn.completed");
+      const unsupported = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "unsupported-thinking",
+          modelSelection: {
+            ...modelSelection,
+            options: [{ id: "thinkingLevel", value: "xhigh" }],
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(unsupported._tag, "ProviderAdapterValidationError");
+
+      const duplicate = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "duplicate-thinking",
+          modelSelection: {
+            ...modelSelection,
+            options: [
+              { id: "thinkingLevel", value: "high" },
+              { id: "thinkingLevel", value: "high" },
+            ],
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(duplicate._tag, "ProviderAdapterValidationError");
+
+      const unknown = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "unknown-option",
+          modelSelection: {
+            ...modelSelection,
+            options: [{ id: "providerSecretMode", value: true }],
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(unknown._tag, "ProviderAdapterValidationError");
 
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
