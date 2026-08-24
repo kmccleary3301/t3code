@@ -102,6 +102,7 @@ interface NativeSession {
   readonly startedAt: string;
   readonly session: ProviderSession;
   readonly ready?: Deferred.Deferred<void, ProviderAdapterError>;
+  readonly stopComplete: Deferred.Deferred<void, never>;
   readonly traceSink?: NativeTraceSink;
   readonly stdoutDrained: Deferred.Deferred<void, never>;
   readonly stderrDrained: Deferred.Deferred<void, never>;
@@ -1006,7 +1007,11 @@ export const makePiFamilyAdapter = (
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const session = sessions.get(threadId);
-        if (!session || session.stopped) return;
+        if (!session) return;
+        if (session.stopped) {
+          yield* Deferred.await(session.stopComplete);
+          return;
+        }
         session.stopped = true;
         session.interruptedTurnIds.clear();
         const error = nativeError(config.provider, "session", "Native session stopped");
@@ -1074,8 +1079,9 @@ export const makePiFamilyAdapter = (
             Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore),
           );
         }
-        sessions.delete(threadId);
-      });
+        if (sessions.get(threadId) === session) sessions.delete(threadId);
+        yield* Deferred.succeed(session.stopComplete, undefined).pipe(Effect.ignore);
+      }).pipe(Effect.uninterruptible);
     const failSession = (
       session: NativeSession,
       failure: ProviderAdapterProcessError,
@@ -1400,6 +1406,7 @@ export const makePiFamilyAdapter = (
           config.runtime === "omp" ? yield* Deferred.make<void, ProviderAdapterError>() : undefined;
         const stdoutDrained = yield* Deferred.make<void>();
         const stderrDrained = yield* Deferred.make<void>();
+        const stopComplete = yield* Deferred.make<void>();
         const session: NativeSession = {
           threadId: input.threadId,
           child,
@@ -1409,6 +1416,7 @@ export const makePiFamilyAdapter = (
           pending: new Map(),
           acceptedPromptIds: new Set(),
           uiRequestKinds: new Map(),
+          stopComplete,
           activeTurns: new Set(),
           interruptedTurnIds: new Set(),
           activeTools: new Set(),

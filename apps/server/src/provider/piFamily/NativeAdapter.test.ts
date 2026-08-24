@@ -1076,7 +1076,7 @@ describe("Pi-family native adapter", () => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.live("force-kills an unresponsive child and starts a replacement session", () =>
+  it.live("preserves replacement ownership while force-killing the prior session", () =>
     Effect.gen(function* () {
       const runtime = "pi" as const;
       const provider = ProviderDriverKind.make(runtime);
@@ -1087,7 +1087,11 @@ describe("Pi-family native adapter", () => {
         runtime,
         binaryPath: process.execPath,
         cwd: process.cwd(),
-        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        launchArguments: [
+          "-e",
+          `${makeNativeScript(runtime)}\nprocess.on("SIGTERM", () => {});`,
+          "--",
+        ],
         requestTimeoutMs: 2_000,
         startupTimeoutMs: 2_000,
         maxLineBytes: 1_048_576,
@@ -1106,10 +1110,11 @@ describe("Pi-family native adapter", () => {
       yield* nextEvent(adapter.streamEvents);
       yield* adapter.sendTurn({ threadId, input: "arm-hang" });
       for (let index = 0; index < 4; index += 1) yield* nextEvent(adapter.streamEvents);
-      yield* adapter.stopSession(threadId);
-      assert.equal(yield* adapter.hasSession(threadId), false);
-
+      const stopFiber = yield* Effect.forkScoped(adapter.stopSession(threadId));
+      yield* Effect.sleep("50 millis");
       yield* adapter.startSession(start);
+      yield* Fiber.join(stopFiber);
+      assert.equal(yield* adapter.hasSession(threadId), true);
       const restarted = yield* nextEvent(adapter.streamEvents);
       assert.equal(Option.getOrUndefined(restarted)?.type, "session.started");
       yield* adapter.stopSession(threadId);
