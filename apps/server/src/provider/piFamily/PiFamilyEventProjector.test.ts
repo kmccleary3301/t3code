@@ -366,6 +366,56 @@ describe("Pi/OMP native event projection", () => {
     });
   });
 
+  it("projects nested OMP task-tool progress as a child subagent", () => {
+    const projector = new PiFamilyEventProjector("omp");
+    projector.project({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "parent",
+        agent: "task",
+        status: "started",
+        runId: "parent:run-1",
+        detached: true,
+      },
+    });
+
+    const projected = projector.project({
+      type: "subagent_event",
+      payload: {
+        id: "parent",
+        event: {
+          type: "tool_execution_update",
+          toolName: "task",
+          toolCallId: "nested-spawn",
+          partialResult: {
+            details: {
+              progress: [
+                {
+                  id: "child",
+                  agent: "sonic",
+                  task: "Hold for cancellation",
+                  status: "running",
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    assert.deepEqual(
+      projected.map((event) => event.kind),
+      ["task.progress", "task.started"],
+    );
+    const parent = projector.snapshotTasks().find((task) => task.id === "parent");
+    const child = projector.snapshotTasks().find((task) => task.id === "child");
+    assert.equal(parent?.detached, true);
+    assert.equal(parent?.runHandles?.runId, "parent:run-1");
+    assert.equal(child?.parentTaskId, "parent");
+    assert.equal(child?.parentToolCallId, "nested-spawn");
+    assert.equal(child?.status, "running");
+  });
+
   it("holds parent settlement until every child is terminal", () => {
     const projector = new PiFamilyEventProjector("omp");
     projector.project({

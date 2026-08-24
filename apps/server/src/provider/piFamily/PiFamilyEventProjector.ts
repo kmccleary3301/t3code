@@ -282,7 +282,10 @@ export class PiFamilyEventProjector {
       event.type === "host_task_failed" ||
       event.type === "host_task_cancelled"
     ) {
-      return this.projectTask(event);
+      const projected = this.projectTask(event);
+      return event.type === "subagent_event"
+        ? [...projected, ...this.projectNestedOmpTasks(event)]
+        : projected;
     }
     if (event.type === "queue_update") return [{ kind: "queue.changed", raw: event }];
     if (event.type === "compaction_start" || event.type === "auto_compaction_start") {
@@ -354,6 +357,34 @@ export class PiFamilyEventProjector {
       asString(source?.id)
     );
   }
+  private projectNestedOmpTasks(event: RpcEnvelope): PiFamilyProjectedEvent[] {
+    const payload = asRecord(event.payload);
+    const nestedEvent = asRecord(payload?.event);
+    if (nestedEvent?.type !== "tool_execution_update" || nestedEvent.toolName !== "task") {
+      return [];
+    }
+    const partialResult = asRecord(nestedEvent.partialResult);
+    const details = asRecord(partialResult?.details);
+    const progress = Array.isArray(details?.progress) ? details.progress : [];
+    const parentTaskId = asString(payload?.id);
+    const parentToolCallId = asString(nestedEvent.toolCallId) ?? asString(nestedEvent.tool_call_id);
+    if (parentTaskId === undefined) return [];
+    return progress.flatMap((candidate) => {
+      const task = asRecord(candidate);
+      const taskId = asString(task?.id);
+      if (task === undefined || taskId === undefined || taskId === parentTaskId) return [];
+      return this.projectTask({
+        type: "subagent_progress",
+        payload: {
+          ...task,
+          id: taskId,
+          parentId: parentTaskId,
+          ...(parentToolCallId === undefined ? {} : { parentToolCallId }),
+        },
+      });
+    });
+  }
+
   private projectTask(event: RpcEnvelope): PiFamilyProjectedEvent[] {
     const payload = asRecord(event.payload);
     const data = asRecord(event.data);
@@ -484,6 +515,10 @@ export class PiFamilyEventProjector {
     })();
     const explicitRunHandles = asRecord(source.runHandles) ?? asRecord(source.execution);
     const runHandles = (() => {
+      const runId =
+        asString(source.runId) ??
+        asString(explicitRunHandles?.runId) ??
+        previous?.runHandles?.runId;
       const sessionFile =
         asString(source.sessionFile) ??
         asString(explicitRunHandles?.sessionFile) ??
@@ -511,6 +546,7 @@ export class PiFamilyEventProjector {
         previous?.runHandles?.jobId;
       if (
         explicitRunHandles === undefined &&
+        runId === undefined &&
         sessionFile === undefined &&
         outputPath === undefined &&
         patchPath === undefined &&
@@ -522,6 +558,7 @@ export class PiFamilyEventProjector {
       return {
         ...previous?.runHandles,
         ...explicitRunHandles,
+        ...(runId === undefined ? {} : { runId }),
         ...(sessionFile === undefined ? {} : { sessionFile }),
         ...(outputPath === undefined ? {} : { outputPath }),
         ...(patchPath === undefined ? {} : { patchPath }),

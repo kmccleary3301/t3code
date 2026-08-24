@@ -1886,6 +1886,112 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                   yield* harness.providerService.stopSession({ threadId: featureThreadId });
                   yield* waitForNativeProcessExit(featureThreadId);
 
+                  if (config.runtime === "omp") {
+                    const nestedTaskThreadId = ThreadId.make(
+                      "native-matrix-omp-nested-task-thread",
+                    );
+                    yield* harness.engine.dispatch({
+                      type: "thread.create",
+                      commandId: CommandId.make("native-matrix:omp:nested-task-thread-create"),
+                      threadId: nestedTaskThreadId,
+                      projectId,
+                      title: "OMP native nested task thread",
+                      modelSelection,
+                      runtimeMode: "approval-required",
+                      interactionMode: "default",
+                      branch: null,
+                      worktreePath: harness.workspaceDir,
+                      createdAt,
+                    });
+                    yield* startTurn(12, "NATIVE-MATRIX-SUBAGENT-PARENT", nestedTaskThreadId);
+                    const runningTasks = yield* harness.waitForThread(
+                      nestedTaskThreadId,
+                      (entry) => {
+                        const taskPayloads = entry.activities
+                          .filter(
+                            (activity) =>
+                              activity.kind === "task.started" || activity.kind === "task.progress",
+                          )
+                          .map((activity) => activity.payload as Readonly<Record<string, unknown>>);
+                        return taskPayloads.some(
+                          (payload) => payload.parentAgentId === "MatrixChild",
+                        );
+                      },
+                      30_000,
+                    );
+                    const runningTaskPayloads = runningTasks.activities.map(
+                      (activity) => activity.payload as Readonly<Record<string, unknown>>,
+                    );
+                    const detachedParent = runningTaskPayloads.find(
+                      (payload) => payload.taskId === "MatrixChild",
+                    );
+                    const nestedChild = runningTaskPayloads.find(
+                      (payload) =>
+                        payload.parentAgentId === "MatrixChild" &&
+                        typeof payload.taskId === "string" &&
+                        payload.taskId.endsWith(".MatrixGrandchild"),
+                    );
+                    assert.isDefined(detachedParent, "Missing detached MatrixChild projection.");
+                    assert.isDefined(nestedChild, "Missing nested MatrixGrandchild projection.");
+                    assert.equal(detachedParent?.isBackgrounded, true);
+                    assert.equal(nestedChild?.parentAgentId, "MatrixChild");
+                    assert.isNotEmpty(nestedChild?.toolUseId);
+                    if (typeof nestedChild?.taskId !== "string") {
+                      return yield* Effect.die("OMP nested task projection had no stable task id.");
+                    }
+                    const nestedTaskId = nestedChild.taskId;
+
+                    yield* harness.providerService
+                      .stopSession({
+                        threadId: nestedTaskThreadId,
+                      })
+                      .pipe(Effect.timeout("10 seconds"));
+                    yield* waitForNativeProcessExit(nestedTaskThreadId);
+                    const settledTasks = yield* harness.waitForThread(
+                      nestedTaskThreadId,
+                      (entry) => {
+                        const completed = entry.activities
+                          .filter((activity) => activity.kind === "task.completed")
+                          .map((activity) => activity.payload as Readonly<Record<string, unknown>>);
+                        const parentTerminal = completed.some(
+                          (payload) =>
+                            payload.taskId === "MatrixChild" &&
+                            (payload.status === "completed" || payload.status === "stopped"),
+                        );
+                        const childStopped = completed.some(
+                          (payload) =>
+                            payload.taskId === nestedTaskId && payload.status === "stopped",
+                        );
+                        return parentTerminal && childStopped;
+                      },
+                      30_000,
+                    );
+                    assert.isTrue(
+                      settledTasks.activities.some(
+                        (activity) =>
+                          activity.kind === "task.completed" &&
+                          (activity.payload as Readonly<Record<string, unknown>>).taskId ===
+                            nestedTaskId,
+                      ),
+                    );
+
+                    const restartedNestedThread = yield* startAndWaitForCompleted(
+                      13,
+                      "Reply after the projected nested task cancellation and restart.",
+                      "NATIVE-MATRIX-OK",
+                      "OMP projected nested task restart",
+                      nestedTaskThreadId,
+                    );
+                    assert.isTrue(
+                      restartedNestedThread.activities.some(
+                        (activity) =>
+                          activity.kind === "task.completed" &&
+                          (activity.payload as Readonly<Record<string, unknown>>).taskId ===
+                            nestedTaskId,
+                      ),
+                    );
+                  }
+
                   const parallelThreadId = ThreadId.make(
                     `native-matrix-${config.runtime}-parallel-thread`,
                   );
