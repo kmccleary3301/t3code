@@ -306,6 +306,26 @@ it.live.skipIf(process.env.T3_INSTALLED_CLI === undefined)(
                         threadId,
                         createdAt,
                       });
+                      const stopDeadline = (yield* Clock.currentTimeMillis) + 30_000;
+                      while (true) {
+                        const response = yield* Effect.promise(() =>
+                          fetch(`${baseUrl}/api/orchestration/threads/${threadId}`, {
+                            headers: { authorization },
+                            signal: AbortSignal.timeout(2_000),
+                          }),
+                        );
+                        assert.equal(response.status, 200);
+                        const snapshot = yield* decodeThreadSnapshot(
+                          yield* Effect.promise(() => response.text()),
+                        );
+                        if (snapshot.thread.session?.status === "stopped") break;
+                        if ((yield* Clock.currentTimeMillis) >= stopDeadline) {
+                          return yield* Effect.die(
+                            `Installed ${runtime} session stop timed out: ${snapshot.thread.session?.status}`,
+                          );
+                        }
+                        yield* Effect.sleep(100);
+                      }
                     }
                     return completed;
                   }),
@@ -335,7 +355,14 @@ it.live.skipIf(process.env.T3_INSTALLED_CLI === undefined)(
               );
             }).pipe(Effect.scoped),
           (root) =>
-            Effect.promise(() => NodeFS.promises.rm(root, { recursive: true, force: true })),
+            Effect.promise(() =>
+              NodeFS.promises.rm(root, {
+                recursive: true,
+                force: true,
+                maxRetries: 50,
+                retryDelay: 100,
+              }),
+            ),
         ),
       (modelServer) => Effect.promise(() => modelServer.close()),
     ),
