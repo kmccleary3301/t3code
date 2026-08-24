@@ -1,5 +1,6 @@
 import type { ServerProviderModel } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -171,19 +172,24 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
         ...config.environment,
         ...(config.agentDirectory ? { PI_CODING_AGENT_DIR: config.agentDirectory } : {}),
       };
+      const launchArguments = resolvePiFamilyLaunchArguments(
+        config.launchArguments,
+        config.trustMode,
+      );
+      const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, launchArguments, {
+        env: environment,
+        extendEnv: true,
+      });
       const child = yield* spawner.spawn(
-        ChildProcess.make(
-          config.binaryPath,
-          resolvePiFamilyLaunchArguments(config.launchArguments, config.trustMode),
-          {
-            cwd: config.cwd,
-            env: environment,
-            extendEnv: true,
-            stdin: { stream: "pipe", endOnDone: false },
-            stdout: "pipe",
-            stderr: "pipe",
-          },
-        ),
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          cwd: config.cwd,
+          env: environment,
+          extendEnv: true,
+          shell: spawnCommand.shell,
+          stdin: { stream: "pipe", endOnDone: false },
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
       );
 
       const pending = new Map<

@@ -21,6 +21,7 @@ import {
   type ProviderUserInputAnswers,
   type ThreadId,
 } from "@t3tools/contracts";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -1373,12 +1374,17 @@ export const makePiFamilyAdapter = (
           config.launchArguments,
           config.trustMode,
         );
+        const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, launchArguments, {
+          env: environment,
+          extendEnv: true,
+        });
         const child = yield* spawner
           .spawn(
-            ChildProcess.make(config.binaryPath, launchArguments, {
+            ChildProcess.make(spawnCommand.command, spawnCommand.args, {
               cwd: input.cwd ?? config.cwd,
               env: environment,
               extendEnv: true,
+              shell: spawnCommand.shell,
               stdin: { stream: "pipe", endOnDone: false },
               stdout: "pipe",
               stderr: "pipe",

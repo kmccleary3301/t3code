@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -86,14 +87,20 @@ function makeSnapshot(
         message: "Provider is disabled in settings.",
       } satisfies ServerProvider;
     }
-    const probe = yield* spawnAndCollect(
-      config.binaryPath,
-      ChildProcess.make(config.binaryPath, ["--version"], {
-        cwd: dependencies.cwd,
+    const probe = yield* Effect.gen(function* () {
+      const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, ["--version"], {
         env: environment,
-        extendEnv: false,
-      }),
-    ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+      });
+      return yield* spawnAndCollect(
+        config.binaryPath,
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          cwd: dependencies.cwd,
+          env: environment,
+          extendEnv: false,
+          shell: spawnCommand.shell,
+        }),
+      );
+    }).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
     if (Result.isFailure(probe)) {
       const cause = probe.failure;
       return {
