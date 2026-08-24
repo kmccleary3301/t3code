@@ -1008,29 +1008,17 @@ export const makePiFamilyAdapter = (
         const session = sessions.get(threadId);
         if (!session) return;
         session.stopped = true;
-        sessions.delete(threadId);
         session.interruptedTurnIds.clear();
         const error = nativeError(config.provider, "session", "Native session stopped");
         yield* failPending(session, error);
         yield* Queue.shutdown(session.input);
-        yield* Effect.forkDetach(
-          session.child
-            .kill({ killSignal: "SIGTERM", forceKillAfter: "2 seconds" })
-            .pipe(Effect.ignore),
+        yield* session.child
+          .kill({ killSignal: "SIGTERM", forceKillAfter: "2 seconds" })
+          .pipe(Effect.ignore);
+        const observedExit = yield* Effect.exit(
+          session.child.exitCode.pipe(Effect.timeout("3 seconds")),
         );
         if (session.traceSink !== undefined) {
-          const observedExitDeferred = yield* Deferred.make<Exit.Exit<number, unknown>>();
-          yield* Effect.forkDetach(
-            Effect.exit(session.child.exitCode).pipe(
-              Effect.flatMap((result) => Deferred.succeed(observedExitDeferred, result)),
-            ),
-          );
-          const boundedExit = yield* Effect.exit(
-            Deferred.await(observedExitDeferred).pipe(Effect.timeout("3 seconds")),
-          );
-          const observedExit: Exit.Exit<number, unknown> = Exit.isSuccess(boundedExit)
-            ? boundedExit.value
-            : Exit.failCause(boundedExit.cause);
           const traceExit = Exit.isSuccess(observedExit)
             ? { code: Number(observedExit.value), signal: null }
             : {
@@ -1076,10 +1064,9 @@ export const makePiFamilyAdapter = (
           }
         }
         if (closeScope) {
-          yield* Effect.forkDetach(
-            Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore),
-          );
+          yield* Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore);
         }
+        sessions.delete(threadId);
       });
     const failSession = (
       session: NativeSession,
