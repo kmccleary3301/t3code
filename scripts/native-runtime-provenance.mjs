@@ -17,6 +17,7 @@ const runtimeIdentity = (binary) => {
   const versionOutput = NodeChildProcess.execFileSync(path, ["--version"], {
     encoding: "utf8",
     timeout: 10_000,
+    ...(process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(path) ? { shell: true } : {}),
   }).trim();
   if (!versionOutput) throw new Error(`${path} returned an empty version`);
   return { path, sha256: sha256(path), versionOutput };
