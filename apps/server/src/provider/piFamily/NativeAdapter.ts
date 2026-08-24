@@ -471,7 +471,7 @@ function eventForProjection(
   const base = makeBase(
     config,
     threadId,
-    raw,
+    projected.kind === "runtime.raw" ? undefined : raw,
     discriminator,
     eventOccurrence,
     projected.kind !== "runtime.raw",
@@ -503,17 +503,15 @@ function eventForProjection(
           ...(projected.raw === undefined ? {} : { detail: projected.raw }),
         },
       };
-    case "runtime.raw": {
-      const detail = persistedNativeEnvelope(projected.event);
+    case "runtime.raw":
       return {
         ...base,
         type: "runtime.warning",
         payload: {
-          message: `Native ${config.runtime} event: ${asString(detail.type) ?? "unknown"}`,
-          detail,
+          message: `Native ${config.runtime} emitted an unrecognized event.`,
+          detail: { type: "unknown", redacted: true },
         },
       };
-    }
     case "turn.started":
       return {
         ...base,

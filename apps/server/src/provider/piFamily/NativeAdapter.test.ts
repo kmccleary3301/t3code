@@ -126,7 +126,7 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     "      return;",
     "    }",
     '    if (command.message === "unknown-events") {',
-    '      out({ type: "future_native_event", requestId: "corr-1", token: "secret-token", content: "secret body", prompt: "private prompt", input: "private input", output: "private output", query: "private query", description: "private description", command: "private command", cwd: "/Users/private", home: "/Users/private", path: "/tmp/private", email: "private@example.com", username: "private-user", env: { AUTH_TOKEN: "opaque-canary" }, usage: { inputTokens: 1 }, pid: 1234, extra: { path: "/tmp/nested-private", command: "nested-private-command" }, status: "pending" });',
+    '      out({ type: "future_native_event", id: "opaque-id-canary", requestId: "corr-1", token: "secret-token", content: "secret body", prompt: "private prompt", input: "private input", output: "private output", query: "private query", description: "private description", command: "private command", cwd: "/Users/private", home: "/Users/private", path: "/tmp/private", email: "private@example.com", username: "private-user", env: { AUTH_TOKEN: "opaque-env-canary" }, usage: { inputTokens: 1 }, pid: 1234, extra: { path: "/tmp/nested-private", command: "nested-private-command" }, status: "Bearer opaque-status-canary", value: "opaque-value-canary" });',
     '      out({ type: "future_native_large_" + "t".repeat(20_000), id: "i".repeat(20_000), requestId: "r".repeat(20_000), taskId: "k".repeat(20_000), items: Array.from({ length: 64 }, () => "x".repeat(600)) });',
     ...(runtime === "omp"
       ? ['      out({ type: "agent_end", isTerminal: true });']
@@ -894,42 +894,20 @@ describe("Pi-family native adapter", () => {
         bounded?.type === "runtime.warning" && typeof bounded.payload.detail === "object"
           ? (bounded.payload.detail as Record<string, unknown>)
           : undefined;
-      for (const key of [
-        "token",
-        "content",
-        "prompt",
-        "input",
-        "output",
-        "query",
-        "description",
-        "command",
-        "cwd",
-        "home",
-        "path",
-        "email",
-        "username",
-        "env",
-        "usage",
-        "pid",
+      assert.deepEqual(redactedDetail, { type: "unknown", redacted: true });
+      assert.deepEqual(boundedDetail, { type: "unknown", redacted: true });
+      for (const canary of [
+        "opaque-id-canary",
+        "opaque-env-canary",
+        "opaque-status-canary",
+        "opaque-value-canary",
+        "future_native_event",
       ]) {
-        assert.equal(redactedDetail?.[key], "[redacted]");
+        assert.notInclude(encodeUnknownJson(redacted), canary);
+        assert.notInclude(encodeUnknownJson(bounded), canary);
       }
-      assert.deepEqual(redactedDetail?.extra, {
-        path: "[redacted]",
-        command: "[redacted]",
-      });
-      assert.equal(redactedDetail?.status, "pending");
-      assert.notInclude(encodeUnknownJson(redacted), "opaque-canary");
       assert.equal(redacted?.raw, undefined);
-      assert.equal(boundedDetail?.truncated, true);
-      assert.equal("items" in (boundedDetail ?? {}), false);
       assert.equal(bounded?.raw, undefined);
-      assert.isAtMost(String(bounded?.eventId ?? "").length, 512);
-      for (const key of ["type", "id", "requestId", "taskId"]) {
-        assert.isAtMost(String(boundedDetail?.[key] ?? "").length, 512);
-      }
-      const boundedJson = encodeUnknownJson(boundedDetail);
-      assert.isAtMost(new TextEncoder().encode(boundedJson).byteLength, 8 * 1024);
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
