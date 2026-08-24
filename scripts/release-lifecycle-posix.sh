@@ -297,6 +297,17 @@ if [ "${T3_LIFECYCLE_MUTATION_MODE:-}" = missing ] &&
   rm -f "$output"
   exit 22
 fi
+if [ "${T3_LIFECYCLE_MUTATION_MODE:-}" = partial ] &&
+  [ "$asset" = "${T3_LIFECYCLE_MUTATION_ASSET:-}" ]; then
+  "$T3_LIFECYCLE_REAL_CURL" "$@"
+  node - "$output" <<'NODE'
+const fs = require("node:fs");
+const path = process.argv[2];
+const size = fs.statSync(path).size;
+fs.truncateSync(path, Math.max(1, Math.floor(size / 2)));
+NODE
+  exit 18
+fi
 "$T3_LIFECYCLE_REAL_CURL" "$@"
 if [ "${T3_LIFECYCLE_MUTATION_MODE:-}" = checksum ] && [ "$asset" = SHA256SUMS ]; then
   awk '$2 == "RELEASE-MANIFEST.json" || $2 == "./RELEASE-MANIFEST.json" { $1 = "0000000000000000000000000000000000000000000000000000000000000000" } { print }' "$output" > "$output.mutated"
@@ -391,6 +402,16 @@ then
 fi
 assert_prefix_unchanged \
   "$prefix" "$prefix_active_target" "$prefix_active_version" "$prefix_previous_version" "$prefix_owner_hash"
+if PATH="$root/mutation-bin:$PATH" T3_LIFECYCLE_REAL_CURL="$real_curl" \
+  T3_LIFECYCLE_MUTATION_MODE=partial T3_LIFECYCLE_MUTATION_ASSET="${cli_name##*/}" \
+  sh "$root/releases/$current_tag/install.sh" --profile pi-omp \
+  --release-base-url "https://github.com/$repository/releases/download/$current_tag" \
+  --version "$current_version" --prefix "$prefix" >/dev/null 2>&1
+then
+  fail "partial CLI download unexpectedly succeeded"
+fi
+assert_prefix_unchanged \
+  "$prefix" "$prefix_active_target" "$prefix_active_version" "$prefix_previous_version" "$prefix_owner_hash"
 run_installer "$current_tag" "$prefix"
 assert_version "$prefix" "$current_version"
 [ "$(cat "$prefix/.previous-version")" = "$previous_version" ] || fail "upgrade did not retain previous version"
@@ -482,7 +503,7 @@ fs.writeFileSync(report, JSON.stringify({
   checks: [
     "fresh-install", "upgrade", "version-help", "server-health", "rollback",
     "tampered-checksum-no-mutation", "missing-asset-no-mutation",
-    "missing-release-no-mutation", "desktop-install", "desktop-upgrade",
+    "partial-download-no-mutation", "missing-release-no-mutation", "desktop-install", "desktop-upgrade",
     "desktop-identity", "desktop-rollback", "desktop-uninstall", "uninstall",
     "native-config-preservation",
   ],

@@ -19,6 +19,10 @@ const windowsLifecycle = NodeFS.readFileSync(
   NodePath.join(root, "scripts/release-lifecycle-windows.ps1"),
   "utf8",
 );
+const posixLifecycle = NodeFS.readFileSync(
+  NodePath.join(root, "scripts/release-lifecycle-posix.sh"),
+  "utf8",
+);
 const installer = NodeFS.readFileSync(NodePath.join(root, "scripts/install.sh"), "utf8");
 const workflowDir = NodePath.join(root, ".github/workflows");
 const workflowSources = NodeFS.readdirSync(workflowDir)
@@ -112,6 +116,14 @@ assert(
 assert(
   windowsLifecycle.includes("Remove-Item -Recurse -Force -LiteralPath $nativeRoot"),
   "Windows lifecycle must remove its disposable native-state root.",
+);
+assert(
+  posixLifecycle.includes("T3_LIFECYCLE_MUTATION_MODE=partial"),
+  "POSIX lifecycle must inject a partial-download failure.",
+);
+assert(
+  posixLifecycle.includes('"partial-download-no-mutation"'),
+  "POSIX lifecycle report must record the partial-download no-mutation check.",
 );
 
 // Reject the two most common unsafe installer regressions without requiring
