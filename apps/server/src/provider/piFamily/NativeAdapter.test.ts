@@ -119,6 +119,12 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     "      return;",
     "    }",
     '    out({ id: command.id, type: "response", command: "prompt", success: true });',
+    '    if (command.message === "aborted-message") {',
+    '      out({ type: "agent_start" });',
+    '      out({ type: "message_end", message: { id: "assistant-aborted", role: "assistant", content: [], stopReason: "aborted" } });',
+    '      out({ type: "agent_end", isTerminal: true });',
+    "      return;",
+    "    }",
     '    if (command.message === "unknown-events") {',
     '      out({ type: "future_native_event", requestId: "corr-1", token: "secret-token", content: "secret body", prompt: "private prompt", input: "private input", output: "private output", query: "private query", description: "private description", command: "private command", cwd: "/Users/private", home: "/Users/private", path: "/tmp/private", email: "private@example.com", username: "private-user", env: { AUTH_TOKEN: "opaque-canary" }, usage: { inputTokens: 1 }, pid: 1234, extra: { path: "/tmp/nested-private", command: "nested-private-command" }, status: "pending" });',
     '      out({ type: "future_native_large_" + "t".repeat(20_000), id: "i".repeat(20_000), requestId: "r".repeat(20_000), taskId: "k".repeat(20_000), items: Array.from({ length: 64 }, () => "x".repeat(600)) });',
@@ -804,6 +810,47 @@ describe("Pi-family native adapter", () => {
       const completed = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
       assert.equal(completed?.type, "turn.completed");
       assert.equal(completed?.turnId, turn.turnId);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.effect("maps an OMP aborted assistant message to an interrupted turn", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-aborted-message-thread");
+      const instanceId = ProviderInstanceId.make("omp-aborted-message-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextEvent(adapter.streamEvents);
+
+      const turn = yield* adapter.sendTurn({ threadId, input: "aborted-message" });
+      const events = yield* adapter.streamEvents.pipe(Stream.take(3), Stream.runCollect);
+      assert.deepEqual(
+        Array.from(events, (event) => event.type),
+        ["turn.started", "item.completed", "turn.completed"],
+      );
+      const completed = events[2];
+      assert.equal(completed?.turnId, turn.turnId);
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "interrupted");
+      }
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

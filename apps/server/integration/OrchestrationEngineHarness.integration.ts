@@ -41,6 +41,7 @@ import { ServerSettingsService } from "../src/serverSettings.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
 import { makePiFamilyAdapter } from "../src/provider/piFamily/NativeAdapter.ts";
+import type { NativeTraceSinkFactory } from "../src/provider/piFamily/NativeTrace.ts";
 import type { PiFamilyRuntimeKind } from "../src/provider/piFamily/protocol.ts";
 import {
   NoOpProviderEventLoggers,
@@ -243,6 +244,7 @@ interface MakeOrchestrationIntegrationHarnessOptions {
     readonly agentDirectory?: string;
     readonly environment?: Readonly<Record<string, string | undefined>>;
     readonly trustMode?: string;
+    readonly traceSinkFactory?: NativeTraceSinkFactory;
   };
   readonly rootDir?: string;
 }
@@ -327,6 +329,7 @@ export const makeOrchestrationIntegrationHarness = (
       readonly agentDirectory: string;
       readonly environment: Readonly<Record<string, string | undefined>>;
       readonly trustMode?: string;
+      readonly traceSinkFactory?: NativeTraceSinkFactory;
     }) =>
       Layer.effect(
         ProviderAdapterRegistry,
@@ -341,6 +344,9 @@ export const makeOrchestrationIntegrationHarness = (
             environment: config.environment,
             launchArguments: config.launchArguments,
             ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
+            ...(config.traceSinkFactory === undefined
+              ? {}
+              : { traceSinkFactory: config.traceSinkFactory }),
             requestTimeoutMs: 5_000,
             startupTimeoutMs: 5_000,
             maxLineBytes: 1_048_576,
@@ -373,6 +379,9 @@ export const makeOrchestrationIntegrationHarness = (
           agentDirectory: nativeLive.agentDirectory ?? nativeAgentDirectory,
           environment: nativeLive.environment ?? {},
           ...(nativeLive.trustMode === undefined ? {} : { trustMode: nativeLive.trustMode }),
+          ...(nativeLive.traceSinkFactory === undefined
+            ? {}
+            : { traceSinkFactory: nativeLive.traceSinkFactory }),
         })
       : null;
     const providerRegistry =

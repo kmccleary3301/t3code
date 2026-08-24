@@ -94,6 +94,7 @@ interface NativeSession {
   readonly acceptedPromptIds: Set<string>;
   readonly uiRequestKinds: Map<string, "confirm" | "select" | "input" | "editor">;
   readonly activeTurns: Set<string>;
+  readonly interruptedTurnIds: Set<string>;
   readonly activeTools: Set<string>;
   readonly activeTasks: Set<string>;
   readonly turns: ProviderThreadTurnSnapshot[];
@@ -451,6 +452,7 @@ function eventForProjection(
   config: PiFamilyNativeConfig,
   threadId: ThreadId,
   projected: PiFamilyProjectedEvent,
+  interruptedTurnIds: ReadonlySet<string>,
   eventOccurrence: number,
 ): ProviderRuntimeEvent {
   const raw = projectionIdentityEvent(projected);
@@ -521,15 +523,24 @@ function eventForProjection(
       };
     case "turn.settled": {
       const settled = asRecord(projected.raw);
+      const settledMessage =
+        asRecord(settled?.message) ??
+        asRecord(settled?.assistantMessage) ??
+        asRecord(settled?.data);
       const candidate =
         asString(settled?.status) ??
         asString(settled?.state) ??
         asString(settled?.stopReason) ??
-        asString(settled?.stop_reason);
+        asString(settled?.stop_reason) ??
+        asString(settledMessage?.stopReason) ??
+        asString(settledMessage?.stop_reason);
+      const wasInterrupted =
+        projected.requestId !== undefined && interruptedTurnIds.has(projected.requestId);
       const state =
         settled?.success === false || candidate === "failed" || candidate === "error"
           ? "failed"
-          : candidate === "interrupted" ||
+          : wasInterrupted ||
+              candidate === "interrupted" ||
               candidate === "cancelled" ||
               candidate === "canceled" ||
               candidate === "aborted"
@@ -864,7 +875,17 @@ export const makePiFamilyAdapter = (
           : nativeEventId(config.runtime, identityEvent);
       const identityKey = `${nativeIdentity}:${projection.kind}`;
       const eventOccurrence = nextEventOccurrence(session.eventOccurrenceBuckets, identityKey);
-      return offer(eventForProjection(config, session.threadId, projection, eventOccurrence));
+      const event = eventForProjection(
+        config,
+        session.threadId,
+        projection,
+        session.interruptedTurnIds,
+        eventOccurrence,
+      );
+      if (projection.kind === "turn.settled" && projection.requestId !== undefined) {
+        session.interruptedTurnIds.delete(projection.requestId);
+      }
+      return offer(event);
     };
     const failPending = (
       session: NativeSession,
@@ -989,6 +1010,7 @@ export const makePiFamilyAdapter = (
         if (!session) return;
         session.stopped = true;
         sessions.delete(threadId);
+        session.interruptedTurnIds.clear();
         const error = nativeError(config.provider, "session", "Native session stopped");
         yield* failPending(session, error);
         yield* Queue.shutdown(session.input);
@@ -1388,6 +1410,7 @@ export const makePiFamilyAdapter = (
           acceptedPromptIds: new Set(),
           uiRequestKinds: new Map(),
           activeTurns: new Set(),
+          interruptedTurnIds: new Set(),
           activeTools: new Set(),
           activeTasks: new Set(),
           turns: [],
@@ -1750,16 +1773,36 @@ export const makePiFamilyAdapter = (
     ): Effect.Effect<void, ProviderAdapterError> =>
       requireSession(threadId).pipe(
         Effect.flatMap((session) =>
-          request(
-            session,
-            {
-              type: "abort",
-              ...(turnId ? { turnId } : {}),
-            },
-            "abort",
-          ),
+          Effect.gen(function* () {
+            const requestedTurnIds =
+              turnId === undefined
+                ? [...session.activeTurns, ...session.acceptedPromptIds]
+                : [String(turnId)];
+            yield* Effect.sync(() => {
+              for (const requestedTurnId of requestedTurnIds) {
+                if (requestedTurnId !== "__anonymous__") {
+                  session.interruptedTurnIds.add(requestedTurnId);
+                }
+              }
+            });
+            yield* request(
+              session,
+              {
+                type: "abort",
+                ...(turnId ? { turnId } : {}),
+              },
+              "abort",
+            ).pipe(
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  for (const requestedTurnId of requestedTurnIds) {
+                    session.interruptedTurnIds.delete(requestedTurnId);
+                  }
+                }),
+              ),
+            );
+          }),
         ),
-        Effect.asVoid,
       );
     const respondToRequest = (
       threadId: ThreadId,
