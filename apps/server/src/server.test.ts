@@ -9039,7 +9039,7 @@ for (const config of configuredNativeLiveConfigurations()) {
                         initialSnapshot.snapshotSequence,
                         clientBQueue,
                         clientBRecorder,
-                        (item) => item.kind === "synchronized",
+                        () => false,
                       ).pipe(Effect.forkScoped);
                       clientBItems.push(
                         ...(yield* collectQueueUntil(
