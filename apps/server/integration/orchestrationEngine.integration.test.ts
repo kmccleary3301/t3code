@@ -36,6 +36,7 @@ import {
 } from "./OrchestrationEngineHarness.integration.ts";
 import {
   configuredNativeLiveConfigurations,
+  enableNativeLiveCompaction,
   exerciseNativeLiveQueueModes,
   makeNativeLiveAgentDirectory,
   makeNativeLiveModelServer,
@@ -1887,6 +1888,64 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                   yield* waitForNativeProcessExit(featureThreadId);
 
                   if (config.runtime === "omp") {
+                    yield* enableNativeLiveCompaction(agentDirectory);
+                    const compactionThreadId = ThreadId.make("native-matrix-omp-compaction-thread");
+                    yield* harness.engine.dispatch({
+                      type: "thread.create",
+                      commandId: CommandId.make("native-matrix:omp:compaction-thread-create"),
+                      threadId: compactionThreadId,
+                      projectId,
+                      title: "OMP native compaction thread",
+                      modelSelection,
+                      runtimeMode: "approval-required",
+                      interactionMode: "default",
+                      branch: null,
+                      worktreePath: harness.workspaceDir,
+                      createdAt,
+                    });
+                    yield* startTurn(
+                      15,
+                      `NATIVE-MATRIX-COMPACTION ${"context ".repeat(4_000)}`,
+                      compactionThreadId,
+                    );
+                    const compactedThread = yield* harness.waitForThread(
+                      compactionThreadId,
+                      (entry) =>
+                        entry.activities.some(
+                          (activity) =>
+                            activity.kind === "context-compaction" &&
+                            (activity.payload as Readonly<Record<string, unknown>>).state ===
+                              "compacted",
+                        ),
+                      30_000,
+                    );
+                    assert.isTrue(
+                      compactedThread.activities.some(
+                        (activity) => activity.kind === "context-compaction",
+                      ),
+                    );
+                    yield* harness.providerService.stopSession({
+                      threadId: compactionThreadId,
+                    });
+                    yield* waitForNativeProcessExit(compactionThreadId);
+                    yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
+                    const restartedCompactionThread = yield* startAndWaitForCompleted(
+                      16,
+                      "Reply after the projected compaction restart.",
+                      "NATIVE-MATRIX-OK",
+                      "OMP projected compaction restart",
+                      compactionThreadId,
+                    );
+                    assert.isTrue(
+                      restartedCompactionThread.activities.some(
+                        (activity) => activity.kind === "context-compaction",
+                      ),
+                    );
+                    yield* harness.providerService.stopSession({
+                      threadId: compactionThreadId,
+                    });
+                    yield* waitForNativeProcessExit(compactionThreadId);
+
                     const nestedTaskThreadId = ThreadId.make(
                       "native-matrix-omp-nested-task-thread",
                     );

@@ -270,6 +270,13 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
           : message.includes("RESTORED")
             ? "NATIVE-MATRIX-RESTORED-OK"
             : "NATIVE-MATRIX-OK";
+        const usage = bodyText.includes("NATIVE-MATRIX-COMPACTION")
+          ? {
+              prompt_tokens: Math.ceil(bodyText.length / 4),
+              completion_tokens: 10,
+              total_tokens: Math.ceil(bodyText.length / 4) + 10,
+            }
+          : undefined;
         const frames = toolTurn
           ? [
               {
@@ -326,6 +333,7 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
                 created: 1,
                 model: "test",
                 choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                ...(usage === undefined ? {} : { usage }),
               },
             ];
         if (!response.headersSent) {
@@ -1148,6 +1156,31 @@ export const writeNativeLiveConfig = (
     catch: nativeLiveError,
   });
 
+export const enableNativeLiveCompaction = (
+  agentDirectory: string,
+): Effect.Effect<void, NativeLiveRuntimeError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const configPath = NodePath.join(agentDirectory, "config.yml");
+      const current = await NodeFS.promises.readFile(configPath, "utf8");
+      await NodeFS.promises.writeFile(
+        configPath,
+        [
+          current.trimEnd(),
+          "compaction:",
+          "  enabled: true",
+          "  strategy: context-full",
+          "  thresholdTokens: 1000",
+          "  reserveTokens: 200",
+          "  keepRecentTokens: 200",
+          "  autoContinue: false",
+          "",
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+    },
+    catch: nativeLiveError,
+  });
 /** Writes an explicit extension fixture; native runtimes load it through their RPC extension API. */
 export const writeNativeLiveExtension = (
   agentDirectory: string,

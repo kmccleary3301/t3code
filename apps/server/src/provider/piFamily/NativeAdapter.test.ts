@@ -178,6 +178,13 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
         ]),
     "      return;",
     "    }",
+    '    if (command.message === "compaction-events") {',
+    '      out({ type: "agent_start" });',
+    '      out({ type: "auto_compaction_start", reason: "threshold" });',
+    '      out({ type: "auto_compaction_end", result: { summary: "retained context", firstKeptEntryId: "entry-2", tokensBefore: 2048 } });',
+    '      out({ type: "agent_end", isTerminal: true });',
+    "      return;",
+    "    }",
     '    if (command.message === "anonymous-pi-lifecycle") {',
     '      out({ type: "agent_start" });',
     '      out({ type: "turn_start" });',
@@ -910,6 +917,48 @@ describe("Pi-family native adapter", () => {
       const completed = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
       assert.equal(completed?.type, "turn.completed");
       assert.equal(completed?.turnId, turn.turnId);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.effect("maps completed OMP compaction to persisted thread state", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-compaction-thread");
+      const instanceId = ProviderInstanceId.make("omp-compaction-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextEvent(adapter.streamEvents);
+
+      const compactedEvent = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "thread.state.changed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* adapter.sendTurn({ threadId, input: "compaction-events" });
+      const compacted = Option.getOrUndefined(yield* Fiber.join(compactedEvent));
+      assert.equal(compacted?.type, "thread.state.changed");
+      if (compacted?.type === "thread.state.changed") {
+        assert.equal(compacted.payload.state, "compacted");
+      }
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

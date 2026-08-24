@@ -717,9 +717,17 @@ function eventForProjection(
         payload: { message: `Native UI request: ${request.kind}`, detail: request },
       };
     }
+    case "compaction.completed":
+      return {
+        ...base,
+        type: "thread.state.changed",
+        payload: {
+          state: "compacted",
+          detail: persistedNativeEnvelope(projected.raw),
+        },
+      };
     case "queue.changed":
     case "compaction.started":
-    case "compaction.completed":
     case "retry.scheduled":
       return {
         ...base,
