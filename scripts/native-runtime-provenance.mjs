@@ -8,6 +8,10 @@ const required = (name) => {
   if (!value) throw new Error(`${name} is required`);
   return value;
 };
+const platform = { Windows: "win32", macOS: "darwin", Linux: "linux" }[required("RUNNER_OS")];
+const architecture = { X64: "x64", ARM64: "arm64" }[required("RUNNER_ARCH")];
+if (!platform || !architecture)
+  throw new Error("Unsupported GitHub runner platform or architecture");
 
 const sha256 = (path) =>
   NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(path)).digest("hex");
@@ -17,7 +21,7 @@ const runtimeIdentity = (binary) => {
   const versionOutput = NodeChildProcess.execFileSync(path, ["--version"], {
     encoding: "utf8",
     timeout: 10_000,
-    ...(process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(path) ? { shell: true } : {}),
+    ...(platform === "win32" && /\.(?:cmd|bat)$/iu.test(path) ? { shell: true } : {}),
   }).trim();
   if (!versionOutput) throw new Error(`${path} returned an empty version`);
   return { path, sha256: sha256(path), versionOutput };
@@ -54,8 +58,8 @@ if (ompAddons.length === 0) throw new Error("No built OMP native addons were fou
 const report = {
   schemaVersion: 1,
   sourceHead: required("GITHUB_SHA"),
-  platform: process.platform,
-  architecture: process.arch,
+  platform,
+  architecture,
   release: {
     repository: required("T3_LIFECYCLE_REPOSITORY"),
     currentTag: required("T3_LIFECYCLE_RELEASE_TAG"),

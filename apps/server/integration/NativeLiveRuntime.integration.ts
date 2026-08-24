@@ -294,7 +294,7 @@ export const writeNativeCrashWrapper = (
           'const fs = require("node:fs");',
           'const readline = require("node:readline");',
           "const [pidPath, binaryPath, ...binaryArguments] = process.argv.slice(2);",
-          "const child = spawn(binaryPath, binaryArguments, { stdio: ['pipe', 'pipe', 'pipe'] });",
+          "const child = spawn(binaryPath, binaryArguments, { shell: process.platform === 'win32' && /\\.(?:cmd|bat)$/i.test(binaryPath), stdio: ['pipe', 'pipe', 'pipe'] });",
           "fs.writeFileSync(pidPath, JSON.stringify({ wrapperPid: process.pid, childPid: child.pid }));",
           "child.stdout.pipe(process.stdout);",
           "child.stderr.pipe(process.stderr);",

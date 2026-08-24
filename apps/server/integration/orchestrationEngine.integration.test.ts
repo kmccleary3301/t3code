@@ -1756,7 +1756,7 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                   );
 
                   const secondMessage = "Complete a second native turn for checkpoint capture.";
-                  const second = yield* startAndWaitForCompleted(
+                  yield* startAndWaitForCompleted(
                     4,
                     secondMessage,
                     "NATIVE-MATRIX-OK",

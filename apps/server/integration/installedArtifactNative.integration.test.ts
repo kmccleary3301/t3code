@@ -17,6 +17,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Random from "effect/Random";
 import * as Clock from "effect/Clock";
@@ -55,6 +56,9 @@ const wsProtocolLayer = (url: string, token: string) => {
 const decodeThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationThreadDetailSnapshot),
 );
+const decodeIssuedSession = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ token: Schema.String, sessionId: Schema.String })),
+);
 
 it.live(
   "runs installed release artifact through Pi and OMP root turns",
@@ -68,6 +72,9 @@ it.live(
           ),
           (root) =>
             Effect.gen(function* () {
+              const platform = yield* HostProcessPlatform;
+              const architecture = yield* HostProcessArchitecture;
+              const isWindows = platform === "win32";
               const installedCli = requiredEnvironment("T3_INSTALLED_CLI");
               const reportPath = requiredEnvironment("T3_INSTALLED_NATIVE_REPORT");
               const configurations = configuredNativeLiveConfigurations();
@@ -91,11 +98,9 @@ it.live(
                 yield* writeNativeLiveConfig(configuration, agentDirectory, modelServer);
                 const wrapperPath = NodePath.join(
                   runtimeBin,
-                  process.platform === "win32"
-                    ? `${configuration.runtime}.cmd`
-                    : configuration.runtime,
+                  isWindows ? `${configuration.runtime}.cmd` : configuration.runtime,
                 );
-                if (process.platform === "win32") {
+                if (isWindows) {
                   yield* Effect.promise(() =>
                     NodeFS.promises.writeFile(
                       wrapperPath,
@@ -127,7 +132,7 @@ it.live(
                     ["serve", "--port", String(port), "--base-dir", baseDirectory, "--no-browser"],
                     {
                       env: childEnvironment,
-                      shell: process.platform === "win32",
+                      shell: isWindows,
                       stdio: ["ignore", "pipe", "pipe"],
                     },
                   );
@@ -142,7 +147,7 @@ it.live(
                   return Effect.callback<void>((resume) => {
                     const onExit = () => resume(Effect.void);
                     child.once("exit", onExit);
-                    if (process.platform === "win32" && child.pid !== undefined) {
+                    if (isWindows && child.pid !== undefined) {
                       NodeChildProcess.spawnSync("taskkill.exe", [
                         "/PID",
                         String(child.pid),
@@ -195,15 +200,11 @@ it.live(
                   {
                     encoding: "utf8",
                     env: childEnvironment,
-                    shell: process.platform === "win32",
+                    shell: isWindows,
                   },
                 ),
               );
-              const issued = yield* Schema.decodeUnknownEffect(
-                Schema.fromJsonString(
-                  Schema.Struct({ token: Schema.String, sessionId: Schema.String }),
-                ),
-              )(sessionOutput);
+              const issued = yield* decodeIssuedSession(sessionOutput);
               const authorization = `Bearer ${issued.token}`;
               const wsUrl = baseUrl.replace(/^http:/u, "ws:") + "/ws";
               const results = yield* makeWsRpcClient.pipe(
@@ -320,8 +321,8 @@ it.live(
                     {
                       schemaVersion: 1,
                       installedCli: NodeFS.realpathSync(installedCli),
-                      platform: process.platform,
-                      architecture: process.arch,
+                      platform,
+                      architecture,
                       runtimes: results,
                     },
                     null,
