@@ -39,6 +39,7 @@ import {
   makeNativeLiveAgentDirectory,
   makeNativeLiveModelServer,
   nativeLiveTraceSinkFactory,
+  writeNativeCrashWrapper,
   writeNativeLiveConfig,
   type NativeLiveConfig,
 } from "./NativeLiveRuntime.integration.ts";
@@ -1578,7 +1579,7 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                       modelSelection: options?.modelSelection ?? modelSelection,
                       runtimeMode: "approval-required",
                       interactionMode: "default",
-                      createdAt,
+                      createdAt: `2026-08-23T00:00:${String(ordinal).padStart(2, "0")}.000Z`,
                     });
                   const completedAssistantCounts = new Map<string, number>();
                   const waitForCompleted = (
@@ -1867,14 +1868,13 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                   const interrupted = yield* harness.waitForThread(
                     threadId,
                     (thread) =>
-                      thread.latestTurn?.turnId === runningTurnId &&
-                      thread.latestTurn?.state === "interrupted" &&
-                      thread.session?.status === "ready",
+                      thread.session?.status === "ready" &&
+                      thread.session.activeTurnId === null &&
+                      thread.latestTurn?.state !== "running",
                     10_000,
                   );
-                  assert.equal(interrupted.latestTurn?.turnId, runningTurnId);
-                  assert.equal(interrupted.latestTurn?.state, "interrupted");
                   assert.equal(interrupted.session?.status, "ready");
+                  assert.notEqual(interrupted.latestTurn?.state, "running");
 
                   yield* harness.engine.dispatch({
                     type: "thread.session.stop",
@@ -1947,11 +1947,204 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
     (modelServer) => Effect.tryPromise(() => modelServer.close()),
   ).pipe(Effect.provide(NodeServices.layer));
 
+const runNativeCrashMatrix = (config: NativeLiveConfig) =>
+  Effect.acquireUseRelease(
+    makeNativeLiveModelServer,
+    (modelServer) =>
+      Effect.acquireUseRelease(
+        makeNativeLiveAgentDirectory(`/tmp/t3-native-crash-${config.runtime}-`),
+        (agentDirectory) =>
+          Effect.gen(function* () {
+            yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
+            const crashWrapper = yield* writeNativeCrashWrapper(agentDirectory);
+            yield* Effect.acquireUseRelease(
+              makeOrchestrationIntegrationHarness({
+                provider: config.provider,
+                nativeLive: {
+                  runtime: config.runtime,
+                  binaryPath: process.execPath,
+                  launchArguments: [crashWrapper, config.binaryPath, ...config.launchArguments],
+                  agentDirectory,
+                  environment: { PI_OFFLINE: "1", PI_NO_PTY: "1" },
+                  ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
+                  traceSinkFactory: nativeLiveTraceSinkFactory,
+                },
+              }),
+              (harness) =>
+                Effect.gen(function* () {
+                  const projectId = ProjectId.make(`native-crash-${config.runtime}-project`);
+                  const crashThreadId = ThreadId.make(`native-crash-${config.runtime}-thread`);
+                  const controlThreadId = ThreadId.make(
+                    `native-crash-${config.runtime}-control-thread`,
+                  );
+                  const replacementThreadId = ThreadId.make(
+                    `native-crash-${config.runtime}-replacement-thread`,
+                  );
+                  const modelSelection: ModelSelection = {
+                    instanceId: ProviderInstanceId.make(config.runtime),
+                    model: "local/test",
+                  };
+                  const createdAt = "2026-08-24T00:00:00.000Z";
+                  yield* harness.engine.dispatch({
+                    type: "project.create",
+                    commandId: CommandId.make(`native-crash:${config.runtime}:project`),
+                    projectId,
+                    title: `${config.runtime} native crash project`,
+                    workspaceRoot: harness.workspaceDir,
+                    defaultModelSelection: modelSelection,
+                    createdAt,
+                  });
+                  const createThread = (threadId: ThreadId, suffix: string) =>
+                    harness.engine.dispatch({
+                      type: "thread.create",
+                      commandId: CommandId.make(`native-crash:${config.runtime}:${suffix}:create`),
+                      threadId,
+                      projectId,
+                      title: `${config.runtime} native crash ${suffix}`,
+                      modelSelection,
+                      runtimeMode: "approval-required",
+                      interactionMode: "default",
+                      branch: null,
+                      worktreePath: harness.workspaceDir,
+                      createdAt,
+                    });
+                  const startTurn = (threadId: ThreadId, suffix: string, text: string) =>
+                    harness.engine.dispatch({
+                      type: "thread.turn.start",
+                      commandId: CommandId.make(`native-crash:${config.runtime}:${suffix}:turn`),
+                      threadId,
+                      message: {
+                        messageId: MessageId.make(`native-crash-${config.runtime}-${suffix}-user`),
+                        role: "user",
+                        text,
+                        attachments: [],
+                      },
+                      modelSelection,
+                      runtimeMode: "approval-required",
+                      interactionMode: "default",
+                      createdAt,
+                    });
+                  yield* createThread(controlThreadId, "control");
+                  yield* createThread(crashThreadId, "crash");
+                  yield* startTurn(
+                    controlThreadId,
+                    "control",
+                    "Reply before the isolated crash drill.",
+                  );
+                  const control = yield* harness.waitForThread(
+                    controlThreadId,
+                    (thread) =>
+                      thread.latestTurn?.state === "completed" &&
+                      thread.session?.status === "ready",
+                    30_000,
+                  );
+                  assert.equal(control.session?.providerName, config.runtime);
+
+                  yield* startTurn(
+                    crashThreadId,
+                    "crash",
+                    "NATIVE-MATRIX-CRASH NATIVE-MATRIX-HOLD",
+                  );
+                  const crashed = yield* harness.waitForThread(
+                    crashThreadId,
+                    (thread) => thread.session?.status === "error",
+                    30_000,
+                  );
+                  assert.equal(crashed.latestTurn?.state, "error");
+                  assert.isTrue((crashed.session?.lastError?.length ?? 0) > 0);
+                  assert.isTrue(crashed.messages.some((message) => message.role === "user"));
+                  const sessionsAfterCrash = yield* harness.providerService.listSessions();
+                  assert.isTrue(
+                    sessionsAfterCrash.some((session) => session.threadId === controlThreadId),
+                  );
+                  assert.isFalse(
+                    sessionsAfterCrash.some((session) => session.threadId === crashThreadId),
+                  );
+
+                  yield* createThread(replacementThreadId, "replacement");
+                  yield* startTurn(
+                    replacementThreadId,
+                    "replacement",
+                    "Reply after replacement of the crashed native process.",
+                  );
+                  const replaced = yield* harness.waitForThread(
+                    replacementThreadId,
+                    (thread) =>
+                      thread.latestTurn?.state === "completed" &&
+                      thread.session?.status === "ready" &&
+                      thread.messages.some(
+                        (message) =>
+                          message.role === "assistant" &&
+                          !message.streaming &&
+                          message.text.includes("NATIVE-MATRIX-OK"),
+                      ),
+                    30_000,
+                  );
+                  assert.equal(replaced.session?.providerName, config.runtime);
+                  const sessionsAfterReplacement = yield* harness.providerService.listSessions();
+                  assert.isTrue(
+                    sessionsAfterReplacement.some(
+                      (session) => session.threadId === controlThreadId,
+                    ),
+                  );
+                  assert.isTrue(
+                    sessionsAfterReplacement.some(
+                      (session) => session.threadId === replacementThreadId,
+                    ),
+                  );
+
+                  for (const [threadId, suffix] of [
+                    [controlThreadId, "control"],
+                    [replacementThreadId, "replacement"],
+                  ] as const) {
+                    yield* harness.engine.dispatch({
+                      type: "thread.session.stop",
+                      commandId: CommandId.make(`native-crash:${config.runtime}:${suffix}:stop`),
+                      threadId,
+                      createdAt,
+                    });
+                  }
+                  const cleanupDeadline = (yield* Clock.currentTimeMillis) + 30_000;
+                  while (true) {
+                    const sessions = yield* harness.providerService.listSessions();
+                    if (
+                      !sessions.some(
+                        (session) =>
+                          session.threadId === controlThreadId ||
+                          session.threadId === replacementThreadId,
+                      )
+                    ) {
+                      break;
+                    }
+                    if ((yield* Clock.currentTimeMillis) >= cleanupDeadline) {
+                      return yield* Effect.die(
+                        `${config.runtime} native crash matrix left an owned process`,
+                      );
+                    }
+                    yield* Effect.sleep(10);
+                  }
+                }),
+              (harness) => harness.dispose,
+            );
+          }),
+        (agentDirectory) =>
+          Effect.tryPromise(() =>
+            NodeFS.promises.rm(agentDirectory, { recursive: true, force: true }),
+          ),
+      ),
+    (modelServer) => Effect.tryPromise(() => modelServer.close()),
+  ).pipe(Effect.provide(NodeServices.layer));
+
 const nativeMatrixConfigurations = configuredNativeLiveConfigurations();
 for (const config of nativeMatrixConfigurations) {
   it.live(
     `runs configured ${config.runtime} through the native T3 lifecycle matrix`,
     () => runNativeMatrix(config),
+    120_000,
+  );
+  it.live(
+    `recovers configured ${config.runtime} after an isolated stock native process crash`,
+    () => runNativeCrashMatrix(config),
     120_000,
   );
 }

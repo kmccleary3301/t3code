@@ -682,6 +682,50 @@ describe("ProviderRuntimeIngestion", () => {
     }),
   );
 
+  it("marks an active turn errored when its provider process exits unexpectedly", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-process-exit");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-before-process-exit"),
+      provider: ProviderDriverKind.make("pi"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId,
+      turnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session.activeTurnId === turnId,
+      10_000,
+    );
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-unexpected-process-exit"),
+      provider: ProviderDriverKind.make("pi"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId,
+      payload: {
+        exitKind: "error",
+        recoverable: false,
+        reason: "Native process exited with code 137.",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session.activeTurnId === null &&
+        entry.latestTurn?.state === "error",
+      10_000,
+    );
+    expect(thread.session?.lastError).toBe("Native process exited with code 137.");
+    expect(thread.latestTurn?.turnId).toBe(turnId);
+  });
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

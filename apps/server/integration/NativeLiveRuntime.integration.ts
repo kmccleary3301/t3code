@@ -134,7 +134,7 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
       }
       const requestNumber = requestCount + 1;
       const delayMs = bodyText.includes("NATIVE-MATRIX-HOLD")
-        ? 10_000
+        ? 30_000
         : bodyText.includes("NATIVE-MATRIX-WRITE")
           ? 500
           : 0;
@@ -246,6 +246,54 @@ export const makeNativeLiveAgentDirectory = (
       const directory = await NodeFS.promises.mkdtemp(prefix);
       await NodeFS.promises.chmod(directory, 0o700);
       return directory;
+    },
+    catch: nativeLiveError,
+  });
+
+/**
+ * Launches the configured stock runtime as a child and terminates only that
+ * owned child when the crash marker crosses stdin. This keeps the production
+ * adapter unmodified while exercising its real child-exit path.
+ */
+export const writeNativeCrashWrapper = (
+  agentDirectory: string,
+): Effect.Effect<string, NativeLiveRuntimeError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const wrapperPath = NodePath.join(agentDirectory, "native-crash-wrapper.cjs");
+      await NodeFS.promises.writeFile(
+        wrapperPath,
+        [
+          'const { spawn } = require("node:child_process");',
+          'const readline = require("node:readline");',
+          "const [binaryPath, ...binaryArguments] = process.argv.slice(2);",
+          "const child = spawn(binaryPath, binaryArguments, { stdio: ['pipe', 'pipe', 'pipe'] });",
+          "child.stdout.pipe(process.stdout);",
+          "child.stderr.pipe(process.stderr);",
+          "let crashing = false;",
+          "const input = readline.createInterface({ input: process.stdin });",
+          "input.on('line', (line) => {",
+          "  child.stdin.write(line + '\\n');",
+          "  if (!crashing && line.includes('NATIVE-MATRIX-CRASH')) {",
+          "    crashing = true;",
+          "    setTimeout(() => child.kill('SIGKILL'), 750);",
+          "  }",
+          "});",
+          "input.on('close', () => child.stdin.end());",
+          "for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {",
+          "  process.on(signal, () => child.kill(signal));",
+          "}",
+          "child.once('error', () => process.exit(127));",
+          "child.once('exit', (code, signal) => {",
+          "  process.exit(code ?? (signal ? 137 : 1));",
+          "});",
+          "process.once('exit', () => {",
+          "  if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');",
+          "});",
+        ].join("\n") + "\n",
+        { mode: 0o700 },
+      );
+      return wrapperPath;
     },
     catch: nativeLiveError,
   });
