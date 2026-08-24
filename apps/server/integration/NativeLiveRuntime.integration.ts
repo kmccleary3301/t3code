@@ -275,17 +275,23 @@ export const makeNativeLiveAgentDirectory = (
  */
 export const writeNativeCrashWrapper = (
   agentDirectory: string,
-): Effect.Effect<string, NativeLiveRuntimeError> =>
+): Effect.Effect<
+  { readonly wrapperPath: string; readonly pidPath: string },
+  NativeLiveRuntimeError
+> =>
   Effect.tryPromise({
     try: async () => {
       const wrapperPath = NodePath.join(agentDirectory, "native-crash-wrapper.cjs");
+      const pidPath = NodePath.join(agentDirectory, "native-crash-processes.json");
       await NodeFS.promises.writeFile(
         wrapperPath,
         [
           'const { spawn } = require("node:child_process");',
+          'const fs = require("node:fs");',
           'const readline = require("node:readline");',
-          "const [binaryPath, ...binaryArguments] = process.argv.slice(2);",
+          "const [pidPath, binaryPath, ...binaryArguments] = process.argv.slice(2);",
           "const child = spawn(binaryPath, binaryArguments, { stdio: ['pipe', 'pipe', 'pipe'] });",
+          "fs.writeFileSync(pidPath, JSON.stringify({ wrapperPid: process.pid, childPid: child.pid }));",
           "child.stdout.pipe(process.stdout);",
           "child.stderr.pipe(process.stderr);",
           "let crashing = false;",
@@ -311,7 +317,7 @@ export const writeNativeCrashWrapper = (
         ].join("\n") + "\n",
         { mode: 0o700 },
       );
-      return wrapperPath;
+      return { wrapperPath, pidPath };
     },
     catch: nativeLiveError,
   });

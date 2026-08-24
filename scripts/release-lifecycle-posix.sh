@@ -372,16 +372,82 @@ desktop_identity_smoke() {
   detach_desktop_mount
 }
 
+install_official_t3() {
+  official_version=0.0.33
+  official_base="https://github.com/pingdotgg/t3code/releases/download/v$official_version"
+  mkdir -p "$official_prefix"
+  case "$host_platform:$host_arch" in
+    darwin:arm64)
+      official_artifact="T3-Code-$official_version-arm64.dmg"
+      official_expected_sha=d8c42f3d79047ce43c073922a8abf9546b43b78b7f84c5bc6f95815d873eddd0
+      official_kind=installed-dmg
+      ;;
+    darwin:x64)
+      official_artifact="T3-Code-$official_version-x64.dmg"
+      official_expected_sha=2c394045f2ed76dead0d8859bcea34db4815bbcba9276cb18788bc2b7248bc30
+      official_kind=installed-dmg
+      ;;
+    linux:x64)
+      official_artifact="T3-Code-$official_version-x86_64.AppImage"
+      official_expected_sha=415c8648f43c3d22d572f27f2c50fdc8c310ea7fcde9537b903e1e2f1c8775a1
+      official_kind=extracted-appimage
+      ;;
+    linux:arm64)
+      official_artifact=latest-linux.yml
+      official_expected_sha=d68733625a7c4f35bd84a3ac9446fdd2fed2c8e593d1e32e6d444284c921a66f
+      official_kind=release-metadata-no-linux-arm64-artifact
+      ;;
+    *) fail "no official T3 identity branch for $host_platform/$host_arch" ;;
+  esac
+  official_download="$official_prefix/$official_artifact"
+  curl -fsSL "$official_base/$official_artifact" -o "$official_download"
+  official_actual_sha=$(sha256_file "$official_download")
+  [ "$official_actual_sha" = "$official_expected_sha" ] ||
+    fail "official T3 artifact checksum mismatch for $official_artifact"
+  case "$official_kind" in
+    installed-dmg)
+      desktop_mount="$root/official-t3-mount"
+      mkdir -p "$desktop_mount"
+      run_bounded 30 hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$desktop_mount" "$official_download" >/dev/null
+      official_app=$(find "$desktop_mount" -type d -name '*.app' -print | awk 'NF { print; exit }')
+      [ -n "$official_app" ] || { detach_desktop_mount; fail "official T3 DMG has no application bundle"; }
+      official_executable_name=$(plutil -extract CFBundleExecutable raw -o - "$official_app/Contents/Info.plist")
+      cp -R "$official_app" "$official_prefix/"
+      official_evidence="$official_prefix/${official_app##*/}/Contents/MacOS/$official_executable_name"
+      detach_desktop_mount
+      ;;
+    extracted-appimage)
+      chmod 755 "$official_download"
+      (cd "$official_prefix" && run_bounded 30 "./$official_artifact" --appimage-extract >/dev/null)
+      official_evidence="$official_prefix/squashfs-root/AppRun"
+      ;;
+    release-metadata-no-linux-arm64-artifact)
+      official_evidence="$official_download"
+      node - "$official_download" <<'NODE'
+const fs = require("node:fs");
+const metadata = fs.readFileSync(process.argv[2], "utf8");
+if (/arm64|aarch64/iu.test(metadata)) {
+  throw new Error("Official T3 Linux metadata unexpectedly advertises an arm64 artifact");
+}
+NODE
+      ;;
+  esac
+  [ -f "$official_evidence" ] || fail "official T3 evidence is missing"
+}
+
+
 official_prefix="$root/official-t3"
-official_bin="$official_prefix/bin"
-mkdir -p "$official_bin"
-cat > "$official_bin/t3" <<'SH'
+install_official_t3
+official_evidence_before=$(sha256_file "$official_evidence")
+preexisting_bin="$root/preexisting-command/bin"
+mkdir -p "$preexisting_bin"
+cat > "$preexisting_bin/t3" <<'SH'
 #!/bin/sh
-printf '%s\n' 'official-t3-sentinel'
+printf '%s\n' 'preexisting-t3-command'
 SH
-chmod 755 "$official_bin/t3"
-official_t3_before=$(sha256_file "$official_bin/t3")
-PATH="$official_bin:$PATH"
+chmod 755 "$preexisting_bin/t3"
+preexisting_t3_before=$(sha256_file "$preexisting_bin/t3")
+PATH="$preexisting_bin:$PATH"
 export PATH
 
 prefix="$root/prefix"
@@ -530,12 +596,17 @@ sh "$root/releases/$current_tag/install.sh" --profile pi-omp --prefix "$prefix" 
 
 [ "$(sha256_file "$pi_state")" = "$pi_before" ] || fail "Pi native state changed"
 [ "$(sha256_file "$omp_state")" = "$omp_before" ] || fail "OMP native state changed"
-[ "$(sha256_file "$official_bin/t3")" = "$official_t3_before" ] ||
-  fail "side-by-side official T3 installation changed"
+[ "$(sha256_file "$official_evidence")" = "$official_evidence_before" ] ||
+  fail "side-by-side official T3 artifact changed"
+[ "$(sha256_file "$preexisting_bin/t3")" = "$preexisting_t3_before" ] ||
+  fail "pre-existing t3 command changed"
 
-node - "$report_path" "$root/release-hashes.tsv" "$root/desktop-hashes.tsv" "$current_tag" "$previous_tag" <<'NODE'
+node - "$report_path" "$root/release-hashes.tsv" "$root/desktop-hashes.tsv" "$root/releases" \
+  "$current_tag" "$previous_tag" "$official_version" "$official_kind" "$official_artifact" \
+  "$official_actual_sha" <<'NODE'
 const fs = require("node:fs");
-const [report, hashes, desktopHashes, currentTag, previousTag] = process.argv.slice(2);
+const path = require("node:path");
+const [report, hashes, desktopHashes, releaseRoot, currentTag, previousTag, officialVersion, officialKind, officialArtifact, officialSha256] = process.argv.slice(2);
 const releaseHashes = fs.readFileSync(hashes, "utf8").trim().split("\n").map((line) => {
   const [tag, installerSha256, manifestSha256] = line.split("\t");
   return { tag, installerSha256, manifestSha256 };
@@ -543,6 +614,14 @@ const releaseHashes = fs.readFileSync(hashes, "utf8").trim().split("\n").map((li
 const desktopArtifacts = fs.readFileSync(desktopHashes, "utf8").trim().split("\n").map((line) => {
   const [tag, name, sha256] = line.split("\t");
   return { tag, name, sha256 };
+});
+const cliArtifacts = [previousTag, currentTag].map((tag) => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(releaseRoot, tag, "RELEASE-MANIFEST.json"), "utf8"));
+  const cli = manifest.artifacts.find((artifact) => artifact.kind === "cli");
+  if (!cli || typeof cli.path !== "string" || !/^[0-9a-f]{64}$/u.test(cli.sha256)) {
+    throw new Error(`Release ${tag} has no hashed CLI artifact`);
+  }
+  return { tag, name: path.basename(cli.path), sha256: cli.sha256 };
 });
 fs.writeFileSync(report, JSON.stringify({
   schemaVersion: 1,
@@ -556,12 +635,20 @@ fs.writeFileSync(report, JSON.stringify({
     "tampered-checksum-no-mutation", "missing-asset-no-mutation",
     "partial-download-no-mutation", "missing-release-no-mutation",
     "unsupported-platform-no-mutation", "missing-node-no-mutation",
-    "side-by-side-official-t3", "desktop-install", "desktop-upgrade",
+    "side-by-side-official-t3-artifact", "preexisting-t3-command-preservation",
+    "desktop-install", "desktop-upgrade",
     "desktop-identity", "desktop-rollback", "desktop-uninstall", "uninstall",
     "native-config-preservation",
   ],
   releaseHashes,
   desktopArtifacts,
+  cliArtifacts,
+  officialT3: {
+    version: officialVersion,
+    kind: officialKind,
+    artifact: officialArtifact,
+    sha256: officialSha256,
+  },
 }, null, 2) + "\n");
 NODE
 printf '%s\n' "POSIX release lifecycle passed for $current_tag on $(uname -s)/$(uname -m)"

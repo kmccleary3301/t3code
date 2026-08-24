@@ -11,12 +11,12 @@ on:
       release_tag:
         description: Current stable fork release tag
         required: true
-        default: fork-v0.0.43
+        default: fork-v0.0.47
         type: string
       previous_tag:
         description: Previous stable fork release tag
         required: true
-        default: fork-v0.0.40
+        default: fork-v0.0.46
         type: string
 
 permissions:
@@ -67,18 +67,34 @@ jobs:
           bun install --cwd .native/omp --frozen-lockfile
           bun --cwd=.native/omp/packages/natives run build
           bun --cwd=.native/omp/packages/coding-agent run build
-
       - name: Run stock native lifecycle and convergence
         env:
-          T3_NATIVE_LIFECYCLE_REPORT: ${{ runner.temp }}/stock-native-lifecycle-${{ matrix.id }}.json
+          T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-${{ matrix.id }}.json
+          T3_NATIVE_MATRIX_REPORT: ${{ runner.temp }}/stock-native-matrix-${{ matrix.id }}.json
+          T3_NATIVE_PROVENANCE_REPORT: ${{ runner.temp }}/stock-native-provenance-${{ matrix.id }}.json
+          T3_LIFECYCLE_REPOSITORY: ${{ inputs.repository }}
+          T3_LIFECYCLE_RELEASE_TAG: ${{ inputs.release_tag }}
+          T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
         run: |
-          T3_NATIVE_PI_BINARY="$(command -v pi)" \
-          T3_NATIVE_OMP_BINARY="$PWD/.native/omp/packages/coding-agent/dist/omp" \
+          export T3_NATIVE_PI_BINARY="$(command -v pi)"
+          export T3_NATIVE_OMP_BINARY="$PWD/.native/omp/packages/coding-agent/dist/omp"
+          export T3_NATIVE_PI_PACKAGE_ROOT="$(npm root --global)/@earendil-works/pi-coding-agent"
+          export T3_NATIVE_PI_VERSION=0.84.2
+          export T3_NATIVE_PI_INTEGRITY="$(npm view @earendil-works/pi-coding-agent@0.84.2 dist.integrity)"
+          export T3_NATIVE_OMP_SOURCE_REPOSITORY=kmccleary3301/oh-my-pi
+          export T3_NATIVE_OMP_SOURCE_HEAD="$(git -C .native/omp rev-parse HEAD)"
+          export T3_NATIVE_OMP_ADDON_DIR="$PWD/.native/omp/packages/natives/native"
+          node scripts/native-runtime-provenance.mjs
           vp test run \
             apps/server/src/server.test.ts \
             -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket" \
             --reporter=json \
-            --outputFile="$T3_NATIVE_LIFECYCLE_REPORT"
+            --outputFile="$T3_NATIVE_ROOT_REPORT"
+          vp test run \
+            apps/server/integration/orchestrationEngine.integration.test.ts \
+            -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers after an isolated stock native process crash" \
+            --reporter=json \
+            --outputFile="$T3_NATIVE_MATRIX_REPORT"
 
       - name: Run release lifecycle
         env:
@@ -97,7 +113,9 @@ jobs:
           name: release-lifecycle-${{ matrix.id }}
           path: |
             ${{ runner.temp }}/release-lifecycle-${{ matrix.id }}.json
-            ${{ runner.temp }}/stock-native-lifecycle-${{ matrix.id }}.json
+            ${{ runner.temp }}/stock-native-root-${{ matrix.id }}.json
+            ${{ runner.temp }}/stock-native-matrix-${{ matrix.id }}.json
+            ${{ runner.temp }}/stock-native-provenance-${{ matrix.id }}.json
           if-no-files-found: ignore
           retention-days: 30
 
@@ -129,11 +147,15 @@ jobs:
           bun install --cwd .native/omp --frozen-lockfile
           bun --cwd=.native/omp/packages/natives run build
           bun --cwd=.native/omp/packages/coding-agent run build
-
       - name: Run stock native lifecycle and convergence
         shell: pwsh
         env:
-          T3_NATIVE_LIFECYCLE_REPORT: ${{ runner.temp }}/stock-native-lifecycle-windows.json
+          T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-windows.json
+          T3_NATIVE_MATRIX_REPORT: ${{ runner.temp }}/stock-native-matrix-windows.json
+          T3_NATIVE_PROVENANCE_REPORT: ${{ runner.temp }}/stock-native-provenance-windows.json
+          T3_LIFECYCLE_REPOSITORY: ${{ inputs.repository }}
+          T3_LIFECYCLE_RELEASE_TAG: ${{ inputs.release_tag }}
+          T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
         run: |
           $env:T3_NATIVE_PI_BINARY = (Get-Command pi.cmd -ErrorAction Stop).Source
           $ompBinary = Join-Path $PWD ".native/omp/packages/coding-agent/dist/omp.exe"
@@ -141,11 +163,23 @@ jobs:
             $ompBinary = Join-Path $PWD ".native/omp/packages/coding-agent/dist/omp"
           }
           $env:T3_NATIVE_OMP_BINARY = (Resolve-Path $ompBinary).Path
+          $env:T3_NATIVE_PI_PACKAGE_ROOT = Join-Path (npm root --global) "@earendil-works/pi-coding-agent"
+          $env:T3_NATIVE_PI_VERSION = "0.84.2"
+          $env:T3_NATIVE_PI_INTEGRITY = (npm view @earendil-works/pi-coding-agent@0.84.2 dist.integrity).Trim()
+          $env:T3_NATIVE_OMP_SOURCE_REPOSITORY = "kmccleary3301/oh-my-pi"
+          $env:T3_NATIVE_OMP_SOURCE_HEAD = (git -C .native/omp rev-parse HEAD).Trim()
+          $env:T3_NATIVE_OMP_ADDON_DIR = (Resolve-Path ".native/omp/packages/natives/native").Path
+          node scripts/native-runtime-provenance.mjs
           vp test run `
             apps/server/src/server.test.ts `
             -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket" `
             --reporter=json `
-            "--outputFile=$env:T3_NATIVE_LIFECYCLE_REPORT"
+            "--outputFile=$env:T3_NATIVE_ROOT_REPORT"
+          vp test run `
+            apps/server/integration/orchestrationEngine.integration.test.ts `
+            -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers after an isolated stock native process crash" `
+            --reporter=json `
+            "--outputFile=$env:T3_NATIVE_MATRIX_REPORT"
 
       - name: Run release lifecycle
         shell: pwsh
@@ -165,6 +199,8 @@ jobs:
           name: release-lifecycle-windows
           path: |
             ${{ runner.temp }}/release-lifecycle-windows.json
-            ${{ runner.temp }}/stock-native-lifecycle-windows.json
+            ${{ runner.temp }}/stock-native-root-windows.json
+            ${{ runner.temp }}/stock-native-matrix-windows.json
+            ${{ runner.temp }}/stock-native-provenance-windows.json
           if-no-files-found: ignore
           retention-days: 30

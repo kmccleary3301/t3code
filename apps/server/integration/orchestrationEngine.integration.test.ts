@@ -1992,7 +1992,12 @@ const runNativeCrashMatrix = (config: NativeLiveConfig) =>
                 nativeLive: {
                   runtime: config.runtime,
                   binaryPath: process.execPath,
-                  launchArguments: [crashWrapper, config.binaryPath, ...config.launchArguments],
+                  launchArguments: [
+                    crashWrapper.wrapperPath,
+                    crashWrapper.pidPath,
+                    config.binaryPath,
+                    ...config.launchArguments,
+                  ],
                   agentDirectory,
                   environment: { PI_OFFLINE: "1", PI_NO_PTY: "1" },
                   ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
@@ -2082,6 +2087,50 @@ const runNativeCrashMatrix = (config: NativeLiveConfig) =>
                   assert.equal(crashed.latestTurn?.state, "error");
                   assert.isTrue((crashed.session?.lastError?.length ?? 0) > 0);
                   assert.isTrue(crashed.messages.some((message) => message.role === "user"));
+                  const processRecord = yield* Effect.sync(
+                    () =>
+                      // @effect-diagnostics-next-line preferSchemaOverJson:off - Private PID fixture written by the crash wrapper.
+                      JSON.parse(NodeFS.readFileSync(crashWrapper.pidPath, "utf8")) as {
+                        readonly wrapperPid?: unknown;
+                        readonly childPid?: unknown;
+                      },
+                  );
+                  for (const [label, candidate] of [
+                    ["wrapper", processRecord.wrapperPid],
+                    ["native child", processRecord.childPid],
+                  ] as const) {
+                    assert.isTrue(
+                      Number.isInteger(candidate) && Number(candidate) > 0,
+                      `${config.runtime} crash wrapper recorded an invalid ${label} PID`,
+                    );
+                    const pid = Number(candidate);
+                    const deadline = (yield* Clock.currentTimeMillis) + 10_000;
+                    while (true) {
+                      const running = yield* Effect.sync(() => {
+                        try {
+                          process.kill(pid, 0);
+                          return true;
+                        } catch (error) {
+                          if (
+                            typeof error === "object" &&
+                            error !== null &&
+                            "code" in error &&
+                            error.code === "ESRCH"
+                          ) {
+                            return false;
+                          }
+                          throw error;
+                        }
+                      });
+                      if (!running) break;
+                      assert.isBelow(
+                        yield* Clock.currentTimeMillis,
+                        deadline,
+                        `${config.runtime} crash left ${label} process ${pid} running`,
+                      );
+                      yield* Effect.sleep(10);
+                    }
+                  }
                   const sessionsAfterCrash = yield* harness.providerService.listSessions();
                   assert.isTrue(
                     sessionsAfterCrash.some((session) => session.threadId === controlThreadId),
