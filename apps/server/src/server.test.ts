@@ -114,6 +114,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
+import { projectActivityEvent } from "./orchestration/ActivityPayloadProjection.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
@@ -9133,8 +9134,7 @@ for (const config of configuredNativeLiveConfigurations()) {
                       const eventsFromItems = (
                         items: ReadonlyArray<OrchestrationThreadStreamItem>,
                       ) => items.flatMap((item) => (item.kind === "event" ? [item.event] : []));
-                      const eventKey = (event: OrchestrationEvent) =>
-                        `${event.sequence}:${String(event.eventId)}:${event.type}`;
+                      const expectedStreamEvents = expectedEvents.map(projectActivityEvent);
                       const assertOrdered = (
                         items: ReadonlyArray<OrchestrationThreadStreamItem>,
                         description: string,
@@ -9167,13 +9167,13 @@ for (const config of configuredNativeLiveConfigurations()) {
                       assertOrdered(clientAItems, `${config.runtime} client A`);
                       assertOrdered(reconnectItems, `${config.runtime} reconnect`);
                       assert.deepEqual(
-                        reconnectEvents.map(eventKey),
-                        clientAEvents.map(eventKey),
+                        reconnectEvents,
+                        clientAEvents,
                         `${config.runtime} reconnect must receive the same bounded event tail`,
                       );
                       assert.deepEqual(
-                        reconnectEvents.map(eventKey),
-                        expectedEvents.map(eventKey),
+                        reconnectEvents,
+                        expectedStreamEvents,
                         `${config.runtime} WebSocket tail must match persisted thread events`,
                       );
                       assert.isTrue(
