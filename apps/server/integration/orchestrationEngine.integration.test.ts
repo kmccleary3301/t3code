@@ -4,6 +4,7 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodePath from "node:path";
 
 import {
+  type ChatAttachment,
   ApprovalRequestId,
   CommandId,
   defaultInstanceIdForDriver,
@@ -1526,10 +1527,10 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                   const projectId = ProjectId.make(`native-matrix-${config.runtime}-project`);
                   const threadId = ThreadId.make(`native-matrix-${config.runtime}-thread`);
                   const instanceId = ProviderInstanceId.make(config.runtime);
-                  const modelSelection = {
+                  const modelSelection: ModelSelection = {
                     instanceId,
                     model: "local/test",
-                  } as const;
+                  };
                   const createdAt = "2026-08-23T00:00:00.000Z";
                   yield* harness.engine.dispatch({
                     type: "project.create",
@@ -1553,7 +1554,15 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     worktreePath: harness.workspaceDir,
                     createdAt,
                   });
-                  const startTurn = (ordinal: number, text: string, targetThreadId = threadId) =>
+                  const startTurn = (
+                    ordinal: number,
+                    text: string,
+                    targetThreadId = threadId,
+                    options?: {
+                      readonly attachments?: ReadonlyArray<ChatAttachment>;
+                      readonly modelSelection?: ModelSelection;
+                    },
+                  ) =>
                     harness.engine.dispatch({
                       type: "thread.turn.start",
                       commandId: CommandId.make(`native-matrix:${config.runtime}:turn:${ordinal}`),
@@ -1564,9 +1573,9 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                         ),
                         role: "user",
                         text,
-                        attachments: [],
+                        attachments: options?.attachments ?? [],
                       },
-                      modelSelection,
+                      modelSelection: options?.modelSelection ?? modelSelection,
                       runtimeMode: "approval-required",
                       interactionMode: "default",
                       createdAt,
@@ -1623,12 +1632,12 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                         Effect.tap(() => Effect.logInfo(description)),
                       );
                   };
-                  const waitForNativeProcessExit = () =>
+                  const waitForNativeProcessExit = (targetThreadId = threadId) =>
                     Effect.gen(function* () {
                       const deadline = (yield* Clock.currentTimeMillis) + 30_000;
                       while (true) {
                         const sessions = yield* harness.providerService.listSessions();
-                        if (!sessions.some((session) => session.threadId === threadId)) {
+                        if (!sessions.some((session) => session.threadId === targetThreadId)) {
                           return;
                         }
                         if ((yield* Clock.currentTimeMillis) >= deadline) {
@@ -1657,8 +1666,81 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     ),
                   );
 
+                  const parallelThreadId = ThreadId.make(
+                    `native-matrix-${config.runtime}-parallel-thread`,
+                  );
+                  yield* harness.engine.dispatch({
+                    type: "thread.create",
+                    commandId: CommandId.make(
+                      `native-matrix:${config.runtime}:parallel-thread-create`,
+                    ),
+                    threadId: parallelThreadId,
+                    projectId,
+                    title: `${config.runtime} native parallel thread`,
+                    modelSelection,
+                    runtimeMode: "approval-required",
+                    interactionMode: "default",
+                    branch: null,
+                    worktreePath: harness.workspaceDir,
+                    createdAt,
+                  });
+                  const parallelMessage = "Reply from the isolated parallel native session.";
+                  yield* startTurn(2, parallelMessage, parallelThreadId);
+                  const parallel = yield* waitForCompleted(
+                    parallelMessage,
+                    "NATIVE-MATRIX-OK",
+                    `${config.runtime} parallel native session`,
+                    parallelThreadId,
+                  );
+                  assert.equal(parallel.session?.providerName, config.runtime);
+                  const parallelSessions = yield* harness.providerService.listSessions();
+                  assert.isTrue(parallelSessions.some((session) => session.threadId === threadId));
+                  assert.isTrue(
+                    parallelSessions.some((session) => session.threadId === parallelThreadId),
+                  );
+
+                  const imageBytes = Buffer.from(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                    "base64",
+                  );
+                  const imageAttachment = {
+                    type: "image",
+                    id: `native-matrix-${config.runtime}-thread-00000000-0000-4000-8000-000000000001`,
+                    name: "native-matrix.png",
+                    mimeType: "image/png",
+                    sizeBytes: imageBytes.byteLength,
+                  } as const satisfies ChatAttachment;
+                  yield* Effect.tryPromise(() =>
+                    NodeFS.promises.writeFile(
+                      NodePath.join(harness.attachmentsDir, `${imageAttachment.id}.png`),
+                      imageBytes,
+                    ),
+                  );
+                  const imageRequestsBefore = modelServer.imageRequestCount();
+                  const imageMessage =
+                    "Inspect the attached image and reply with the matrix marker.";
+                  yield* startTurn(3, imageMessage, threadId, {
+                    attachments: [imageAttachment],
+                    modelSelection: {
+                      instanceId,
+                      model: "local/alternate",
+                      options: [{ id: "thinkingLevel", value: "high" }],
+                    },
+                  });
+                  const image = yield* waitForCompleted(
+                    imageMessage,
+                    "NATIVE-MATRIX-OK",
+                    `${config.runtime} image, model switch, and thinking turn`,
+                  );
+                  assert.equal(modelServer.imageRequestCount(), imageRequestsBefore + 1);
+                  assert.isTrue(
+                    image.messages.some(
+                      (message) => message.role === "user" && message.attachments?.length === 1,
+                    ),
+                  );
+
                   const secondMessage = "Complete a second native turn for checkpoint capture.";
-                  yield* startTurn(2, secondMessage);
+                  yield* startTurn(4, secondMessage);
                   const second = yield* waitForCompleted(
                     secondMessage,
                     "NATIVE-MATRIX-OK",
@@ -1688,7 +1770,7 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     nativeCheckpoint === undefined
                       ? `${config.runtime} continuation turn`
                       : `${config.runtime} restored turn`;
-                  yield* startTurn(3, restoredMessage);
+                  yield* startTurn(5, restoredMessage);
                   const restored = yield* waitForCompleted(
                     restoredMessage,
                     nativeCheckpoint === undefined
@@ -1720,7 +1802,7 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     Effect.forkChild,
                   );
                   const modelRequestsBeforeHold = modelServer.requestCount();
-                  const interruptStartFiber = yield* startTurn(4, holdMessage).pipe(
+                  const interruptStartFiber = yield* startTurn(6, holdMessage).pipe(
                     Effect.forkChild,
                   );
                   const started = yield* Fiber.join(turnStartedFiber).pipe(
@@ -1796,6 +1878,19 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
 
                   yield* harness.engine.dispatch({
                     type: "thread.session.stop",
+                    commandId: CommandId.make(`native-matrix:${config.runtime}:parallel-stop`),
+                    threadId: parallelThreadId,
+                    createdAt,
+                  });
+                  yield* waitForNativeProcessExit(parallelThreadId);
+                  const isolatedSessions = yield* harness.providerService.listSessions();
+                  assert.isFalse(
+                    isolatedSessions.some((session) => session.threadId === parallelThreadId),
+                  );
+                  assert.isTrue(isolatedSessions.some((session) => session.threadId === threadId));
+
+                  yield* harness.engine.dispatch({
+                    type: "thread.session.stop",
                     commandId: CommandId.make(`native-matrix:${config.runtime}:stop`),
                     threadId,
                     createdAt,
@@ -1832,7 +1927,7 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                     createdAt,
                   });
                   const restartedMessage = "Reply after the native session restart.";
-                  yield* startTurn(5, restartedMessage, restartedThreadId);
+                  yield* startTurn(7, restartedMessage, restartedThreadId);
                   const restarted = yield* waitForCompleted(
                     restartedMessage,
                     "NATIVE-MATRIX-OK",

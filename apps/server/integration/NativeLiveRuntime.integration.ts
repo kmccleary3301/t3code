@@ -23,6 +23,7 @@ export interface NativeLiveConfig {
 export interface NativeLiveModelServer {
   readonly baseUrl: string;
   readonly requestCount: () => number;
+  readonly imageRequestCount: () => number;
   readonly close: () => Promise<void>;
 }
 
@@ -94,6 +95,7 @@ export const configuredNativeLiveConfigurations = (): ReadonlyArray<NativeLiveCo
 export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer>(() => {
   const { promise, resolve, reject } = Promise.withResolvers<NativeLiveModelServer>();
   let requestCount = 0;
+  let imageRequestCount = 0;
   const pendingTimers = new Set<NodeJS.Timeout>();
   const server = NodeHttp.createServer((request, response) => {
     if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
@@ -122,6 +124,13 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
         response.writeHead(400);
         response.end();
         return;
+      }
+      if (
+        bodyText.includes('"image_url"') ||
+        bodyText.includes('"type":"image"') ||
+        bodyText.includes('"type": "image"')
+      ) {
+        imageRequestCount += 1;
       }
       const requestNumber = requestCount + 1;
       const delayMs = bodyText.includes("NATIVE-MATRIX-HOLD")
@@ -208,6 +217,7 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
     resolve({
       baseUrl: `http://127.0.0.1:${address.port}/v1`,
       requestCount: () => requestCount,
+      imageRequestCount: () => imageRequestCount,
       close: () => {
         const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers<void>();
         for (const timer of pendingTimers) clearTimeout(timer);
@@ -257,16 +267,14 @@ export const writeNativeLiveConfig = (
                 baseUrl: modelServer.baseUrl,
                 api: "openai-completions",
                 apiKey: "native-matrix",
-                models: [
-                  {
-                    id: "test",
-                    name: "Native Matrix Test",
-                    reasoning: false,
-                    input: ["text"],
-                    contextWindow: 128_000,
-                    maxTokens: 1024,
-                  },
-                ],
+                models: ["test", "alternate"].map((id) => ({
+                  id,
+                  name: `Native Matrix ${id}`,
+                  reasoning: true,
+                  input: ["text", "image"],
+                  contextWindow: 128_000,
+                  maxTokens: 1024,
+                })),
               },
             },
           }),
@@ -295,8 +303,16 @@ export const writeNativeLiveConfig = (
           "    models:",
           "      - id: test",
           "        name: Native Matrix Test",
-          "        reasoning: false",
-          "        input: [text]",
+          "        reasoning: true",
+          "        thinking: { mode: effort, efforts: [low, medium, high] }",
+          "        input: [text, image]",
+          "        contextWindow: 128000",
+          "        maxTokens: 1024",
+          "      - id: alternate",
+          "        name: Native Matrix Alternate",
+          "        reasoning: true",
+          "        thinking: { mode: effort, efforts: [low, medium, high] }",
+          "        input: [text, image]",
           "        contextWindow: 128000",
           "        maxTokens: 1024",
         ].join("\n") + "\n",
