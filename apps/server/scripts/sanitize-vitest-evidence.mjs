@@ -1,4 +1,4 @@
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 
 const [inputPath, outputPath, kind, headSha] = process.argv.slice(2);
 
@@ -21,7 +21,7 @@ const countKeys = [
 ];
 
 try {
-  const raw = JSON.parse(await readFile(inputPath, "utf8"));
+  const raw = JSON.parse(await NodeFSP.readFile(inputPath, "utf8"));
   const counts = Object.fromEntries(
     countKeys.map((key) => {
       const value = raw[key];
@@ -55,7 +55,7 @@ try {
     conclusion,
     counts,
   };
-  await writeFile(outputPath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+  await NodeFSP.writeFile(outputPath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
 } finally {
-  await unlink(inputPath).catch(() => undefined);
+  await NodeFSP.unlink(inputPath).catch(() => undefined);
 }
