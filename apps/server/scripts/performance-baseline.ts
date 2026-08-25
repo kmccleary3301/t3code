@@ -177,5 +177,10 @@ const report = {
   note: "Ceilings are deliberately wider than the exact-head baseline so runner jitter does not fail CI while order-of-magnitude regressions remain blocking.",
 };
 
-process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+const serialized = `${JSON.stringify(report, null, 2)}\n`;
+const reportPath = process.env.T3_PERFORMANCE_REPORT_PATH?.trim();
+if (reportPath) {
+  NodeFS.writeFileSync(reportPath, serialized, { mode: 0o600 });
+}
+process.stdout.write(serialized);
 if (violations.length > 0) process.exitCode = 1;

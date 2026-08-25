@@ -30,6 +30,7 @@ describe("ProviderSettingsForm helpers", () => {
     expect(omp).toMatchObject({ label: "Oh My Pi" });
     expect(deriveProviderSettingsFields(pi!).map((field) => field.key)).toEqual([
       "binaryPath",
+      "workingDirectory",
       "agentDirectory",
       "environment",
       "launchArguments",

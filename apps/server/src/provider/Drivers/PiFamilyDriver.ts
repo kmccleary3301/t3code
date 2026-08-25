@@ -86,6 +86,7 @@ function makeSnapshot(
   },
 ): ServerProviderShape {
   const config = input.config;
+  const cwd = resolvePiFamilyWorkingDirectory(config.workingDirectory, dependencies.cwd);
   const environment = resolvePiFamilyEnvironment(
     {
       ...process.env,
@@ -126,7 +127,7 @@ function makeSnapshot(
       return yield* spawnAndCollect(
         config.binaryPath,
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-          cwd: dependencies.cwd,
+          cwd,
           env: environment,
           extendEnv: false,
           shell: spawnCommand.shell,
@@ -190,7 +191,7 @@ function makeSnapshot(
       runtime: provider === "omp" ? "omp" : "pi",
       provider,
       binaryPath: config.binaryPath,
-      cwd: dependencies.cwd,
+      cwd,
       ...(config.agentDirectory ? { agentDirectory: config.agentDirectory } : {}),
       environment,
       launchArguments: config.launchArguments,
@@ -237,6 +238,12 @@ export function resolvePiFamilyEnvironment(
     ...configEnvironment,
   });
 }
+export function resolvePiFamilyWorkingDirectory(
+  configuredWorkingDirectory: string,
+  serverWorkingDirectory: string,
+): string {
+  return configuredWorkingDirectory || serverWorkingDirectory;
+}
 
 function makeAdapter(
   input: ProviderDriverCreateInput<PiFamilySettings>,
@@ -260,7 +267,7 @@ function makeAdapter(
       provider,
       runtime: provider === "omp" ? "omp" : "pi",
       binaryPath: config.binaryPath,
-      cwd: serverConfig.cwd,
+      cwd: resolvePiFamilyWorkingDirectory(config.workingDirectory, serverConfig.cwd),
       ...(config.agentDirectory ? { agentDirectory: config.agentDirectory } : {}),
       attachmentsDir: serverConfig.attachmentsDir,
       environment: processEnvironment,

@@ -342,11 +342,16 @@ it.live.skipIf(process.env.T3_INSTALLED_CLI === undefined)(
                   // @effect-diagnostics-next-line preferSchemaOverJson:off - Machine-readable smoke report.
                   `${JSON.stringify(
                     {
-                      schemaVersion: 1,
-                      installedCli: NodeFS.realpathSync(installedCli),
+                      schemaVersion: 2,
+                      installedCli: {
+                        name: NodePath.basename(installedCli),
+                      },
                       platform,
                       architecture,
-                      runtimes: results,
+                      runtimes: results.map((result) => ({
+                        runtime: result.runtime,
+                        rootTurn: "completed",
+                      })),
                     },
                     null,
                     2,

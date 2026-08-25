@@ -10,6 +10,7 @@ import {
   parsePiFamilyCliVersion,
   piFamilyVersionCompatibilityError,
   resolvePiFamilyEnvironment,
+  resolvePiFamilyWorkingDirectory,
 } from "./PiFamilyDriver.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { spawnAndCollect } from "../providerSnapshot.ts";
@@ -48,6 +49,14 @@ describe("Pi-family driver environment isolation", () => {
       SHARED_VALUE: "config",
       CONFIG_ONLY: "kept",
     });
+  });
+});
+
+describe("Pi-family driver working-directory isolation", () => {
+  it("uses an instance directory without changing the server fallback", () => {
+    expect(resolvePiFamilyWorkingDirectory("/work/personal", "/server")).toBe("/work/personal");
+    expect(resolvePiFamilyWorkingDirectory("/work/team", "/server")).toBe("/work/team");
+    expect(resolvePiFamilyWorkingDirectory("", "/server")).toBe("/server");
   });
 });
 

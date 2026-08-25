@@ -260,7 +260,8 @@ jobs:
         if: steps.classify.outputs.replay_gate == 'true'
         env:
           T3_EVIDENCE_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: vp run performance-baseline | tee "${RUNNER_TEMP}/pi-omp-performance.json"
+          T3_PERFORMANCE_REPORT_PATH: ${{ runner.temp }}/pi-omp-performance.json
+        run: node apps/server/scripts/performance-baseline.ts
 
       - name: Upload focused aggregate evidence
         if: always()

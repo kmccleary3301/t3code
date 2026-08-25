@@ -553,6 +553,18 @@ const makePiFamilySettingsFields = (binaryFallback: string) => ({
       providerSettingsForm: { placeholder: binaryFallback, clearWhenEmpty: "omit" },
     }),
   ),
+  workingDirectory: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: "Working directory",
+      description:
+        "Working directory for native processes in this instance. Leave empty to use the T3 server working directory.",
+      providerSettingsForm: {
+        placeholder: "/path/to/workspace",
+        clearWhenEmpty: "omit",
+      },
+    }),
+  ),
   agentDirectory: TrimmedString.pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
     Schema.annotateKey({
@@ -615,7 +627,14 @@ const makePiFamilySettingsFields = (binaryFallback: string) => ({
   ),
 });
 export const PiSettings = makeProviderSettingsSchema(makePiFamilySettingsFields("pi"), {
-  order: ["binaryPath", "agentDirectory", "environment", "launchArguments", "trustMode"],
+  order: [
+    "binaryPath",
+    "workingDirectory",
+    "agentDirectory",
+    "environment",
+    "launchArguments",
+    "trustMode",
+  ],
 }).check(
   Schema.makeFilter(
     (settings) =>
@@ -626,7 +645,14 @@ export const PiSettings = makeProviderSettingsSchema(makePiFamilySettingsFields(
 export type PiSettings = typeof PiSettings.Type;
 
 export const OmpSettings = makeProviderSettingsSchema(makePiFamilySettingsFields("omp"), {
-  order: ["binaryPath", "agentDirectory", "environment", "launchArguments", "trustMode"],
+  order: [
+    "binaryPath",
+    "workingDirectory",
+    "agentDirectory",
+    "environment",
+    "launchArguments",
+    "trustMode",
+  ],
 }).check(
   Schema.makeFilter(
     (settings) =>
@@ -930,6 +956,7 @@ const PiFamilySettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
   agentDirectory: Schema.optionalKey(TrimmedString),
+  workingDirectory: Schema.optionalKey(TrimmedString),
   environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   launchArguments: Schema.optionalKey(PiFamilyLaunchArguments),
   trustMode: Schema.optionalKey(PiFamilyTrustMode),

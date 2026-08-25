@@ -129,12 +129,27 @@ jobs:
           T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
           T3_LIFECYCLE_REPORT: ${{ runner.temp }}/release-lifecycle-${{ matrix.id }}.json
           T3_LIFECYCLE_INSTALLED_NATIVE_REPORT: ${{ runner.temp }}/installed-native-${{ matrix.id }}.json
-          T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT: ${{ runner.temp }}/installed-native-test-${{ matrix.id }}.json
+          T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT: ${{ runner.temp }}/installed-native-test-${{ matrix.id }}.raw.json
         run: |
           export T3_LIFECYCLE_NATIVE_ROOT="$HOME"
           export T3_NATIVE_PI_BINARY="$(command -v pi)"
           export T3_NATIVE_OMP_BINARY="$PWD/.native/omp/packages/coding-agent/dist/omp"
           sh scripts/release-lifecycle-posix.sh
+
+      - name: Sanitize installed native test evidence
+        if: always()
+        env:
+          T3_EVIDENCE_SOURCE_HEAD: ${{ github.sha }}
+          T3_NATIVE_PLATFORM: ${{ matrix.id }}
+        run: |
+          input="$RUNNER_TEMP/installed-native-test-$T3_NATIVE_PLATFORM.raw.json"
+          if [[ -f "$input" ]]; then
+            node apps/server/scripts/sanitize-vitest-evidence.mjs \
+              "$input" \
+              "$RUNNER_TEMP/installed-native-test-$T3_NATIVE_PLATFORM.json" \
+              installed-native-test \
+              "$T3_EVIDENCE_SOURCE_HEAD"
+          fi
 
       - name: Upload lifecycle evidence
         if: always()
@@ -272,7 +287,7 @@ jobs:
           T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
           T3_LIFECYCLE_REPORT: ${{ runner.temp }}/release-lifecycle-windows.json
           T3_LIFECYCLE_INSTALLED_NATIVE_REPORT: ${{ runner.temp }}/installed-native-windows.json
-          T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT: ${{ runner.temp }}/installed-native-test-windows.json
+          T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT: ${{ runner.temp }}/installed-native-test-windows.raw.json
         run: |
           $env:T3_LIFECYCLE_NATIVE_ROOT = Join-Path $env:RUNNER_TEMP "t3-pi-omp-native-state-windows"
           $env:T3_NATIVE_PI_BINARY = (Get-Command pi.cmd -ErrorAction Stop).Source
@@ -282,6 +297,24 @@ jobs:
           }
           $env:T3_NATIVE_OMP_BINARY = (Resolve-Path $ompBinary).Path
           ./scripts/release-lifecycle-windows.ps1
+
+      - name: Sanitize installed native test evidence
+        if: always()
+        shell: pwsh
+        env:
+          T3_EVIDENCE_SOURCE_HEAD: ${{ github.sha }}
+        run: |
+          $inputPath = Join-Path $env:RUNNER_TEMP "installed-native-test-windows.raw.json"
+          if (Test-Path $inputPath) {
+            node apps/server/scripts/sanitize-vitest-evidence.mjs `
+              $inputPath `
+              (Join-Path $env:RUNNER_TEMP "installed-native-test-windows.json") `
+              installed-native-test `
+              $env:T3_EVIDENCE_SOURCE_HEAD
+            if ($LASTEXITCODE -ne 0) {
+              throw "Installed native evidence sanitization failed with exit code $LASTEXITCODE"
+            }
+          }
 
       - name: Upload lifecycle evidence
         if: always()
