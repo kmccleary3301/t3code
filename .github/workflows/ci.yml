@@ -202,6 +202,38 @@ jobs:
             --reporter=json \
             --outputFile="$T3_NATIVE_MATRIX_REPORT"
 
+      - name: Encrypt native failure diagnostics
+        if: failure() && steps.classify.outputs.replay_gate == 'true'
+        env:
+          T3_DIAGNOSTIC_PUBLIC_KEY: |
+            -----BEGIN PUBLIC KEY-----
+            MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA1QsM0Z5y8AeekVpBQAQs
+            htw22RR8aEKArkJvrIDgJZyews8wOadpydUmY1S6gQ9T/+uelmT28emCvLzYrETd
+            rS78EsxalD+1KBQQrsvykuX2aF8x893y21/OhtZnr/LuS/E5GXFDcWR4j9649w7e
+            +m22NAGkR+hQI9aYnxpDOkA2D9rhYc0ya9j7Mq30TbDznfOLRotrqU8Q6dLROdzg
+            uPXsgNZPVZAM/eUIBeXEvTpDrS7UIo24QT+lb+NBrZF9cgxzQfjqbyy+O/EmoU9n
+            f4N8RHqLEDDI7eF/hFF4aiBTVbpm8SPfZWYiY1Wn6TFfCWWgQ1BqYVtB+LUEq8Ed
+            F53ufLQQ9bkcW8K1/ljqR6wfdc38Go1fUyxkqBsYWiIx96tcu28w2NciPpy408GO
+            rS25e7K5KjivG+i9b1Qbirfxzgr1kuL2fzkX4IPNUtpzNxHlteS10lhtZQuZP+bX
+            H/gws/LBppsPwR/tMmoCNp7vHAqLC4vybD8AOQOHV71I1yeSqbg83skxIvdGMHL9
+            KqBdOooSlirU3MKrRjf5C27RrW688gv5lMB8W3JzPnEN7JeQCO/TUewa5UFucKlS
+            eUkhHpSk4tKCdp/2KcLCHKlMDIi7eZpphAdOnAq9DmNnP7VND6ckRZU/nw6kdEFc
+            lZUkSoZAa9WZE+UB1OPr2ikCAwEAAQ==
+            -----END PUBLIC KEY-----
+        run: |
+          set -euo pipefail
+          public_key="$RUNNER_TEMP/native-diagnostic-public.pem"
+          printf '%s\n' "$T3_DIAGNOSTIC_PUBLIC_KEY" > "$public_key"
+          for report in "$RUNNER_TEMP"/stock-native-*-ci.raw.json; do
+            if [[ -f "$report" ]]; then
+              openssl cms -encrypt -binary -aes-256-cbc -outform DER \
+                -in "$report" \
+                -out "$report.cms" \
+                -recip "$public_key"
+            fi
+          done
+          rm -f "$public_key"
+
       - name: Sanitize native test evidence
         if: always() && steps.classify.outputs.replay_gate == 'true'
         env:
@@ -275,6 +307,7 @@ jobs:
             ${{ runner.temp }}/stock-native-root-ci.json
             ${{ runner.temp }}/stock-native-matrix-ci.json
             ${{ runner.temp }}/stock-native-provenance-ci.json
+            ${{ runner.temp }}/stock-native-*-ci.raw.json.cms
           if-no-files-found: ignore
           retention-days: 30
 
