@@ -202,52 +202,6 @@ jobs:
             --reporter=json \
             --outputFile="$T3_NATIVE_MATRIX_REPORT"
 
-      - name: Encrypt native failure diagnostics
-        if: failure() && steps.classify.outputs.replay_gate == 'true'
-        env:
-          T3_DIAGNOSTIC_RECIPIENT_CERTIFICATE: |
-            -----BEGIN CERTIFICATE-----
-            MIIEujCCAqICCQDTQcwyPBGcdDANBgkqhkiG9w0BAQsFADAfMR0wGwYDVQQDDBR0
-            My1uYXRpdmUtZGlhZ25vc3RpYzAeFw0yNjA4MjUyMTMxNTNaFw0yNjA4MjcyMTMx
-            NTNaMB8xHTAbBgNVBAMMFHQzLW5hdGl2ZS1kaWFnbm9zdGljMIICIjANBgkqhkiG
-            9w0BAQEFAAOCAg8AMIICCgKCAgEA1QsM0Z5y8AeekVpBQAQshtw22RR8aEKArkJv
-            rIDgJZyews8wOadpydUmY1S6gQ9T/+uelmT28emCvLzYrETdrS78EsxalD+1KBQQ
-            rsvykuX2aF8x893y21/OhtZnr/LuS/E5GXFDcWR4j9649w7e+m22NAGkR+hQI9aY
-            nxpDOkA2D9rhYc0ya9j7Mq30TbDznfOLRotrqU8Q6dLROdzguPXsgNZPVZAM/eUI
-            BeXEvTpDrS7UIo24QT+lb+NBrZF9cgxzQfjqbyy+O/EmoU9nf4N8RHqLEDDI7eF/
-            hFF4aiBTVbpm8SPfZWYiY1Wn6TFfCWWgQ1BqYVtB+LUEq8EdF53ufLQQ9bkcW8K1
-            /ljqR6wfdc38Go1fUyxkqBsYWiIx96tcu28w2NciPpy408GOrS25e7K5KjivG+i9
-            b1Qbirfxzgr1kuL2fzkX4IPNUtpzNxHlteS10lhtZQuZP+bXH/gws/LBppsPwR/t
-            MmoCNp7vHAqLC4vybD8AOQOHV71I1yeSqbg83skxIvdGMHL9KqBdOooSlirU3MKr
-            Rjf5C27RrW688gv5lMB8W3JzPnEN7JeQCO/TUewa5UFucKlSeUkhHpSk4tKCdp/2
-            KcLCHKlMDIi7eZpphAdOnAq9DmNnP7VND6ckRZU/nw6kdEFclZUkSoZAa9WZE+UB
-            1OPr2ikCAwEAATANBgkqhkiG9w0BAQsFAAOCAgEAhXsK99aC6mcL4FGkFOkMc1FR
-            yGJEHDAZCjqujvdhOz5+zJxeblbqp4Rs2LdWwTMAKkAZk/v3ffqBOjnTa52/DsdX
-            aXZSK/A1slx+gOA6h9I7psrrFXs/jpyuQEtnLyrp41KRDeaNjvGuFhRbn8vKNpGq
-            3wd/5cu/z9MEooV9Kug2VNdW+hEhB1m25TAZRvjTnGfGstj+jQNT/LaG/tF/GSKg
-            DKnWo8QxRetjUROuWR0d8WPfB5OegvCjryIPl74PmvoX/kSMah1F4qpuoN+sR9OD
-            Ch8T4y6SSxgrGHmKscl5xMC96mmJoe8WoRnv0FLH+OdFJ+OYNnImG+KamObcSHze
-            HqhB1yAZeQXn6ev9KQw36PXULPqkVlRa3jjL3x02ARWQ/EslUTRkWvwiK4OKWwyt
-            YP1vVl0oRhnm7+k30oyOkiCl80kcUVEdF573/rr4JVj7xOAhHUWeUf3OgXeTScW1
-            6y2gAeyp2wVL89PAdPmDL6loEHJu0Bpw4cQrp4jmh3FlFcrirMmDfh3IW7+Qumit
-            BKfuU1QvpkDjlEdkCn+a/bLg4mEcwh4HPqes/BFWkgs2MmQUhK3UvAy3l1BdeGTg
-            fOzuRJPZTTML+lywV+EhzJcTTcRjl+heDGr2PNwc6o41YIoYZydS0K2rMWtM143g
-            3HeMYvE5nZ65CcO7jBE=
-            -----END CERTIFICATE-----
-        run: |
-          set -euo pipefail
-          recipient_certificate="$RUNNER_TEMP/native-diagnostic-recipient.pem"
-          printf '%s\n' "$T3_DIAGNOSTIC_RECIPIENT_CERTIFICATE" > "$recipient_certificate"
-          for report in "$RUNNER_TEMP"/stock-native-*-ci.raw.json; do
-            if [[ -f "$report" ]]; then
-              openssl cms -encrypt -binary -aes-256-cbc -outform DER \
-                -in "$report" \
-                -out "$report.cms" \
-                -recip "$recipient_certificate"
-            fi
-          done
-          rm -f "$recipient_certificate"
-
       - name: Sanitize native test evidence
         if: always() && steps.classify.outputs.replay_gate == 'true'
         env:
@@ -321,7 +275,6 @@ jobs:
             ${{ runner.temp }}/stock-native-root-ci.json
             ${{ runner.temp }}/stock-native-matrix-ci.json
             ${{ runner.temp }}/stock-native-provenance-ci.json
-            ${{ runner.temp }}/stock-native-*-ci.raw.json.cms
           if-no-files-found: ignore
           retention-days: 30
 
