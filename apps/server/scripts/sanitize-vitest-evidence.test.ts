@@ -8,10 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 
 import { assert, it } from "@effect/vitest";
 
-const sanitizer = NodePath.join(
-  NodeProcess.cwd(),
-  "apps/server/scripts/sanitize-vitest-evidence.mjs",
-);
+const sanitizer = NodePath.join(import.meta.dirname, "sanitize-vitest-evidence.mjs");
 const headSha = "a".repeat(40);
 
 const rawReport = (overrides: Record<string, unknown> = {}) => ({
