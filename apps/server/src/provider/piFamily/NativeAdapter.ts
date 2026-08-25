@@ -714,7 +714,22 @@ function eventForProjection(
       return {
         ...base,
         type: "runtime.warning",
-        payload: { message: `Native UI request: ${request.kind}`, detail: request },
+        payload: {
+          message:
+            request.kind === "unsupported_terminal_ui"
+              ? `${request.message}. Open the native ${config.runtime.toUpperCase()} terminal for this thread to continue.`
+              : `Native UI request: ${request.kind}`,
+          detail: request,
+          ...(request.kind === "unsupported_terminal_ui"
+            ? {
+                nativeTerminalFallback: {
+                  runtime: config.runtime,
+                  providerInstanceId: config.instanceId,
+                  feature: request.feature,
+                },
+              }
+            : {}),
+        },
       };
     }
     case "compaction.completed":

@@ -133,7 +133,7 @@ jobs:
   focused_pi_omp_gate:
     name: Pi OMP Focused Gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -156,6 +156,49 @@ jobs:
           T3_CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           T3_CHANGE_HEAD: ${{ github.sha }}
         run: vp run classify-ci-change
+
+      - name: Checkout pinned OMP runtime
+        if: steps.classify.outputs.replay_gate == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: kmccleary3301/oh-my-pi
+          ref: c53cd2c2bf521f6eb70cac5484e6474d827498d6
+          path: .native/omp
+
+      - name: Build pinned Pi and OMP runtimes
+        if: steps.classify.outputs.replay_gate == 'true'
+        run: |
+          npm install --global bun@1.3.14 @earendil-works/pi-coding-agent@0.84.2
+          bun install --cwd .native/omp --frozen-lockfile
+          bun --cwd=.native/omp/packages/natives run build
+          bun --cwd=.native/omp/packages/coding-agent run build
+
+      - name: Run credential-free stock native matrix
+        if: steps.classify.outputs.replay_gate == 'true'
+        env:
+          T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-ci.json
+          T3_NATIVE_MATRIX_REPORT: ${{ runner.temp }}/stock-native-matrix-ci.json
+          T3_NATIVE_PROVENANCE_REPORT: ${{ runner.temp }}/stock-native-provenance-ci.json
+        run: |
+          export T3_NATIVE_PI_BINARY="$(command -v pi)"
+          export T3_NATIVE_OMP_BINARY="$PWD/.native/omp/packages/coding-agent/dist/omp"
+          export T3_NATIVE_PI_PACKAGE_ROOT="$(npm root --global)/@earendil-works/pi-coding-agent"
+          export T3_NATIVE_PI_VERSION=0.84.2
+          export T3_NATIVE_PI_INTEGRITY="$(npm view @earendil-works/pi-coding-agent@0.84.2 dist.integrity)"
+          export T3_NATIVE_OMP_SOURCE_REPOSITORY=kmccleary3301/oh-my-pi
+          export T3_NATIVE_OMP_SOURCE_HEAD="$(git -C .native/omp rev-parse HEAD)"
+          export T3_NATIVE_OMP_ADDON_DIR="$PWD/.native/omp/packages/natives/native"
+          node scripts/native-runtime-provenance.mjs
+          vp test run \
+            apps/server/src/server.test.ts \
+            -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket|matches configured (pi|omp) live and exact replay through T3 HTTP and WebSocket" \
+            --reporter=json \
+            --outputFile="$T3_NATIVE_ROOT_REPORT"
+          vp test run \
+            apps/server/integration/orchestrationEngine.integration.test.ts \
+            -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers configured (pi|omp) after an isolated stock native process crash" \
+            --reporter=json \
+            --outputFile="$T3_NATIVE_MATRIX_REPORT"
 
       - name: Replay scrubbed Pi and OMP traces
         if: steps.classify.outputs.replay_gate == 'true'
@@ -199,6 +242,9 @@ jobs:
             ${{ runner.temp }}/t3code-transfer-budget.md
             ${{ runner.temp }}/thread-transfer-result.json
             ${{ runner.temp }}/pi-omp-performance.json
+            ${{ runner.temp }}/stock-native-root-ci.json
+            ${{ runner.temp }}/stock-native-matrix-ci.json
+            ${{ runner.temp }}/stock-native-provenance-ci.json
           if-no-files-found: ignore
           retention-days: 30
 

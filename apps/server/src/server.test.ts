@@ -158,7 +158,10 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as Data from "effect/Data";
 
-import { makeOrchestrationIntegrationHarness } from "../integration/OrchestrationEngineHarness.integration.ts";
+import {
+  makeOrchestrationIntegrationHarness,
+  type OrchestrationIntegrationHarness,
+} from "../integration/OrchestrationEngineHarness.integration.ts";
 import {
   countingWsRpcProtocolLayer,
   makeCountingWsRpcClient,
@@ -182,10 +185,12 @@ import { nativeReplayLaunchArguments } from "../integration/NativeReplayRuntime.
 import {
   configuredNativeLiveConfigurations,
   makeNativeLiveAgentDirectory,
+  makeNativeLivePromptCaptureSinkFactory,
   makeNativeLiveModelServer,
   nativeLiveTraceSinkFactory,
   writeNativeLiveConfig,
 } from "../integration/NativeLiveRuntime.integration.ts";
+import type { JsonRecord } from "./provider/piFamily/protocol.ts";
 import {
   formatTransferBudgetReport,
   formatTransferBudgetResult,
@@ -9885,9 +9890,187 @@ for (const config of configuredNativeLiveConfigurations()) {
                         clientBItems.every((item) => item.kind === "synchronized"),
                         `${config.runtime} disconnected client must not receive live events`,
                       );
+                      const taskCursor = targetSequence;
+                      const taskActivityCountBefore = completed.activities.length;
+                      const taskMessage =
+                        config.runtime === "omp"
+                          ? "NATIVE-MATRIX-SUBAGENT-PARENT"
+                          : "Reply with NATIVE-MATRIX-OK after the Pi convergence reconnect.";
+                      yield* Effect.scoped(
+                        withWsRpcClient(authenticatedWsUrl, (client) =>
+                          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                            type: "thread.turn.start",
+                            commandId: CommandId.make(
+                              `native-live-http:${config.runtime}:task-turn`,
+                            ),
+                            threadId,
+                            message: {
+                              messageId: MessageId.make(
+                                `native-live-http-${config.runtime}-task-user`,
+                              ),
+                              role: "user",
+                              text: taskMessage,
+                              attachments: [],
+                            },
+                            modelSelection,
+                            runtimeMode: "approval-required",
+                            interactionMode: "default",
+                            createdAt,
+                          }),
+                        ),
+                      );
+                      const taskProjected = yield* harness.waitForThread(
+                        threadId,
+                        (thread) =>
+                          config.runtime === "pi"
+                            ? thread.latestTurn?.state === "completed" &&
+                              thread.session?.status === "ready" &&
+                              thread.messages.some(
+                                (message) =>
+                                  message.role === "user" && message.text === taskMessage,
+                              )
+                            : thread.activities.slice(taskActivityCountBefore).some((activity) => {
+                                const payload = activity.payload as Readonly<
+                                  Record<string, unknown>
+                                >;
+                                return (
+                                  (activity.kind === "task.started" ||
+                                    activity.kind === "task.progress") &&
+                                  payload.parentAgentId === "MatrixChild"
+                                );
+                              }),
+                        30_000,
+                      );
+                      if (config.runtime === "omp") {
+                        assert.isAbove(taskProjected.activities.length, taskActivityCountBefore);
+                      }
+                      if (config.runtime === "omp") {
+                        yield* harness.engine.dispatch({
+                          type: "thread.session.stop",
+                          commandId: CommandId.make("native-live-http:omp:task-stop"),
+                          threadId,
+                          createdAt,
+                        });
+                      }
+                      const taskSettled = yield* harness.waitForThread(
+                        threadId,
+                        (thread) => {
+                          const taskActivities = thread.activities.slice(taskActivityCountBefore);
+                          if (config.runtime === "pi") {
+                            return (
+                              thread.latestTurn?.state === "completed" &&
+                              thread.session?.status === "ready" &&
+                              thread.messages.some(
+                                (message) =>
+                                  message.role === "user" && message.text === taskMessage,
+                              )
+                            );
+                          }
+                          const completedTasks = taskActivities
+                            .filter((activity) => activity.kind === "task.completed")
+                            .map(
+                              (activity) => activity.payload as Readonly<Record<string, unknown>>,
+                            );
+                          return (
+                            thread.session?.status === "stopped" &&
+                            completedTasks.some(
+                              (payload) =>
+                                payload.taskId === "MatrixChild" &&
+                                (payload.status === "completed" || payload.status === "stopped"),
+                            ) &&
+                            completedTasks.some(
+                              (payload) =>
+                                payload.parentAgentId === "MatrixChild" &&
+                                payload.status === "stopped",
+                            )
+                          );
+                        },
+                        30_000,
+                      );
+                      yield* harness.drainProviderRuntime;
+                      yield* harness.drainCheckpointReactor;
+                      const taskTargetSequence = yield* harness.engine
+                        .readEvents(taskCursor, 10_000)
+                        .pipe(
+                          Stream.runFold(
+                            () => taskCursor,
+                            (sequence, event) =>
+                              event.aggregateId === threadId && isThreadDetailEvent(event)
+                                ? Math.max(sequence, event.sequence)
+                                : sequence,
+                          ),
+                        );
+                      assert.isAbove(taskTargetSequence, taskCursor);
+                      const taskClientQueue =
+                        yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                      const taskClientRecorder = makeWebSocketTransferRecorder();
+                      const taskClientFiber = yield* makeSubscription(
+                        taskCursor,
+                        taskClientQueue,
+                        taskClientRecorder,
+                        (item) =>
+                          item.kind === "event" && item.event.sequence >= taskTargetSequence,
+                      ).pipe(Effect.forkScoped);
+                      const taskClientItems = yield* collectQueueUntil(
+                        taskClientQueue,
+                        (item) =>
+                          item.kind === "event" && item.event.sequence >= taskTargetSequence,
+                        `${config.runtime} native task client`,
+                      );
+                      yield* Effect.sync(() => taskClientRecorder.terminate());
+                      yield* Fiber.await(taskClientFiber).pipe(Effect.timeout("5 seconds"));
+                      const taskReconnectQueue =
+                        yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                      const taskReconnectRecorder = makeWebSocketTransferRecorder();
+                      const taskReconnectFiber = yield* makeSubscription(
+                        taskCursor,
+                        taskReconnectQueue,
+                        taskReconnectRecorder,
+                        (item) =>
+                          item.kind === "event" && item.event.sequence >= taskTargetSequence,
+                      ).pipe(Effect.forkScoped);
+                      const taskReconnectItems = yield* collectQueueUntil(
+                        taskReconnectQueue,
+                        (item) =>
+                          item.kind === "event" && item.event.sequence >= taskTargetSequence,
+                        `${config.runtime} native task reconnect`,
+                      );
+                      yield* Effect.sync(() => taskReconnectRecorder.terminate());
+                      yield* Fiber.await(taskReconnectFiber).pipe(Effect.timeout("5 seconds"));
+                      const persistedTaskEvents = yield* harness.engine
+                        .readEvents(taskCursor, 10_000)
+                        .pipe(
+                          Stream.filter(
+                            (event) => event.aggregateId === threadId && isThreadDetailEvent(event),
+                          ),
+                          Stream.runCollect,
+                          Effect.map((events) => Array.from(events).map(projectActivityEvent)),
+                        );
+                      assertOrdered(taskClientItems, `${config.runtime} task client`);
+                      assertOrdered(taskReconnectItems, `${config.runtime} task reconnect`);
+                      assert.deepEqual(
+                        eventsFromItems(taskClientItems),
+                        persistedTaskEvents,
+                        `${config.runtime} task client must match persisted events`,
+                      );
+                      assert.deepEqual(
+                        eventsFromItems(taskReconnectItems),
+                        persistedTaskEvents,
+                        `${config.runtime} task reconnect must match persisted events`,
+                      );
+                      if (config.runtime === "omp") {
+                        assert.isTrue(
+                          taskSettled.activities
+                            .slice(taskActivityCountBefore)
+                            .some((activity) => activity.kind === "task.completed"),
+                          "omp task completion must remain projected",
+                        );
+                      }
                       const finalSnapshot = yield* readThreadSnapshot();
-                      assert.equal(finalSnapshot.thread.latestTurn?.state, "completed");
-                      assert.equal(finalSnapshot.thread.session?.status, "ready");
+                      assert.equal(
+                        finalSnapshot.thread.session?.status,
+                        config.runtime === "omp" ? "stopped" : "ready",
+                      );
                       assert.isTrue(
                         finalSnapshot.thread.messages.some(
                           (message) =>
@@ -9896,19 +10079,38 @@ for (const config of configuredNativeLiveConfigurations()) {
                             message.text.includes("NATIVE-MATRIX-OK"),
                         ),
                       );
+                      if (config.runtime === "pi") {
+                        assert.isAbove(
+                          finalSnapshot.thread.checkpoints.length,
+                          0,
+                          "pi completed turn must retain a native checkpoint",
+                        );
+                        assert.equal(
+                          finalSnapshot.thread.checkpoints.at(-1)?.nativeCheckpoint?.runtime,
+                          "pi",
+                        );
+                      } else {
+                        assert.equal(
+                          finalSnapshot.thread.checkpoints.length,
+                          0,
+                          "omp must not fabricate an unsupported native checkpoint",
+                        );
+                      }
 
-                      yield* harness.engine.dispatch({
-                        type: "thread.session.stop",
-                        commandId: CommandId.make(`native-live-http:${config.runtime}:stop`),
-                        threadId,
-                        createdAt,
-                      });
-                      const stopped = yield* harness.waitForThread(
-                        threadId,
-                        (thread) => thread.session?.status === "stopped",
-                        30_000,
-                      );
-                      assert.equal(stopped.session?.status, "stopped");
+                      if (config.runtime === "pi") {
+                        yield* harness.engine.dispatch({
+                          type: "thread.session.stop",
+                          commandId: CommandId.make(`native-live-http:${config.runtime}:stop`),
+                          threadId,
+                          createdAt,
+                        });
+                        const stopped = yield* harness.waitForThread(
+                          threadId,
+                          (thread) => thread.session?.status === "stopped",
+                          30_000,
+                        );
+                        assert.equal(stopped.session?.status, "stopped");
+                      }
                       const deadline = (yield* Clock.currentTimeMillis) + 30_000;
                       while (true) {
                         const sessions = yield* harness.providerService.listSessions();
@@ -9932,7 +10134,282 @@ for (const config of configuredNativeLiveConfigurations()) {
           ),
         (modelServer) => Effect.tryPromise(() => modelServer.close()),
       ).pipe(Effect.provide(Layer.merge(NodeHttpServerTestWithWsDeflate, NodeServices.layer))),
-    120_000,
+    180_000,
+  );
+}
+
+const runNativeHttpParityScenario = (
+  harness: OrchestrationIntegrationHarness,
+  runtime: "pi" | "omp",
+  scenario: "live" | "replay",
+  captured?: readonly JsonRecord[],
+) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make(`native-parity-${runtime}-project`);
+    const threadId = ThreadId.make(`native-parity-${runtime}-thread`);
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make(runtime),
+      model: scenario === "live" ? "local/test" : `${runtime}/replay-model`,
+    } as const;
+    const createdAt = "2026-08-25T00:00:00.000Z";
+    yield* harness.engine.dispatch({
+      type: "project.create",
+      commandId: CommandId.make(`native-parity:${runtime}:${scenario}:project`),
+      projectId,
+      title: `${runtime} native parity project`,
+      workspaceRoot: harness.workspaceDir,
+      defaultModelSelection: modelSelection,
+      createdAt,
+    });
+    yield* harness.engine.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`native-parity:${runtime}:${scenario}:thread`),
+      threadId,
+      projectId,
+      title: `${runtime} native parity thread`,
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: harness.workspaceDir,
+      createdAt,
+    });
+    yield* buildAppUnderTest({
+      layers: {
+        orchestrationEngine: harness.engine,
+        projectionSnapshotQuery: harness.snapshotQuery,
+      },
+    });
+    const baseUrl = yield* getHttpServerUrl();
+    const cookie = yield* getAuthenticatedSessionCookieHeader();
+    const wsBaseUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+    const authenticatedWsUrl = appendSessionCookieToWsUrl(wsBaseUrl, cookie);
+    const readSnapshot = Effect.fn(`NativeParity.${runtime}.${scenario}.readSnapshot`)(
+      function* () {
+        const response = yield* fetchEffect(`${baseUrl}/api/orchestration/threads/${threadId}`, {
+          headers: { cookie },
+        });
+        assert.equal(response.status, 200);
+        return yield* responseJsonEffect<OrchestrationThreadDetailSnapshot>(response);
+      },
+    );
+    const initialSnapshot = yield* readSnapshot();
+    const queue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+    const recorder = makeWebSocketTransferRecorder();
+    const streamFiber = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* makeCountingWsRpcClient;
+        yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+          threadId,
+          afterSequence: initialSnapshot.snapshotSequence,
+          requestCompletionMarker: true,
+        }).pipe(Stream.runForEach((item) => Queue.offer(queue, item).pipe(Effect.asVoid)));
+      }).pipe(
+        Effect.provide(
+          countingWsRpcProtocolLayer({
+            url: wsBaseUrl,
+            cookie,
+            recorder,
+          }),
+        ),
+      ),
+    ).pipe(Effect.forkScoped);
+    yield* collectQueueUntil(
+      queue,
+      (item) => item.kind === "synchronized",
+      `${runtime} ${scenario} parity synchronization`,
+    );
+    yield* Effect.scoped(
+      withWsRpcClient(authenticatedWsUrl, (client) =>
+        client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`native-parity:${runtime}:${scenario}:turn`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`native-parity-${runtime}-user`),
+            role: "user",
+            text: `Reply with the NATIVE-MATRIX-OK marker for ${runtime}.`,
+            attachments: [],
+          },
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt,
+        }),
+      ),
+    );
+    yield* harness.waitForThread(
+      threadId,
+      (thread) =>
+        thread.latestTurn?.state === "completed" &&
+        thread.session?.status === "ready" &&
+        thread.messages.some(
+          (message) =>
+            message.role === "assistant" &&
+            !message.streaming &&
+            message.text.includes("NATIVE-MATRIX-OK"),
+        ),
+      30_000,
+    );
+    yield* harness.drainProviderRuntime;
+    yield* harness.drainCheckpointReactor;
+    const persistedEvents = yield* harness.engine
+      .readEvents(initialSnapshot.snapshotSequence, 10_000)
+      .pipe(
+        Stream.filter((event) => event.aggregateId === threadId && isThreadDetailEvent(event)),
+        Stream.runCollect,
+        Effect.map((events) => Array.from(events)),
+      );
+    const targetSequence = persistedEvents.reduce(
+      (sequence, event) => Math.max(sequence, event.sequence),
+      initialSnapshot.snapshotSequence,
+    );
+    assert.isAbove(targetSequence, initialSnapshot.snapshotSequence);
+    const streamItems = yield* collectQueueUntil(
+      queue,
+      (item) => item.kind === "event" && item.event.sequence >= targetSequence,
+      `${runtime} ${scenario} parity terminal event`,
+    );
+    yield* Effect.sync(() => recorder.terminate());
+    yield* Fiber.await(streamFiber).pipe(Effect.timeout("5 seconds"));
+    const streamEvents = streamItems.flatMap((item) => (item.kind === "event" ? [item.event] : []));
+    assert.deepEqual(
+      streamEvents,
+      persistedEvents.map(projectActivityEvent),
+      `${runtime} ${scenario} WebSocket projection must match persistence`,
+    );
+    const finalSnapshot = yield* readSnapshot();
+    const capturedTrace = captured?.slice() ?? [];
+    yield* harness.engine.dispatch({
+      type: "thread.session.stop",
+      commandId: CommandId.make(`native-parity:${runtime}:${scenario}:stop`),
+      threadId,
+      createdAt,
+    });
+    yield* harness.waitForThread(
+      threadId,
+      (thread) => thread.session?.status === "stopped",
+      30_000,
+    );
+    const exitDeadline = (yield* Clock.currentTimeMillis) + 30_000;
+    while (true) {
+      const sessions = yield* harness.providerService.listSessions();
+      if (!sessions.some((session) => session.threadId === threadId)) break;
+      if ((yield* Clock.currentTimeMillis) >= exitDeadline) {
+        return yield* Effect.die(`${runtime} ${scenario} parity session did not exit`);
+      }
+      yield* Effect.sleep(10);
+    }
+    return {
+      http: {
+        messages: finalSnapshot.thread.messages.map((message) => ({
+          role: message.role,
+          text: message.text,
+          streaming: message.streaming,
+        })),
+        activities: finalSnapshot.thread.activities
+          .filter((activity) => activity.kind !== "checkpoint.captured")
+          .map((activity) => ({
+            kind: activity.kind,
+            summary: activity.summary,
+          }))
+          .sort((left, right) =>
+            `${left.kind}:${left.summary}`.localeCompare(`${right.kind}:${right.summary}`),
+          ),
+        checkpoints: finalSnapshot.thread.checkpoints.map((checkpoint) => ({
+          status: checkpoint.status,
+          nativeRuntime: checkpoint.nativeCheckpoint?.runtime ?? null,
+        })),
+        latestTurnState: finalSnapshot.thread.latestTurn?.state ?? null,
+        sessionStatus: finalSnapshot.thread.session?.status ?? null,
+      },
+      websocketEventTypes: streamEvents.map((event) => event.type).sort(),
+      capturedTrace,
+    };
+  });
+
+for (const config of configuredNativeLiveConfigurations()) {
+  it.live(
+    `matches configured ${config.runtime} live and exact replay through T3 HTTP and WebSocket`,
+    () =>
+      Effect.acquireUseRelease(
+        makeNativeLiveModelServer,
+        (modelServer) =>
+          Effect.acquireUseRelease(
+            makeNativeLiveAgentDirectory(`t3-native-parity-${config.runtime}-`),
+            (agentDirectory) =>
+              Effect.gen(function* () {
+                yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
+                const captured: JsonRecord[] = [];
+                const live = yield* Effect.acquireUseRelease(
+                  makeOrchestrationIntegrationHarness({
+                    provider: config.provider,
+                    nativeLive: {
+                      runtime: config.runtime,
+                      binaryPath: config.binaryPath,
+                      launchArguments: config.launchArguments,
+                      agentDirectory,
+                      environment: { PI_OFFLINE: "1", PI_NO_PTY: "1" },
+                      ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
+                      traceSinkFactory: makeNativeLivePromptCaptureSinkFactory(
+                        config.runtime,
+                        captured,
+                      ),
+                    },
+                  }),
+                  (harness) =>
+                    runNativeHttpParityScenario(harness, config.runtime, "live", captured).pipe(
+                      Effect.provide(makeNodeHttpServerTestWithWsDeflate()),
+                      Effect.scoped,
+                    ),
+                  (harness) => harness.dispose,
+                );
+                assert.isNotEmpty(
+                  live.capturedTrace,
+                  `${config.runtime} live prompt capture was empty`,
+                );
+                assert.isTrue(
+                  live.capturedTrace.some((frame) => frame.type === "agent_end"),
+                  `${config.runtime} live prompt capture had no terminal agent event`,
+                );
+                const replay = yield* Effect.acquireUseRelease(
+                  makeOrchestrationIntegrationHarness({
+                    provider: config.provider,
+                    nativeReplay: {
+                      runtime: config.runtime,
+                      launchArguments: nativeReplayLaunchArguments(
+                        config.runtime,
+                        live.capturedTrace,
+                      ),
+                    },
+                  }),
+                  (harness) =>
+                    runNativeHttpParityScenario(harness, config.runtime, "replay").pipe(
+                      Effect.provide(makeNodeHttpServerTestWithWsDeflate()),
+                      Effect.scoped,
+                    ),
+                  (harness) => harness.dispose,
+                );
+                assert.deepEqual(
+                  replay.http,
+                  live.http,
+                  `${config.runtime} live and replay HTTP snapshots must match`,
+                );
+                assert.deepEqual(
+                  replay.websocketEventTypes,
+                  live.websocketEventTypes,
+                  `${config.runtime} live and replay WebSocket event sequences must match`,
+                );
+              }),
+            (agentDirectory) =>
+              Effect.gen(function* () {
+                const fileSystem = yield* FileSystem.FileSystem;
+                yield* fileSystem.remove(agentDirectory, { recursive: true });
+              }),
+          ),
+        (modelServer) => Effect.tryPromise(() => modelServer.close()),
+      ).pipe(Effect.provide(NodeServices.layer)),
+    { timeout: 180_000, concurrent: false },
   );
 }
 

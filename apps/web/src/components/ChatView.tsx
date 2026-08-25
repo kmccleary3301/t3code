@@ -2892,6 +2892,13 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiState.terminalIds.length,
     terminalUiState.terminalOpen,
   ]);
+  const openNativeTerminalFallback = useCallback(() => {
+    if (terminalUiState.terminalOpen) {
+      setTerminalFocusRequestId((current) => current + 1);
+      return;
+    }
+    toggleTerminalVisibility();
+  }, [terminalUiState.terminalOpen, toggleTerminalVisibility]);
   const splitTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
       if (!activeThreadRef || hasReachedSplitLimit || !activeThreadId || !activeProject) {
@@ -6406,6 +6413,7 @@ function ChatViewContent(props: ChatViewProps) {
               <MessagesTimeline
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
+                onOpenNativeTerminal={openNativeTerminalFallback}
                 key={activeThread.id}
                 isWorking={isWorking}
                 workingStepLabel={workingStepLabel}

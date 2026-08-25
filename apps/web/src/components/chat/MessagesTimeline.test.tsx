@@ -737,6 +737,37 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work Log");
   });
 
+  it("renders an accessible native terminal fallback action", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-terminal-fallback",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-terminal-fallback",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "This operation requires the native OMP terminal.",
+              tone: "info",
+              sourceActivityKind: "runtime.warning",
+              nativeTerminalFallback: {
+                runtime: "omp",
+                providerInstanceId: "omp-main",
+                feature: "setTitle",
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("This operation requires the native OMP terminal.");
+    expect(markup).toContain("Open native OMP terminal");
+    expect(markup).toContain('aria-label="Open native OMP terminal for provider omp-main"');
+  });
+
   it("summarizes changed files in one line", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

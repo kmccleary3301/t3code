@@ -9,8 +9,9 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { OmpChunkAssembler } from "../src/provider/piFamily/OmpChunkAssembler.ts";
 import type { NativeTraceSinkFactory } from "../src/provider/piFamily/NativeTrace.ts";
-import type { PiFamilyRuntimeKind } from "../src/provider/piFamily/protocol.ts";
+import type { JsonRecord, PiFamilyRuntimeKind } from "../src/provider/piFamily/protocol.ts";
 
 export type NativeLiveRuntime = PiFamilyRuntimeKind;
 
@@ -104,6 +105,46 @@ export const makeNativeLiveTraceSinkFactory = (
       },
       recordExit: () => {},
       invalidate: () => {},
+      finalize: () => {},
+    };
+  },
+});
+/**
+ * Captures one synthetic-model prompt as decoded native envelopes. The caller
+ * owns the in-memory array; nothing containing prompt or model bytes is written
+ * to disk.
+ */
+export const makeNativeLivePromptCaptureSinkFactory = (
+  runtime: NativeLiveRuntime,
+  captured: JsonRecord[],
+): NativeTraceSinkFactory => ({
+  create: () => {
+    let stdoutPending = "";
+    const chunkAssembler = runtime === "omp" ? new OmpChunkAssembler() : undefined;
+    const handleStdout = (value: unknown) => {
+      let frame: unknown = value;
+      if (chunkAssembler) {
+        frame = chunkAssembler.accept(value);
+        if (frame === undefined) return;
+      }
+      if (typeof frame !== "object" || frame === null || Array.isArray(frame)) return;
+      const record = frame as JsonRecord;
+      if (record.type === "response" || record.type === "ready") return;
+      captured.push(record);
+    };
+    return {
+      recordBytes: (stream, bytes) => {
+        if (stream !== "stdout") return;
+        const lines = (stdoutPending + new TextDecoder().decode(bytes)).split("\n");
+        stdoutPending = lines.pop() ?? "";
+        for (const line of lines) {
+          if (line.length > 0) handleStdout(JSON.parse(line));
+        }
+      },
+      recordExit: () => {},
+      invalidate: () => {
+        captured.length = 0;
+      },
       finalize: () => {},
     };
   },

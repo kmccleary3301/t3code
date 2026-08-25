@@ -161,6 +161,20 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
         ]),
     "      return;",
     "    }",
+    '    if (command.message === "terminal-fallback") {',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_start" });']
+      : ['      out({ type: "turn_start", id: command.id });']),
+    '      out({ type: "extension_ui_request", id: "ui-terminal", method: "setTitle", title: "Native title" });',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_end", isTerminal: true });']
+      : [
+          '      out({ type: "turn_end", id: command.id });',
+          '      out({ type: "agent_end", willRetry: false });',
+          '      out({ type: "agent_settled" });',
+        ]),
+    "      return;",
+    "    }",
     '    if (command.message === "portable-ui") {',
     ...(runtime === "omp"
       ? ['      out({ type: "agent_start" });']
@@ -1121,6 +1135,53 @@ describe("Pi-family native adapter", () => {
         if (response?.type === "content.delta") {
           assert.equal(response.payload.delta, detail);
         }
+      }
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("projects unsupported native UI as an explicit terminal fallback action", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-terminal-fallback-thread");
+      const instanceId = ProviderInstanceId.make("omp-terminal-fallback-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextEvent(adapter.streamEvents);
+      yield* adapter.sendTurn({ threadId, input: "terminal-fallback" });
+
+      const turnStarted = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      const warning = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      const turnCompleted = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      assert.equal(turnStarted?.type, "turn.started");
+      assert.equal(warning?.type, "runtime.warning");
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (warning?.type === "runtime.warning") {
+        assert.match(warning.payload.message, /Open the native OMP terminal/);
+        assert.deepEqual((warning.payload as Record<string, unknown>).nativeTerminalFallback, {
+          runtime,
+          providerInstanceId: instanceId,
+          feature: "setTitle",
+        });
       }
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

@@ -82,6 +82,12 @@ export interface WorkLogEntry {
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
+  /** Explicit action for a provider UI request that cannot be rendered portably. */
+  nativeTerminalFallback?: {
+    runtime: "pi" | "omp";
+    providerInstanceId: string;
+    feature: string;
+  };
   /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
   /** Agent role (subagent_type) for labeled timeline rows. */
@@ -892,6 +898,25 @@ function extractWorkLogToolLifecycleStatus(
   return undefined;
 }
 
+function extractNativeTerminalFallback(
+  payload: Record<string, unknown> | null,
+): WorkLogEntry["nativeTerminalFallback"] {
+  const fallback = asRecord(payload?.nativeTerminalFallback);
+  const runtime = fallback?.runtime;
+  const providerInstanceId = fallback?.providerInstanceId;
+  const feature = fallback?.feature;
+  if (
+    (runtime !== "pi" && runtime !== "omp") ||
+    typeof providerInstanceId !== "string" ||
+    providerInstanceId.length === 0 ||
+    typeof feature !== "string" ||
+    feature.length === 0
+  ) {
+    return undefined;
+  }
+  return { runtime, providerInstanceId, feature };
+}
+
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
   const payload =
     activity.payload && typeof activity.payload === "object"
@@ -938,6 +963,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
           : activity.tone,
     activityKind: activity.kind,
   };
+  const nativeTerminalFallback = extractNativeTerminalFallback(payload);
+  if (nativeTerminalFallback) {
+    entry.nativeTerminalFallback = nativeTerminalFallback;
+  }
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   if (detail) {

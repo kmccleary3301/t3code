@@ -12,12 +12,16 @@ import {
  * Pi emits JSONL envelopes and OMP emits a plain ready/response envelope plus
  * chunked JSONL event envelopes. No T3 orchestration code is bypassed.
  */
-export function nativeReplayLaunchArguments(runtime: PiFamilyRuntimeKind): readonly string[] {
+export function nativeReplayLaunchArguments(
+  runtime: PiFamilyRuntimeKind,
+  traceOverride?: readonly JsonRecord[],
+): readonly string[] {
   if (runtime !== "pi" && runtime !== "omp") {
     throw new Error(`Unsupported native replay runtime: ${runtime}`);
   }
 
-  const trace = runtime === "pi" ? piRecordedNativeTrace : ompRecordedNativeTrace;
+  const trace =
+    traceOverride ?? (runtime === "pi" ? piRecordedNativeTrace : ompRecordedNativeTrace);
   const capabilities = {
     runtime,
     runtimeVersion: "replay-capture",
@@ -44,7 +48,7 @@ export function nativeReplayLaunchArguments(runtime: PiFamilyRuntimeKind): reado
       tree: true,
       fork: true,
       compact: true,
-      nativeCheckpoint: true,
+      nativeCheckpoint: runtime === "pi",
       completeTurnRollback: false,
     },
     ui: {
