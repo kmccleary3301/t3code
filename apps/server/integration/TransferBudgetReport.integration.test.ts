@@ -39,23 +39,44 @@ const run = (overrides?: Partial<TransferBudgetRun>): TransferBudgetRun => ({
   ...overrides,
 });
 
-it("fails when a resumed bootstrap exceeds its provider ceiling", () => {
+it("fails when a retained large result exceeds the cold bootstrap ceiling", () => {
   assert.deepEqual(transferBudgetViolations([run()]), []);
+  assert.deepEqual(transferBudgetViolations([run({ threadSnapshot: httpMeasurement(7_501) })]), [
+    "codex: thread snapshot wire bytes was 7501, maximum 7500",
+  ]);
+});
+
+it("fails when a resumed client replays a full snapshot", () => {
   assert.deepEqual(
     transferBudgetViolations([run({ resumedThreadSnapshot: httpMeasurement(7_501) })]),
     ["codex: resumed thread snapshot wire bytes was 7501, maximum 7500"],
   );
 });
 
-it("fails when a fanout or largest-message ceiling regresses", () => {
+it("fails when duplicated task events exceed the message ceiling", () => {
+  assert.deepEqual(
+    transferBudgetViolations([
+      run({ measuredTurnWebSocket: webSocketMeasurement({ messages: 22 }) }),
+    ]),
+    ["codex: measured-turn WebSocket messages was 22, maximum 21"],
+  );
+});
+
+it("fails when frame, decoded, or fanout ceilings regress", () => {
   assert.deepEqual(
     transferBudgetViolations([
       run({
-        measuredTurnWebSocket: webSocketMeasurement({ largestMessageBytes: 12_001 }),
+        measuredTurnWebSocket: webSocketMeasurement({
+          wireBytes: 8_001,
+          decodedBytes: 68_001,
+          largestMessageBytes: 12_001,
+        }),
         fanoutClients: 3,
       }),
     ]),
     [
+      "codex: measured-turn WebSocket wire bytes was 8001, maximum 8000",
+      "codex: measured-turn WebSocket decoded bytes was 68001, maximum 68000",
       "codex: measured-turn largest WebSocket message bytes was 12001, maximum 12000",
       "codex: fanout clients was 3, maximum 2",
     ],
