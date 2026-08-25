@@ -96,7 +96,9 @@ import {
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  type WorkLogEntry,
 } from "../session-logic";
+import { nativeTerminalLaunchPlan } from "../nativeTerminalFallback";
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import {
@@ -2892,13 +2894,84 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiState.terminalIds.length,
     terminalUiState.terminalOpen,
   ]);
-  const openNativeTerminalFallback = useCallback(() => {
-    if (terminalUiState.terminalOpen) {
+  const openNativeTerminalFallback = useCallback(
+    async (fallback: NonNullable<WorkLogEntry["nativeTerminalFallback"]>) => {
+      if (!activeThreadRef || !activeThreadId || !activeProject) return;
+      const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+      if (!cwdForOpen) return;
+
+      const plan = nativeTerminalLaunchPlan(fallback);
+      const terminalExists = terminalUiState.terminalIds.includes(plan.terminalId);
+      if (terminalExists) {
+        storeSetActiveTerminal(activeThreadRef, plan.terminalId);
+      } else {
+        storeEnsureTerminal(activeThreadRef, plan.terminalId, { open: true });
+      }
+      setTerminalOpen(true);
       setTerminalFocusRequestId((current) => current + 1);
-      return;
-    }
-    toggleTerminalVisibility();
-  }, [terminalUiState.terminalOpen, toggleTerminalVisibility]);
+      if (terminalExists && runningTerminalIds.includes(plan.terminalId)) return;
+
+      const openResult = await openTerminal({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          terminalId: plan.terminalId,
+          cwd: cwdForOpen,
+          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+          env: projectScriptRuntimeEnv({
+            project: { cwd: activeProject.workspaceRoot },
+            worktreePath: activeThreadWorktreePath,
+          }),
+        },
+      });
+      if (openResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(openResult)) {
+          const error = squashAtomCommandFailure(openResult);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error
+              ? error.message
+              : `Failed to open the native ${fallback.runtime.toUpperCase()} terminal.`,
+          );
+        }
+        return;
+      }
+
+      const writeResult = await writeTerminal({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          terminalId: plan.terminalId,
+          data: `${plan.command}\r`,
+        },
+      });
+      if (writeResult._tag === "Failure" && !isAtomCommandInterrupted(writeResult)) {
+        const error = squashAtomCommandFailure(writeResult);
+        setThreadError(
+          activeThreadId,
+          error instanceof Error
+            ? error.message
+            : `Failed to start the native ${fallback.runtime.toUpperCase()} client.`,
+        );
+      }
+    },
+    [
+      activeProject,
+      activeThreadId,
+      activeThreadRef,
+      activeThreadWorktreePath,
+      environmentId,
+      gitCwd,
+      openTerminal,
+      runningTerminalIds,
+      setTerminalOpen,
+      setThreadError,
+      storeEnsureTerminal,
+      storeSetActiveTerminal,
+      terminalUiState.terminalIds,
+      writeTerminal,
+    ],
+  );
   const splitTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
       if (!activeThreadRef || hasReachedSplitLimit || !activeThreadId || !activeProject) {

@@ -298,14 +298,21 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
         }
         const bashToolTurn = message.includes("NATIVE-MATRIX-TOOL") && !hasToolResult;
         const parentTaskTurn = message.includes("NATIVE-MATRIX-SUBAGENT-PARENT") && !hasToolResult;
-        const childTaskTurn = bodyText.includes("NATIVE-MATRIX-SUBAGENT-CHILD") && !hasToolResult;
-        const toolTurn = bashToolTurn || parentTaskTurn || childTaskTurn;
+        const parityTaskTurn =
+          message.includes("NATIVE-MATRIX-SUBAGENT-PARITY-PARENT") && !hasToolResult;
+        const childTaskTurn =
+          bodyText.includes("NATIVE-MATRIX-SUBAGENT-CHILD") &&
+          !bodyText.includes("NATIVE-MATRIX-SUBAGENT-PARITY-CHILD") &&
+          !hasToolResult;
+        const toolTurn = bashToolTurn || parentTaskTurn || parityTaskTurn || childTaskTurn;
         const toolName = bashToolTurn ? "bash" : "task";
         const toolArguments = bashToolTurn
           ? '{"command":"printf NATIVE-MATRIX-TOOL-OK"}'
-          : parentTaskTurn
-            ? '{"name":"MatrixChild","agent":"task","task":"NATIVE-MATRIX-SUBAGENT-CHILD"}'
-            : '{"name":"MatrixGrandchild","agent":"sonic","task":"NATIVE-MATRIX-SUBAGENT-GRANDCHILD-HOLD"}';
+          : parityTaskTurn
+            ? '{"name":"MatrixParityChild","agent":"task","task":"NATIVE-MATRIX-SUBAGENT-PARITY-CHILD"}'
+            : parentTaskTurn
+              ? '{"name":"MatrixChild","agent":"task","task":"NATIVE-MATRIX-SUBAGENT-CHILD"}'
+              : '{"name":"MatrixGrandchild","agent":"sonic","task":"NATIVE-MATRIX-SUBAGENT-GRANDCHILD-HOLD"}';
         const marker = hasToolResult
           ? "NATIVE-MATRIX-TOOL-OK"
           : message.includes("RESTORED")
@@ -1114,6 +1121,7 @@ export const writeNativeLiveConfig = (
   config: NativeLiveConfig,
   agentDirectory: string,
   modelServer: NativeLiveModelServer,
+  options?: { readonly asyncEnabled?: boolean },
 ): Effect.Effect<void, NativeLiveRuntimeError> =>
   Effect.tryPromise({
     try: async () => {
@@ -1185,7 +1193,7 @@ export const writeNativeLiveConfig = (
           "  task: local/test",
           "  smol: local/test",
           "async:",
-          "  enabled: true",
+          `  enabled: ${options?.asyncEnabled ?? true}`,
           "task:",
           "  isolation:",
           "    mode: none",

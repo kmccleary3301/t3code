@@ -1,7 +1,11 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const {
+  readResult,
   renderComment,
   resolve,
   upsertCommentForCurrentHead,
@@ -32,7 +36,8 @@ function result(overrides = {}) {
     fanoutClients: 2,
   };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    sourceHead: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     scenario: {
       id: "thread-transfer-v1",
       historyTurns: 10,
@@ -68,8 +73,10 @@ function legacyResult() {
     "measuredTurnWebSocketMessages",
   ];
   const pick = (value, keys) => Object.fromEntries(keys.map((key) => [key, value[key]]));
+  const { sourceHead: _, ...legacy } = current;
   return {
-    ...current,
+    ...legacy,
+    schemaVersion: 1,
     providers: Object.fromEntries(
       ["codex", "claudeAgent"].map((provider) => [
         provider,
@@ -82,16 +89,30 @@ function legacyResult() {
   };
 }
 
-test("validates the fixed artifact schema", () => {
-  assert.equal(validateResult(result()).schemaVersion, 1);
+test("validates the source-head-bound artifact schema", () => {
+  assert.equal(validateResult(result()).schemaVersion, 2);
   assert.throws(
     () => validateResult({ ...result(), injectedMarkdown: "@everyone" }),
     /unexpected fields/,
   );
+  assert.throws(() => validateResult({ ...result(), sourceHead: "stale" }), /full Git SHA/);
   assert.throws(
     () => validateResult(result({ totalWireBytes: "lots" })),
     /non-negative safe integer/,
   );
+});
+
+test("refuses an artifact bound to a stale source head", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "t3-transfer-result-"));
+  try {
+    fs.writeFileSync(path.join(directory, "thread-transfer-result.json"), JSON.stringify(result()));
+    assert.throws(
+      () => readResult(directory, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+      /stale thread transfer result/,
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 test("accepts a legacy two-provider baseline during schema rollout", () => {
   const baseline = legacyResult();

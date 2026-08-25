@@ -8,6 +8,7 @@ const required = (name) => {
   if (!value) throw new Error(`${name} is required`);
   return value;
 };
+const optional = (name) => process.env[name]?.trim() || undefined;
 const platform = { Windows: "win32", macOS: "darwin", Linux: "linux" }[required("RUNNER_OS")];
 const architecture = { X64: "x64", ARM64: "arm64" }[required("RUNNER_ARCH")];
 if (!platform || !architecture)
@@ -23,8 +24,8 @@ const runtimeIdentity = (binary) => {
     timeout: 10_000,
     ...(platform === "win32" && /\.(?:cmd|bat)$/iu.test(path) ? { shell: true } : {}),
   }).trim();
-  if (!versionOutput) throw new Error(`${path} returned an empty version`);
-  return { path, sha256: sha256(path), versionOutput };
+  if (!versionOutput) throw new Error(`${NodePath.basename(path)} returned an empty version`);
+  return { name: NodePath.basename(path), sha256: sha256(path), versionOutput };
 };
 
 const outputPath = required("T3_NATIVE_PROVENANCE_REPORT");
@@ -55,16 +56,34 @@ const ompAddons = NodeFS.readdirSync(ompAddonDirectory)
   });
 if (ompAddons.length === 0) throw new Error("No built OMP native addons were found");
 
+const sourceHead = required("T3_EVIDENCE_SOURCE_HEAD");
+if (!/^[0-9a-f]{40}$/u.test(sourceHead)) {
+  throw new Error("Evidence source head is not a full Git SHA");
+}
+
+const lifecycleRepository = optional("T3_LIFECYCLE_REPOSITORY");
+const lifecycleReleaseTag = optional("T3_LIFECYCLE_RELEASE_TAG");
+const lifecyclePreviousTag = optional("T3_LIFECYCLE_PREVIOUS_TAG");
+if (
+  [lifecycleRepository, lifecycleReleaseTag, lifecyclePreviousTag].filter(Boolean).length !== 0 &&
+  (!lifecycleRepository || !lifecycleReleaseTag || !lifecyclePreviousTag)
+) {
+  throw new Error("Lifecycle release provenance must be complete when provided");
+}
+
 const report = {
   schemaVersion: 1,
-  sourceHead: required("GITHUB_SHA"),
+  sourceHead,
   platform,
   architecture,
-  release: {
-    repository: required("T3_LIFECYCLE_REPOSITORY"),
-    currentTag: required("T3_LIFECYCLE_RELEASE_TAG"),
-    previousTag: required("T3_LIFECYCLE_PREVIOUS_TAG"),
-  },
+  release:
+    lifecycleRepository && lifecycleReleaseTag && lifecyclePreviousTag
+      ? {
+          repository: lifecycleRepository,
+          currentTag: lifecycleReleaseTag,
+          previousTag: lifecyclePreviousTag,
+        }
+      : null,
   pi: {
     package: piPackage.name,
     version: piPackage.version,

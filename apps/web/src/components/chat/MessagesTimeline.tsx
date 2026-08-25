@@ -2711,13 +2711,13 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               <button
                 type="button"
                 className="max-w-full shrink-0 whitespace-normal rounded-md border border-border/70 px-2 py-1 text-left text-xs font-medium text-foreground transition hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
-                aria-label={`Open native ${terminalFallback.runtime.toUpperCase()} terminal for provider ${terminalFallback.providerInstanceId}`}
+                aria-label={`Open ${terminalFallback.runtime.toUpperCase()} client in terminal for provider ${terminalFallback.providerInstanceId}`}
                 onClick={(event) => {
                   event.stopPropagation();
                   onOpenNativeTerminal(terminalFallback);
                 }}
               >
-                Open native {terminalFallback.runtime.toUpperCase()} terminal
+                Open {terminalFallback.runtime.toUpperCase()} client in terminal
               </button>
             ) : null}
           </div>

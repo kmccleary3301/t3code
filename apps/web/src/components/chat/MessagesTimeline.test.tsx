@@ -764,8 +764,8 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("This operation requires the native OMP terminal.");
-    expect(markup).toContain("Open native OMP terminal");
-    expect(markup).toContain('aria-label="Open native OMP terminal for provider omp-main"');
+    expect(markup).toContain("Open OMP client in terminal");
+    expect(markup).toContain('aria-label="Open OMP client in terminal for provider omp-main"');
   });
 
   it("summarizes changed files in one line", () => {

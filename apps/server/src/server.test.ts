@@ -189,6 +189,7 @@ import {
   makeNativeLiveModelServer,
   nativeLiveTraceSinkFactory,
   writeNativeLiveConfig,
+  writeNativeLiveExtension,
 } from "../integration/NativeLiveRuntime.integration.ts";
 import type { JsonRecord } from "./provider/piFamily/protocol.ts";
 import {
@@ -10138,6 +10139,65 @@ for (const config of configuredNativeLiveConfigurations()) {
   );
 }
 
+const nativeParityNondeterministicFields = new Set([
+  "id",
+  "turnId",
+  "assistantMessageId",
+  "checkpointRef",
+  "activeTurnId",
+  "eventId",
+  "sessionId",
+  "leafEntryId",
+  "sessionFile",
+  "createdAt",
+  "updatedAt",
+  "requestedAt",
+  "startedAt",
+  "completedAt",
+  "runtimeVersion",
+  "timestamp",
+  "sequence",
+]);
+
+const normalizeNativeParityValue = <A>(value: A): A => {
+  const identities = new Map<string, string>();
+  const visit = (current: unknown, field?: string): unknown => {
+    if (field !== undefined && nativeParityNondeterministicFields.has(field)) {
+      const serialized = JSON.stringify(current);
+      const existing = identities.get(serialized);
+      if (existing !== undefined) return existing;
+      const replacement = `<${field}:${identities.size + 1}>`;
+      identities.set(serialized, replacement);
+      return replacement;
+    }
+    if (Array.isArray(current)) return current.map((entry) => visit(entry));
+    if (typeof current !== "object" || current === null) return current;
+    return Object.fromEntries(
+      Object.entries(current)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, visit(entry, key)]),
+    );
+  };
+  return visit(value) as A;
+};
+
+const scrubNativeCheckpointReplayData = (value: unknown, field?: string): unknown => {
+  if (
+    field !== undefined &&
+    field !== "runtimeVersion" &&
+    nativeParityNondeterministicFields.has(field)
+  ) {
+    return `<redacted-${field}>`;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => scrubNativeCheckpointReplayData(entry));
+  }
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, scrubNativeCheckpointReplayData(entry, key)]),
+  );
+};
+
 const runNativeHttpParityScenario = (
   harness: OrchestrationIntegrationHarness,
   runtime: "pi" | "omp",
@@ -10149,7 +10209,7 @@ const runNativeHttpParityScenario = (
     const threadId = ThreadId.make(`native-parity-${runtime}-thread`);
     const modelSelection = {
       instanceId: ProviderInstanceId.make(runtime),
-      model: scenario === "live" ? "local/test" : `${runtime}/replay-model`,
+      model: "local/test",
     } as const;
     const createdAt = "2026-08-25T00:00:00.000Z";
     yield* harness.engine.dispatch({
@@ -10223,12 +10283,15 @@ const runNativeHttpParityScenario = (
       withWsRpcClient(authenticatedWsUrl, (client) =>
         client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
           type: "thread.turn.start",
-          commandId: CommandId.make(`native-parity:${runtime}:${scenario}:turn`),
+          commandId: CommandId.make(`native-parity:${runtime}:turn`),
           threadId,
           message: {
             messageId: MessageId.make(`native-parity-${runtime}-user`),
             role: "user",
-            text: `Reply with the NATIVE-MATRIX-OK marker for ${runtime}.`,
+            text:
+              runtime === "pi"
+                ? "NATIVE-MATRIX-TASK: emit semantic host task lifecycle, then reply with the NATIVE-MATRIX-OK marker for pi."
+                : "NATIVE-MATRIX-SUBAGENT-PARITY-PARENT: complete one nested task, then reply with the NATIVE-MATRIX-OK marker for omp.",
             attachments: [],
           },
           modelSelection,
@@ -10241,16 +10304,31 @@ const runNativeHttpParityScenario = (
     yield* harness.waitForThread(
       threadId,
       (thread) =>
-        thread.latestTurn?.state === "completed" &&
-        thread.session?.status === "ready" &&
-        thread.messages.some(
-          (message) =>
-            message.role === "assistant" &&
-            !message.streaming &&
-            message.text.includes("NATIVE-MATRIX-OK"),
-        ),
+        runtime === "pi"
+          ? thread.latestTurn?.state === "completed" &&
+            thread.session?.status === "ready" &&
+            thread.messages.some(
+              (message) =>
+                message.role === "assistant" &&
+                !message.streaming &&
+                message.text.includes("NATIVE-MATRIX-OK"),
+            )
+          : thread.activities.some((activity) => activity.kind.startsWith("task.")),
       30_000,
     );
+    if (runtime === "omp") {
+      yield* harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make(`native-parity:${runtime}:stop-active-task`),
+        threadId,
+        createdAt,
+      });
+      yield* harness.waitForThread(
+        threadId,
+        (thread) => thread.session?.status === "stopped",
+        30_000,
+      );
+    }
     yield* harness.drainProviderRuntime;
     yield* harness.drainCheckpointReactor;
     const persistedEvents = yield* harness.engine
@@ -10280,17 +10358,19 @@ const runNativeHttpParityScenario = (
     );
     const finalSnapshot = yield* readSnapshot();
     const capturedTrace = captured?.slice() ?? [];
-    yield* harness.engine.dispatch({
-      type: "thread.session.stop",
-      commandId: CommandId.make(`native-parity:${runtime}:${scenario}:stop`),
-      threadId,
-      createdAt,
-    });
-    yield* harness.waitForThread(
-      threadId,
-      (thread) => thread.session?.status === "stopped",
-      30_000,
-    );
+    if (finalSnapshot.thread.session?.status !== "stopped") {
+      yield* harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make(`native-parity:${runtime}:stop`),
+        threadId,
+        createdAt,
+      });
+      yield* harness.waitForThread(
+        threadId,
+        (thread) => thread.session?.status === "stopped",
+        30_000,
+      );
+    }
     const exitDeadline = (yield* Clock.currentTimeMillis) + 30_000;
     while (true) {
       const sessions = yield* harness.providerService.listSessions();
@@ -10300,31 +10380,66 @@ const runNativeHttpParityScenario = (
       }
       yield* Effect.sleep(10);
     }
+    const activities = finalSnapshot.thread.activities
+      .map((activity) => ({
+        kind: activity.kind,
+        summary: activity.summary,
+        payload: activity.payload,
+      }))
+      .sort((left, right) =>
+        `${left.kind}:${left.summary}:${JSON.stringify(left.payload)}`.localeCompare(
+          `${right.kind}:${right.summary}:${JSON.stringify(right.payload)}`,
+        ),
+      );
+    const taskTree = activities.filter((activity) => activity.kind.startsWith("task."));
+    const websocketEvents = streamEvents
+      .map((event) => {
+        const {
+          eventId: _eventId,
+          sequence: _sequence,
+          commandId: _commandId,
+          correlationId: _correlationId,
+          causationEventId: _causationEventId,
+          occurredAt: _occurredAt,
+          ...canonical
+        } = event;
+        return normalizeNativeParityValue(canonical);
+      })
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    const checkpointOpaque = finalSnapshot.thread.checkpoints.at(-1)?.nativeCheckpoint?.opaque;
+    const checkpointResponseData =
+      typeof checkpointOpaque === "object" &&
+      checkpointOpaque !== null &&
+      !Array.isArray(checkpointOpaque) &&
+      typeof (checkpointOpaque as JsonRecord).opaque === "object" &&
+      (checkpointOpaque as JsonRecord).opaque !== null &&
+      !Array.isArray((checkpointOpaque as JsonRecord).opaque)
+        ? (scrubNativeCheckpointReplayData((checkpointOpaque as JsonRecord).opaque) as JsonRecord)
+        : undefined;
     return {
-      http: {
+      http: normalizeNativeParityValue({
+        modelSelection: finalSnapshot.thread.modelSelection,
         messages: finalSnapshot.thread.messages.map((message) => ({
+          id: String(message.id),
           role: message.role,
           text: message.text,
           streaming: message.streaming,
         })),
-        activities: finalSnapshot.thread.activities
-          .filter((activity) => activity.kind !== "checkpoint.captured")
-          .map((activity) => ({
-            kind: activity.kind,
-            summary: activity.summary,
-          }))
-          .sort((left, right) =>
-            `${left.kind}:${left.summary}`.localeCompare(`${right.kind}:${right.summary}`),
-          ),
+        activities,
+        taskTree,
         checkpoints: finalSnapshot.thread.checkpoints.map((checkpoint) => ({
+          turnId: String(checkpoint.turnId),
+          checkpointRef: String(checkpoint.checkpointRef),
+          checkpointTurnCount: checkpoint.checkpointTurnCount,
           status: checkpoint.status,
-          nativeRuntime: checkpoint.nativeCheckpoint?.runtime ?? null,
+          nativeCheckpoint: checkpoint.nativeCheckpoint,
         })),
-        latestTurnState: finalSnapshot.thread.latestTurn?.state ?? null,
-        sessionStatus: finalSnapshot.thread.session?.status ?? null,
-      },
-      websocketEventTypes: streamEvents.map((event) => event.type).sort(),
+        latestTurn: finalSnapshot.thread.latestTurn,
+        session: finalSnapshot.thread.session,
+      }),
+      websocketEvents,
       capturedTrace,
+      checkpointResponseData,
     };
   });
 
@@ -10339,7 +10454,10 @@ for (const config of configuredNativeLiveConfigurations()) {
             makeNativeLiveAgentDirectory(`t3-native-parity-${config.runtime}-`),
             (agentDirectory) =>
               Effect.gen(function* () {
-                yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
+                yield* writeNativeLiveConfig(config, agentDirectory, modelServer, {
+                  asyncEnabled: config.runtime !== "omp",
+                });
+                const extensionPath = yield* writeNativeLiveExtension(agentDirectory);
                 const captured: JsonRecord[] = [];
                 const live = yield* Effect.acquireUseRelease(
                   makeOrchestrationIntegrationHarness({
@@ -10347,7 +10465,7 @@ for (const config of configuredNativeLiveConfigurations()) {
                     nativeLive: {
                       runtime: config.runtime,
                       binaryPath: config.binaryPath,
-                      launchArguments: config.launchArguments,
+                      launchArguments: [...config.launchArguments, "--extension", extensionPath],
                       agentDirectory,
                       environment: { PI_OFFLINE: "1", PI_NO_PTY: "1" },
                       ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
@@ -10369,9 +10487,30 @@ for (const config of configuredNativeLiveConfigurations()) {
                   `${config.runtime} live prompt capture was empty`,
                 );
                 assert.isTrue(
-                  live.capturedTrace.some((frame) => frame.type === "agent_end"),
-                  `${config.runtime} live prompt capture had no terminal agent event`,
+                  live.capturedTrace.some((frame) =>
+                    config.runtime === "pi"
+                      ? frame.type === "agent_end"
+                      : frame.type === "subagent_event" ||
+                        frame.type === "tool_execution_start" ||
+                        frame.type === "host_task_started",
+                  ),
+                  `${config.runtime} live prompt capture lacked the scenario's terminal or task event`,
                 );
+                assert.isNotEmpty(
+                  live.http.taskTree,
+                  `${config.runtime} live parity scenario must project native task state`,
+                );
+                if (config.runtime === "pi") {
+                  assert.isNotEmpty(
+                    live.http.checkpoints,
+                    "Pi live parity scenario must project native checkpoint state",
+                  );
+                } else {
+                  assert.isEmpty(
+                    live.http.checkpoints,
+                    "OMP live parity scenario must preserve unsupported native-checkpoint truth",
+                  );
+                }
                 const replay = yield* Effect.acquireUseRelease(
                   makeOrchestrationIntegrationHarness({
                     provider: config.provider,
@@ -10380,6 +10519,7 @@ for (const config of configuredNativeLiveConfigurations()) {
                       launchArguments: nativeReplayLaunchArguments(
                         config.runtime,
                         live.capturedTrace,
+                        live.checkpointResponseData,
                       ),
                     },
                   }),
@@ -10396,9 +10536,9 @@ for (const config of configuredNativeLiveConfigurations()) {
                   `${config.runtime} live and replay HTTP snapshots must match`,
                 );
                 assert.deepEqual(
-                  replay.websocketEventTypes,
-                  live.websocketEventTypes,
-                  `${config.runtime} live and replay WebSocket event sequences must match`,
+                  replay.websocketEvents,
+                  live.websocketEvents,
+                  `${config.runtime} live and replay WebSocket events must match`,
                 );
               }),
             (agentDirectory) =>
@@ -10624,7 +10764,10 @@ it.live(
         { concurrency: 1 },
       );
 
-      const report = formatTransferBudgetReport(runs);
+      const sourceHead = yield* Config.string("T3CODE_TRANSFER_BUDGET_SOURCE_HEAD").pipe(
+        Config.option,
+      );
+      const report = formatTransferBudgetReport(runs, Option.getOrUndefined(sourceHead));
       yield* Effect.logInfo(`\n${report}`);
       const reportPath = yield* Config.string("T3CODE_TRANSFER_BUDGET_REPORT_PATH").pipe(
         Config.option,
@@ -10637,8 +10780,16 @@ it.live(
         Config.option,
       );
       if (Option.isSome(resultPath)) {
+        if (Option.isNone(sourceHead)) {
+          return yield* Effect.die(
+            "T3CODE_TRANSFER_BUDGET_SOURCE_HEAD is required when writing a result",
+          );
+        }
         const fileSystem = yield* FileSystem.FileSystem;
-        yield* fileSystem.writeFileString(resultPath.value, formatTransferBudgetResult(runs));
+        yield* fileSystem.writeFileString(
+          resultPath.value,
+          formatTransferBudgetResult(runs, sourceHead.value),
+        );
       }
       assert.deepEqual(transferBudgetViolations(runs), []);
     }).pipe(Effect.provide(NodeServices.layer)),

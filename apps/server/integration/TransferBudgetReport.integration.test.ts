@@ -6,6 +6,7 @@ import type {
   WebSocketTransferTotals,
 } from "./NetworkTransferMeasurement.integration.ts";
 import {
+  formatTransferBudgetResult,
   transferBudgetViolations,
   type TransferBudgetRun,
 } from "./TransferBudgetReport.integration.ts";
@@ -37,6 +38,14 @@ const run = (overrides?: Partial<TransferBudgetRun>): TransferBudgetRun => ({
   measuredTurnWebSocket: webSocketMeasurement(),
   fanoutClients: 2,
   ...overrides,
+});
+
+it("binds the machine report to an exact source head", () => {
+  const sourceHead = "a".repeat(40);
+  const result = JSON.parse(formatTransferBudgetResult([run()], sourceHead));
+  assert.equal(result.schemaVersion, 2);
+  assert.equal(result.sourceHead, sourceHead);
+  assert.throws(() => formatTransferBudgetResult([run()], "stale"), /full Git SHA/);
 });
 
 it("fails when a retained large result exceeds the cold bootstrap ceiling", () => {

@@ -104,7 +104,13 @@ function observedTransfer(run: TransferBudgetRun) {
 }
 
 /** Machine-readable input for the trusted PR comment publisher. */
-export function formatTransferBudgetResult(runs: ReadonlyArray<TransferBudgetRun>): string {
+export function formatTransferBudgetResult(
+  runs: ReadonlyArray<TransferBudgetRun>,
+  sourceHead: string,
+): string {
+  if (!/^[0-9a-f]{40}$/u.test(sourceHead)) {
+    throw new Error("transfer budget source head must be a full Git SHA");
+  }
   const providers = Object.fromEntries(
     runs.flatMap((run) => {
       const ceiling = TRANSFER_BUDGETS[run.provider];
@@ -114,7 +120,8 @@ export function formatTransferBudgetResult(runs: ReadonlyArray<TransferBudgetRun
 
   return `${JSON.stringify(
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
+      sourceHead,
       scenario: {
         id: "thread-transfer-v1",
         historyTurns: TRANSFER_HISTORY_TURN_COUNT,
@@ -197,9 +204,14 @@ export function transferBudgetViolations(runs: ReadonlyArray<TransferBudgetRun>)
   return violations;
 }
 
-export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun>): string {
+export function formatTransferBudgetReport(
+  runs: ReadonlyArray<TransferBudgetRun>,
+  sourceHead?: string,
+): string {
   const lines = [
     "# T3 Code thread transfer budget",
+    "",
+    `Source head: ${sourceHead ?? "unbound local run"}`,
     "",
     "Wire values are thread data bytes read from local HTTP and WebSocket sockets. HTTP includes response headers; WebSocket measurement starts after the resumed thread subscription synchronizes. TCP/IP, TLS framing, and the WebSocket upgrade are excluded. WebSocket permessage-deflate is negotiated.",
     `Scenario: ${TRANSFER_HISTORY_TURN_COUNT} historical turns with ${TRANSFER_HISTORY_TOOLS_PER_TURN} command tools and one retained ${formatBytes(TRANSFER_HISTORY_MCP_RESULT_BYTES)} MCP result each, followed by one measured turn with ${TRANSFER_MEASURED_TOOLS} command tools and a retained ${formatBytes(TRANSFER_MEASURED_MCP_RESULT_BYTES)} MCP result. Payload sizes use deterministic, privacy-safe synthetic fixtures covering the Codex, Claude Agent, Pi, and OMP (Oh My Pi) provider families; no raw private traces or user data are committed.`,

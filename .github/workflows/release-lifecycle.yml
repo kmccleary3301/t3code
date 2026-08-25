@@ -69,12 +69,13 @@ jobs:
           bun --cwd=.native/omp/packages/coding-agent run build
       - name: Run stock native lifecycle and convergence
         env:
-          T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-${{ matrix.id }}.json
-          T3_NATIVE_MATRIX_REPORT: ${{ runner.temp }}/stock-native-matrix-${{ matrix.id }}.json
+          T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-${{ matrix.id }}.raw.json
+          T3_NATIVE_MATRIX_REPORT: ${{ runner.temp }}/stock-native-matrix-${{ matrix.id }}.raw.json
           T3_NATIVE_PROVENANCE_REPORT: ${{ runner.temp }}/stock-native-provenance-${{ matrix.id }}.json
           T3_LIFECYCLE_REPOSITORY: ${{ inputs.repository }}
           T3_LIFECYCLE_RELEASE_TAG: ${{ inputs.release_tag }}
           T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          T3_EVIDENCE_SOURCE_HEAD: ${{ github.sha }}
         run: |
           export T3_NATIVE_PI_BINARY="$(command -v pi)"
           export T3_NATIVE_OMP_BINARY="$PWD/.native/omp/packages/coding-agent/dist/omp"
@@ -95,6 +96,31 @@ jobs:
             -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers configured (pi|omp) after an isolated stock native process crash" \
             --reporter=json \
             --outputFile="$T3_NATIVE_MATRIX_REPORT"
+
+      - name: Sanitize native test evidence
+        if: always()
+        env:
+          T3_EVIDENCE_SOURCE_HEAD: ${{ github.sha }}
+          T3_NATIVE_PLATFORM: ${{ matrix.id }}
+        run: |
+          set -euo pipefail
+          sanitize() {
+            local input="$1"
+            local output="$2"
+            local kind="$3"
+            if [[ -f "$input" ]]; then
+              node apps/server/scripts/sanitize-vitest-evidence.mjs \
+                "$input" "$output" "$kind" "$T3_EVIDENCE_SOURCE_HEAD"
+            fi
+          }
+          sanitize \
+            "$RUNNER_TEMP/stock-native-root-$T3_NATIVE_PLATFORM.raw.json" \
+            "$RUNNER_TEMP/stock-native-root-$T3_NATIVE_PLATFORM.json" \
+            stock-native-root
+          sanitize \
+            "$RUNNER_TEMP/stock-native-matrix-$T3_NATIVE_PLATFORM.raw.json" \
+            "$RUNNER_TEMP/stock-native-matrix-$T3_NATIVE_PLATFORM.json" \
+            stock-native-matrix
 
       - name: Run release lifecycle
         env:
@@ -176,12 +202,13 @@ jobs:
       - name: Run stock native lifecycle and convergence
         shell: pwsh
         env:
-          T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-windows.json
-          T3_NATIVE_MATRIX_REPORT: ${{ runner.temp }}/stock-native-matrix-windows.json
+          T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-windows.raw.json
+          T3_NATIVE_MATRIX_REPORT: ${{ runner.temp }}/stock-native-matrix-windows.raw.json
           T3_NATIVE_PROVENANCE_REPORT: ${{ runner.temp }}/stock-native-provenance-windows.json
           T3_LIFECYCLE_REPOSITORY: ${{ inputs.repository }}
           T3_LIFECYCLE_RELEASE_TAG: ${{ inputs.release_tag }}
           T3_LIFECYCLE_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          T3_EVIDENCE_SOURCE_HEAD: ${{ github.sha }}
         run: |
           $env:T3_NATIVE_PI_BINARY = (Get-Command pi.cmd -ErrorAction Stop).Source
           $ompBinary = Join-Path $PWD ".native/omp/packages/coding-agent/dist/omp.exe"
@@ -216,6 +243,27 @@ jobs:
             throw "Native orchestration lifecycle failed with exit code $LASTEXITCODE"
           }
 
+      - name: Sanitize native test evidence
+        if: always()
+        shell: pwsh
+        env:
+          T3_EVIDENCE_SOURCE_HEAD: ${{ github.sha }}
+        run: |
+          $reports = @(
+            @("stock-native-root-windows.raw.json", "stock-native-root-windows.json", "stock-native-root"),
+            @("stock-native-matrix-windows.raw.json", "stock-native-matrix-windows.json", "stock-native-matrix")
+          )
+          foreach ($report in $reports) {
+            $inputPath = Join-Path $env:RUNNER_TEMP $report[0]
+            if (Test-Path $inputPath) {
+              $outputPath = Join-Path $env:RUNNER_TEMP $report[1]
+              node apps/server/scripts/sanitize-vitest-evidence.mjs `
+                $inputPath $outputPath $report[2] $env:T3_EVIDENCE_SOURCE_HEAD
+              if ($LASTEXITCODE -ne 0) {
+                throw "Native evidence sanitization failed with exit code $LASTEXITCODE"
+              }
+            }
+          }
       - name: Run release lifecycle
         shell: pwsh
         env:

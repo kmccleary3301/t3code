@@ -100,6 +100,7 @@ jobs:
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
+          T3CODE_TRANSFER_BUDGET_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: vp run test
       - name: Pi and OMP protocol fixture tests
         run: >-
@@ -176,9 +177,10 @@ jobs:
       - name: Run credential-free stock native matrix
         if: steps.classify.outputs.replay_gate == 'true'
         env:
-          T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-ci.json
-          T3_NATIVE_MATRIX_REPORT: ${{ runner.temp }}/stock-native-matrix-ci.json
+          T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-ci.raw.json
+          T3_NATIVE_MATRIX_REPORT: ${{ runner.temp }}/stock-native-matrix-ci.raw.json
           T3_NATIVE_PROVENANCE_REPORT: ${{ runner.temp }}/stock-native-provenance-ci.json
+          T3_EVIDENCE_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           export T3_NATIVE_PI_BINARY="$(command -v pi)"
           export T3_NATIVE_OMP_BINARY="$PWD/.native/omp/packages/coding-agent/dist/omp"
@@ -199,6 +201,30 @@ jobs:
             -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers configured (pi|omp) after an isolated stock native process crash" \
             --reporter=json \
             --outputFile="$T3_NATIVE_MATRIX_REPORT"
+
+      - name: Sanitize native test evidence
+        if: always() && steps.classify.outputs.replay_gate == 'true'
+        env:
+          T3_EVIDENCE_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          sanitize() {
+            local input="$1"
+            local output="$2"
+            local kind="$3"
+            if [[ -f "$input" ]]; then
+              node apps/server/scripts/sanitize-vitest-evidence.mjs \
+                "$input" "$output" "$kind" "$T3_EVIDENCE_SOURCE_HEAD"
+            fi
+          }
+          sanitize \
+            "$RUNNER_TEMP/stock-native-root-ci.raw.json" \
+            "$RUNNER_TEMP/stock-native-root-ci.json" \
+            stock-native-root
+          sanitize \
+            "$RUNNER_TEMP/stock-native-matrix-ci.raw.json" \
+            "$RUNNER_TEMP/stock-native-matrix-ci.json" \
+            stock-native-matrix
 
       - name: Replay scrubbed Pi and OMP traces
         if: steps.classify.outputs.replay_gate == 'true'
@@ -223,6 +249,7 @@ jobs:
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
+          T3CODE_TRANSFER_BUDGET_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: >-
           vp test run
           apps/server/integration/TransferBudgetReport.integration.test.ts
@@ -231,6 +258,8 @@ jobs:
 
       - name: Measure deterministic performance baseline
         if: steps.classify.outputs.replay_gate == 'true'
+        env:
+          T3_EVIDENCE_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: vp run performance-baseline | tee "${RUNNER_TEMP}/pi-omp-performance.json"
 
       - name: Upload focused aggregate evidence

@@ -15,6 +15,7 @@ import {
 export function nativeReplayLaunchArguments(
   runtime: PiFamilyRuntimeKind,
   traceOverride?: readonly JsonRecord[],
+  checkpointOverride?: JsonRecord,
 ): readonly string[] {
   if (runtime !== "pi" && runtime !== "omp") {
     throw new Error(`Unsupported native replay runtime: ${runtime}`);
@@ -23,8 +24,10 @@ export function nativeReplayLaunchArguments(
   const trace =
     traceOverride ?? (runtime === "pi" ? piRecordedNativeTrace : ompRecordedNativeTrace);
   const capabilities = {
-    runtime,
-    runtimeVersion: "replay-capture",
+    runtimeVersion:
+      typeof checkpointOverride?.runtimeVersion === "string"
+        ? checkpointOverride.runtimeVersion
+        : "replay-capture",
     protocolVersion: runtime === "omp" ? 2 : 1,
     supportedProtocolVersions: runtime === "omp" ? [1, 2] : [1],
     ...(runtime === "omp"
@@ -77,6 +80,12 @@ export function nativeReplayLaunchArguments(
     `const runtime = ${JSON.stringify(runtime)};`,
     `const trace = ${JSON.stringify(trace satisfies readonly JsonRecord[])};`,
     `const capabilities = ${JSON.stringify(capabilities)};`,
+    `const checkpointData = ${JSON.stringify(
+      checkpointOverride ??
+        (runtime === "omp"
+          ? { runtime, sessionId: "replay-session", checkpointId: "replay-leaf" }
+          : { runtime, sessionId: "replay-session", leafEntryId: "replay-leaf" }),
+    )};`,
     'const out = value => process.stdout.write(JSON.stringify(value) + "\\n");',
     "const chunk = (value, index) => {",
     "  const bytes = Buffer.from(JSON.stringify(value));",
@@ -105,7 +114,7 @@ export function nativeReplayLaunchArguments(
     "    return;",
     "  }",
     '  if (command.type === "abort") { out({ id: command.id, type: "response", command: "abort", success: true }); return; }',
-    '  if (command.type === "capture_checkpoint" || command.type === "checkpoint") { const data = runtime === "omp" ? { runtime, sessionId: "replay-session", checkpointId: "replay-leaf" } : { runtime, sessionId: "replay-session", leafEntryId: "replay-leaf" }; out({ id: command.id, type: "response", command: command.type, success: true, data }); return; }',
+    '  if (command.type === "capture_checkpoint" || command.type === "checkpoint") { out({ id: command.id, type: "response", command: command.type, success: true, data: checkpointData }); return; }',
     '  if (command.type === "restore_checkpoint" || command.type === "rewind") { out({ id: command.id, type: "response", command: command.type, success: true, data: { rewound: true } }); return; }',
     "});",
   ].join("\n");
