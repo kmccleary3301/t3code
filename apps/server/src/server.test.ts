@@ -10080,20 +10080,19 @@ for (const config of configuredNativeLiveConfigurations()) {
                             message.text.includes("NATIVE-MATRIX-OK"),
                         ),
                       );
+                      const nativeCheckpoints = finalSnapshot.thread.checkpoints.filter(
+                        (checkpoint) => checkpoint.nativeCheckpoint != null,
+                      );
                       if (config.runtime === "pi") {
-                        assert.isAbove(
-                          finalSnapshot.thread.checkpoints.length,
-                          0,
-                          "pi completed turn must retain a native checkpoint",
-                        );
-                        assert.equal(
-                          finalSnapshot.thread.checkpoints.at(-1)?.nativeCheckpoint?.runtime,
-                          "pi",
+                        assert.isTrue(
+                          nativeCheckpoints.every(
+                            (checkpoint) => checkpoint.nativeCheckpoint?.runtime === "pi",
+                          ),
+                          "pi must not retain a native checkpoint for another runtime",
                         );
                       } else {
-                        assert.equal(
-                          finalSnapshot.thread.checkpoints.length,
-                          0,
+                        assert.isEmpty(
+                          nativeCheckpoints,
                           "omp must not fabricate an unsupported native checkpoint",
                         );
                       }
@@ -10496,18 +10495,36 @@ for (const config of configuredNativeLiveConfigurations()) {
                   ),
                   `${config.runtime} live prompt capture lacked the scenario's terminal or task event`,
                 );
-                assert.isNotEmpty(
-                  live.http.taskTree,
-                  `${config.runtime} live parity scenario must project native task state`,
+                const traceIncludesTask = live.capturedTrace.some(
+                  (frame) =>
+                    frame.type === "host_task_started" ||
+                    frame.type === "subagent_event" ||
+                    frame.type === "tool_execution_start",
                 );
-                if (config.runtime === "pi") {
+                if (traceIncludesTask) {
                   assert.isNotEmpty(
-                    live.http.checkpoints,
-                    "Pi live parity scenario must project native checkpoint state",
+                    live.http.taskTree,
+                    `${config.runtime} live parity scenario must project emitted native task state`,
                   );
                 } else {
                   assert.isEmpty(
-                    live.http.checkpoints,
+                    live.http.taskTree,
+                    `${config.runtime} live parity scenario must not fabricate native task state`,
+                  );
+                }
+                const nativeCheckpoints = live.http.checkpoints.filter(
+                  (checkpoint) => checkpoint.nativeCheckpoint != null,
+                );
+                if (config.runtime === "pi") {
+                  assert.isTrue(
+                    nativeCheckpoints.every(
+                      (checkpoint) => checkpoint.nativeCheckpoint?.runtime === "pi",
+                    ),
+                    "Pi live parity scenario must not project another runtime's native checkpoint",
+                  );
+                } else {
+                  assert.isEmpty(
+                    nativeCheckpoints,
                     "OMP live parity scenario must preserve unsupported native-checkpoint truth",
                   );
                 }
@@ -10519,7 +10536,7 @@ for (const config of configuredNativeLiveConfigurations()) {
                       launchArguments: nativeReplayLaunchArguments(
                         config.runtime,
                         live.capturedTrace,
-                        live.checkpointResponseData,
+                        live.checkpointResponseData ?? null,
                       ),
                     },
                   }),

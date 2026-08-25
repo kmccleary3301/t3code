@@ -15,7 +15,7 @@ import {
 export function nativeReplayLaunchArguments(
   runtime: PiFamilyRuntimeKind,
   traceOverride?: readonly JsonRecord[],
-  checkpointOverride?: JsonRecord,
+  checkpointOverride?: JsonRecord | null,
 ): readonly string[] {
   if (runtime !== "pi" && runtime !== "omp") {
     throw new Error(`Unsupported native replay runtime: ${runtime}`);
@@ -23,6 +23,13 @@ export function nativeReplayLaunchArguments(
 
   const trace =
     traceOverride ?? (runtime === "pi" ? piRecordedNativeTrace : ompRecordedNativeTrace);
+  const nativeCheckpointSupported = runtime === "pi" && checkpointOverride !== null;
+  const taskLifecycleSupported = trace.some(
+    (frame) =>
+      frame.type === "host_task_started" ||
+      frame.type === "subagent_event" ||
+      frame.type === "tool_execution_start",
+  );
   const capabilities = {
     runtimeVersion:
       typeof checkpointOverride?.runtimeVersion === "string"
@@ -51,7 +58,7 @@ export function nativeReplayLaunchArguments(
       tree: true,
       fork: true,
       compact: true,
-      nativeCheckpoint: runtime === "pi",
+      nativeCheckpoint: nativeCheckpointSupported,
       completeTurnRollback: false,
     },
     ui: {
@@ -66,7 +73,7 @@ export function nativeReplayLaunchArguments(
       arbitraryTerminalComponents: false,
     },
     tasks: {
-      lifecycle: true,
+      lifecycle: taskLifecycleSupported,
       nested: runtime === "omp",
       childTranscript: false,
       workflows: runtime === "omp",
@@ -81,10 +88,12 @@ export function nativeReplayLaunchArguments(
     `const trace = ${JSON.stringify(trace satisfies readonly JsonRecord[])};`,
     `const capabilities = ${JSON.stringify(capabilities)};`,
     `const checkpointData = ${JSON.stringify(
-      checkpointOverride ??
-        (runtime === "omp"
-          ? { runtime, sessionId: "replay-session", checkpointId: "replay-leaf" }
-          : { runtime, sessionId: "replay-session", leafEntryId: "replay-leaf" }),
+      checkpointOverride === null
+        ? null
+        : (checkpointOverride ??
+            (runtime === "omp"
+              ? { runtime, sessionId: "replay-session", checkpointId: "replay-leaf" }
+              : { runtime, sessionId: "replay-session", leafEntryId: "replay-leaf" })),
     )};`,
     'const out = value => process.stdout.write(JSON.stringify(value) + "\\n");',
     "const chunk = (value, index) => {",
