@@ -48,6 +48,25 @@ function Verify-File([string] $Path, [string] $SumsPath, [string] $Name) {
   return $actual
 }
 
+function Select-DesktopArtifact(
+  [object] $Manifest,
+  [string] $Platform,
+  [string] $Architecture
+) {
+  $artifact = @(
+    $Manifest.artifacts | Where-Object {
+      $_.kind -eq 'desktop' -and
+      $_.platform -eq $Platform -and
+      $_.arch -eq $Architecture -and
+      $_.path -notmatch '\.blockmap$'
+    }
+  ) | Select-Object -First 1
+  if ($null -eq $artifact) {
+    throw "manifest has no desktop artifact for $Platform/$Architecture"
+  }
+  return $artifact
+}
+
 function Download-Release([string] $Tag, [string] $Version) {
   $destination = Join-Path $root "releases\$Tag"
   New-Item -ItemType Directory -Force -Path $destination | Out-Null
@@ -64,9 +83,8 @@ function Download-Release([string] $Tag, [string] $Version) {
   if ($manifest.profile -ne "pi-omp") { Fail "unexpected manifest profile $($manifest.profile)" }
   if ($manifest.clientVersion -ne $Version) { Fail "unexpected manifest version $($manifest.clientVersion)" }
   $cli = @($manifest.artifacts | Where-Object { $_.kind -eq "cli" }) | Select-Object -First 1
-  $desktop = @($manifest.artifacts | Where-Object { $_.kind -eq "desktop" -and $_.path -match 'x64\.exe$' }) | Select-Object -First 1
+  $desktop = Select-DesktopArtifact $manifest 'windows' 'x64'
   if ($null -eq $cli) { Fail "manifest has no CLI artifact" }
-  if ($null -eq $desktop) { Fail "manifest has no Windows x64 desktop artifact" }
   $cliPath = Join-Path $destination $cli.path
   $desktopPath = Join-Path $destination $desktop.path
   Invoke-WebRequest -UseBasicParsing -Uri "$base/$($cli.path)" -OutFile $cliPath
@@ -96,6 +114,7 @@ function Invoke-Checked([string] $FilePath, [string[]] $Arguments) {
   return ($output -join "`n")
 }
 
+
 function Resolve-Cli([string] $Prefix) {
   $candidates = @(
     (Join-Path $Prefix "t3-pi-omp.cmd"),
@@ -112,6 +131,48 @@ function Assert-Cli([string] $Cli, [string] $Version) {
   if ($versionOutput -notlike "*$Version*") { Fail "expected CLI version $Version, got $versionOutput" }
   $helpOutput = Invoke-Checked $Cli @("--help")
   if ($helpOutput -notlike "*Run the T3 Code server*") { Fail "help output did not describe the server command" }
+}
+
+function Get-TreeDigest([string] $Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { return 'absent' }
+  $lines = Get-ChildItem -Force -Recurse -LiteralPath $Path |
+    Sort-Object FullName |
+    ForEach-Object {
+      $relative = [System.IO.Path]::GetRelativePath($Path, $_.FullName)
+      if ($_.PSIsContainer) {
+        "D`t$relative"
+      } else {
+        "F`t$relative`t$($_.Length)`t$(Get-Sha256 $_.FullName)"
+      }
+    }
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))
+  $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
+  return [System.Convert]::ToHexString($hash).ToLowerInvariant()
+}
+
+function Install-CliArchiveChecked(
+  [string] $Archive,
+  [string] $SumsPath,
+  [string] $ExpectedName,
+  [string] $Prefix
+) {
+  Verify-File $Archive $SumsPath $ExpectedName | Out-Null
+  Invoke-Checked 'npm.cmd' @(
+    'install', '--global', '--prefix', $Prefix, '--ignore-scripts',
+    '--no-audit', '--no-fund', $Archive
+  ) | Out-Null
+}
+
+function Assert-CliPrefixUnchanged(
+  [string] $Prefix,
+  [string] $ExpectedDigest,
+  [string] $ExpectedVersion
+) {
+  $actualDigest = Get-TreeDigest $Prefix
+  if ($actualDigest -ne $ExpectedDigest) {
+    Fail "failed install changed the CLI prefix: expected $ExpectedDigest, got $actualDigest"
+  }
+  Assert-Cli (Resolve-Cli $Prefix) $ExpectedVersion
 }
 
 function Install-Nsis([string] $Installer, [string] $Destination) {
@@ -152,11 +213,101 @@ try {
   $piBefore = Get-Sha256 $piState
   $ompBefore = Get-Sha256 $ompState
 
+
+  $officialVersion = '0.0.33'
+  $officialArtifact = "T3-Code-$officialVersion-x64.exe"
+  $officialExpectedSha = 'c472d849aaebec7d9ea625973c0f8106c4d31cc5b7affe7be605673666da5453'
+  $officialInstaller = Join-Path $root $officialArtifact
+  Invoke-WebRequest -UseBasicParsing `
+    -Uri "https://github.com/pingdotgg/t3code/releases/download/v$officialVersion/$officialArtifact" `
+    -OutFile $officialInstaller
+  if ((Get-Sha256 $officialInstaller) -ne $officialExpectedSha) {
+    Fail 'official T3 installer checksum mismatch'
+  }
+  $officialPrefix = Join-Path $root 'official-t3'
+  $officialInstallation = Install-Nsis $officialInstaller $officialPrefix
+  if ($officialInstallation.version -notlike "*$officialVersion*") {
+    Fail "official T3 install did not expose $officialVersion (got $($officialInstallation.version))"
+  }
+  $officialBefore = Get-TreeDigest $officialPrefix
+
+  $preexistingBin = Join-Path $root 'preexisting-command'
+  New-Item -ItemType Directory -Force -Path $preexistingBin | Out-Null
+  $preexistingCli = Join-Path $preexistingBin 't3.cmd'
+  Set-Content -LiteralPath $preexistingCli -Value "@echo off`r`necho preexisting-t3-command"
+  $preexistingBefore = Get-Sha256 $preexistingCli
+
   $cliPrefix = Join-Path $root 'cli'
   New-Item -ItemType Directory -Force -Path $cliPrefix | Out-Null
-  Invoke-Checked 'npm.cmd' @('install', '--global', '--prefix', $cliPrefix, '--ignore-scripts', '--no-audit', '--no-fund', $current.cliPath) | Out-Null
+  Install-CliArchiveChecked $previous.cliPath (Join-Path $previous.directory 'SHA256SUMS') $previous.cliName $cliPrefix
+  $cli = Resolve-Cli $cliPrefix
+  Assert-Cli $cli $previousVersion
+  $previousPrefixDigest = Get-TreeDigest $cliPrefix
+  $unsupportedPlatformRejected = $false
+  try {
+    $currentManifest = Get-Content -Raw -LiteralPath $current.manifest | ConvertFrom-Json
+    Select-DesktopArtifact $currentManifest 'windows' 'arm64' | Out-Null
+  } catch {
+    $unsupportedPlatformRejected = $true
+  }
+  if (-not $unsupportedPlatformRejected) {
+    Fail 'unsupported Windows arm64 desktop selection unexpectedly succeeded'
+  }
+  Assert-CliPrefixUnchanged $cliPrefix $previousPrefixDigest $previousVersion
+
+  $tamperedCli = Join-Path $root 'tampered-cli.tgz'
+  Copy-Item -LiteralPath $current.cliPath -Destination $tamperedCli
+  Add-Content -NoNewline -LiteralPath $tamperedCli -Value 'tampered'
+  $tamperedRejected = $false
+  try {
+    Install-CliArchiveChecked $tamperedCli (Join-Path $current.directory 'SHA256SUMS') $current.cliName $cliPrefix
+  } catch {
+    $tamperedRejected = $true
+  }
+  if (-not $tamperedRejected) { Fail 'tampered CLI install unexpectedly succeeded' }
+  Assert-CliPrefixUnchanged $cliPrefix $previousPrefixDigest $previousVersion
+
+  $partialCli = Join-Path $root 'partial-cli.tgz'
+  $currentCliBytes = [System.IO.File]::ReadAllBytes($current.cliPath)
+  [System.IO.File]::WriteAllBytes(
+    $partialCli,
+    $currentCliBytes[0..([Math]::Min(1023, $currentCliBytes.Length - 1))]
+  )
+  $partialRejected = $false
+  try {
+    Install-CliArchiveChecked $partialCli (Join-Path $current.directory 'SHA256SUMS') $current.cliName $cliPrefix
+  } catch {
+    $partialRejected = $true
+  }
+  if (-not $partialRejected) { Fail 'partial CLI install unexpectedly succeeded' }
+  Assert-CliPrefixUnchanged $cliPrefix $previousPrefixDigest $previousVersion
+
+  $missingRejected = $false
+  try {
+    Install-CliArchiveChecked (Join-Path $root 'missing-cli.tgz') `
+      (Join-Path $current.directory 'SHA256SUMS') $current.cliName $cliPrefix
+  } catch {
+    $missingRejected = $true
+  }
+  if (-not $missingRejected) { Fail 'missing CLI install unexpectedly succeeded' }
+  Assert-CliPrefixUnchanged $cliPrefix $previousPrefixDigest $previousVersion
+
+  Install-CliArchiveChecked $current.cliPath (Join-Path $current.directory 'SHA256SUMS') $current.cliName $cliPrefix
   $cli = Resolve-Cli $cliPrefix
   Assert-Cli $cli $currentVersion
+
+  $missingNodePath = Join-Path $root 'missing-node-path'
+  New-Item -ItemType Directory -Force -Path $missingNodePath | Out-Null
+  $savedPath = $env:PATH
+  $missingNodeExit = 0
+  try {
+    $env:PATH = $missingNodePath
+    & $cli --version *> $null
+    $missingNodeExit = $LASTEXITCODE
+  } finally {
+    $env:PATH = $savedPath
+  }
+  if ($missingNodeExit -eq 0) { Fail 'CLI unexpectedly launched without Node on PATH' }
 
   $port = Get-Random -Minimum 38773 -Maximum 39773
   $serverBase = Join-Path $root 'server-home'
@@ -185,6 +336,17 @@ try {
   if (-not $ready) { Get-Content -LiteralPath $serverStdout, $serverStderr -ErrorAction SilentlyContinue | Write-Error; Fail 'server readiness timed out' }
   Stop-ServerTree $serverProcess
   $serverProcess = $null
+  if (-not [string]::IsNullOrWhiteSpace($env:T3_LIFECYCLE_INSTALLED_NATIVE_REPORT)) {
+    if ([string]::IsNullOrWhiteSpace($env:T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT)) {
+      Fail 'T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT is required'
+    }
+    $env:T3_INSTALLED_CLI = $cli
+    $env:T3_INSTALLED_NATIVE_REPORT = $env:T3_LIFECYCLE_INSTALLED_NATIVE_REPORT
+    & 'vp' test run apps/server/integration/installedArtifactNative.integration.test.ts `
+      --reporter=json `
+      "--outputFile=$env:T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT"
+    if ($LASTEXITCODE -ne 0) { Fail 'installed artifact native smoke failed' }
+  }
 
   $desktopRoot = Join-Path $root 'desktop'
   $previousDesktop = Install-Nsis $previous.desktopPath $desktopRoot
@@ -208,6 +370,8 @@ try {
 
   if ((Get-Sha256 $piState) -ne $piBefore) { Fail 'Pi native state changed' }
   if ((Get-Sha256 $ompState) -ne $ompBefore) { Fail 'OMP native state changed' }
+  if ((Get-TreeDigest $officialPrefix) -ne $officialBefore) { Fail 'side-by-side official T3 installation changed' }
+  if ((Get-Sha256 $preexistingCli) -ne $preexistingBefore) { Fail 'pre-existing t3 command changed' }
 
   $report = [ordered]@{
     schemaVersion = 1
@@ -216,9 +380,24 @@ try {
     architecture = $env:PROCESSOR_ARCHITECTURE
     currentTag = $currentTag
     previousTag = $previousTag
-    checks = @('fresh-cli-install', 'version-help', 'server-health', 'fresh-desktop-install', 'desktop-upgrade', 'desktop-rollback', 'desktop-uninstall', 'cli-uninstall', 'native-config-preservation')
+    checks = @(
+      'fresh-cli-install', 'private-version-upgrade', 'version-help', 'server-health',
+      'tampered-checksum-no-mutation', 'partial-interrupted-download-no-mutation',
+      'missing-asset-no-mutation', 'unsupported-platform-no-mutation',
+      'missing-node-runtime',
+      'side-by-side-official-t3-installation', 'preexisting-t3-command-preservation',
+      'fresh-desktop-install', 'desktop-upgrade',
+      'desktop-rollback', 'desktop-uninstall', 'cli-uninstall',
+      'native-config-preservation'
+    )
     releases = @($previous, $current) | ForEach-Object {
       [ordered]@{ tag = $_.tag; installerSha256 = $_.installerSha256; manifestSha256 = $_.manifestSha256; cliSha256 = $_.cliSha256; desktopSha256 = $_.desktopSha256 }
+    }
+    officialT3 = [ordered]@{
+      version = $officialVersion
+      artifact = $officialArtifact
+      sha256 = $officialExpectedSha
+      installationDigest = $officialBefore
     }
   }
   $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath

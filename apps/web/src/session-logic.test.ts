@@ -902,6 +902,29 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
+  it("preserves explicit native terminal fallback actions", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "terminal-fallback",
+        kind: "runtime.warning",
+        summary: "Open the native OMP terminal for this thread to continue.",
+        payload: {
+          nativeTerminalFallback: {
+            runtime: "omp",
+            providerInstanceId: "omp-main",
+            feature: "setTitle",
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.nativeTerminalFallback).toEqual({
+      runtime: "omp",
+      providerInstanceId: "omp-main",
+      feature: "setTitle",
+    });
+  });
+
   it("omits task.started but shows task.progress and task.completed", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

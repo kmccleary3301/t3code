@@ -158,7 +158,10 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as Data from "effect/Data";
 
-import { makeOrchestrationIntegrationHarness } from "../integration/OrchestrationEngineHarness.integration.ts";
+import {
+  makeOrchestrationIntegrationHarness,
+  type OrchestrationIntegrationHarness,
+} from "../integration/OrchestrationEngineHarness.integration.ts";
 import {
   countingWsRpcProtocolLayer,
   makeCountingWsRpcClient,
@@ -182,10 +185,13 @@ import { nativeReplayLaunchArguments } from "../integration/NativeReplayRuntime.
 import {
   configuredNativeLiveConfigurations,
   makeNativeLiveAgentDirectory,
+  makeNativeLivePromptCaptureSinkFactory,
   makeNativeLiveModelServer,
   nativeLiveTraceSinkFactory,
   writeNativeLiveConfig,
+  writeNativeLiveExtension,
 } from "../integration/NativeLiveRuntime.integration.ts";
+import type { JsonRecord } from "./provider/piFamily/protocol.ts";
 import {
   formatTransferBudgetReport,
   formatTransferBudgetResult,
@@ -1400,25 +1406,27 @@ const getWsServerUrl = (
 
 // Mirrors NodeHttpServer.layerTest, which does not expose server options,
 // with the production `websocket: { perMessageDeflate: true }` setting.
-const NodeHttpServerTestWithWsDeflate = HttpServer.layerTestClient.pipe(
-  Layer.provide(
-    Layer.fresh(FetchHttpClient.layer).pipe(
-      Layer.provide(Layer.succeed(FetchHttpClient.RequestInit)({ keepalive: false })),
-    ),
-  ),
-  Layer.provideMerge(
-    Layer.unwrap(
-      Effect.map(
-        Effect.promise(() => import("node:http")),
-        (NodeHttp) =>
-          NodeHttpServer.layer(NodeHttp.createServer, {
-            port: 0,
-            websocket: { perMessageDeflate: true },
-          }),
+const makeNodeHttpServerTestWithWsDeflate = () =>
+  HttpServer.layerTestClient.pipe(
+    Layer.provide(
+      Layer.fresh(FetchHttpClient.layer).pipe(
+        Layer.provide(Layer.succeed(FetchHttpClient.RequestInit)({ keepalive: false })),
       ),
     ),
-  ),
-);
+    Layer.provideMerge(
+      Layer.unwrap(
+        Effect.map(
+          Effect.promise(() => import("node:http")),
+          (NodeHttp) =>
+            NodeHttpServer.layer(NodeHttp.createServer, {
+              port: 0,
+              websocket: { perMessageDeflate: true },
+            }),
+        ),
+      ),
+    ),
+  );
+const NodeHttpServerTestWithWsDeflate = makeNodeHttpServerTestWithWsDeflate();
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("parks HTTP ingress until command readiness", () =>
@@ -8726,6 +8734,709 @@ for (const providerName of convergenceProviders) {
     30_000,
   );
 }
+const restartConvergenceProviders = ["pi", "omp"] as const;
+for (const providerName of restartConvergenceProviders) {
+  const provider = ProviderDriverKind.make(providerName);
+  it.live(
+    `converges authenticated ${providerName} clients across a server restart during task and checkpoint activity`,
+    () =>
+      Effect.acquireUseRelease(
+        makeOrchestrationIntegrationHarness({ provider }),
+        (harness) =>
+          Effect.gen(function* () {
+            const targetProjectId = ProjectId.make(`restart-convergence-${providerName}-project`);
+            const targetThreadId = ThreadId.make(`restart-convergence-${providerName}-thread`);
+            const unrelatedThreadId = ThreadId.make(
+              `restart-convergence-${providerName}-unrelated-thread`,
+            );
+            const modelSelection = {
+              instanceId: ProviderInstanceId.make(providerName),
+              model: `${providerName}-restart-convergence-model`,
+            } as const;
+            const now = "2026-08-24T00:00:00.000Z";
+            const taskId = `restart-task-${providerName}`;
+            const assistantText = `${providerName} restart convergence response`;
+
+            yield* harness.engine.dispatch({
+              type: "project.create",
+              commandId: CommandId.make(`restart-convergence:${providerName}:project-create`),
+              projectId: targetProjectId,
+              title: `${providerName} restart convergence project`,
+              workspaceRoot: harness.workspaceDir,
+              defaultModelSelection: modelSelection,
+              createdAt: now,
+            });
+            yield* harness.engine.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`restart-convergence:${providerName}:thread-create`),
+              threadId: targetThreadId,
+              projectId: targetProjectId,
+              title: `${providerName} restart convergence target`,
+              modelSelection,
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: harness.workspaceDir,
+              createdAt: now,
+            });
+            yield* harness.engine.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`restart-convergence:${providerName}:unrelated-create`),
+              threadId: unrelatedThreadId,
+              projectId: targetProjectId,
+              title: `${providerName} restart convergence unrelated`,
+              modelSelection,
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: harness.workspaceDir,
+              createdAt: now,
+            });
+            const baseline = yield* harness.engine.dispatch({
+              type: "thread.activity.append",
+              commandId: CommandId.make(`restart-convergence:${providerName}:baseline`),
+              threadId: targetThreadId,
+              activity: {
+                id: EventId.make(`restart-convergence:${providerName}:baseline-activity`),
+                tone: "info",
+                kind: "restart.baseline",
+                summary: "baseline before restart",
+                payload: null,
+                turnId: null,
+                createdAt: now,
+              },
+              createdAt: now,
+            });
+            yield* harness.waitForThread(targetThreadId, (thread) =>
+              thread.activities.some((activity) => activity.kind === "restart.baseline"),
+            );
+
+            if (!harness.adapterHarness) {
+              return yield* Effect.die(
+                "The restart convergence test requires the deterministic adapter.",
+              );
+            }
+            const adapterHarness = harness.adapterHarness;
+
+            const makeTurnResponse = () => {
+              let nativeEventIndex = 0;
+              const createdAt = (offset: number) => `2026-08-24T00:00:0${offset}.000Z`;
+              const event = (type: string, suffix: string, payload?: unknown) => ({
+                type,
+                eventId: EventId.make(
+                  `restart-convergence:${providerName}:${suffix}:${++nativeEventIndex}`,
+                ),
+                provider,
+                createdAt: createdAt(nativeEventIndex),
+                threadId: String(targetThreadId),
+                turnId: `restart-turn-${providerName}`,
+                ...(payload === undefined ? {} : { payload }),
+              });
+
+              return {
+                events: [
+                  event("turn.started", "turn-started"),
+                  {
+                    ...event("message.delta", "message"),
+                    delta: assistantText,
+                  },
+                  event("task.started", "task-started", {
+                    taskId,
+                    taskType: "subagent",
+                    title: `${providerName} active task`,
+                  }),
+                  event("task.completed", "task-completed", {
+                    taskId,
+                    status: "completed",
+                    summary: `${providerName} active task completed`,
+                  }),
+                  {
+                    ...event("turn.completed", "turn-completed"),
+                    status: "completed",
+                  },
+                ],
+              };
+            };
+
+            const activityFromEvent = (event: OrchestrationEvent) => {
+              if (event.type !== "thread.activity-appended") {
+                return null;
+              }
+              return {
+                kind: event.payload.activity.kind,
+                payload: event.payload.activity.payload,
+              };
+            };
+            const activityKindFromEvent = (event: OrchestrationEvent) =>
+              activityFromEvent(event)?.kind ?? null;
+            const isTaskStartedItem = (item: OrchestrationThreadStreamItem) =>
+              item.kind === "event" && activityKindFromEvent(item.event) === "task.started";
+            const eventsFromItems = (items: ReadonlyArray<OrchestrationThreadStreamItem>) =>
+              items.flatMap((item) => (item.kind === "event" ? [item.event] : []));
+            const eventKey = (event: OrchestrationEvent) =>
+              `${event.sequence}:${String(event.eventId)}:${event.type}`;
+            const assertOrderedEvents = (
+              items: ReadonlyArray<OrchestrationThreadStreamItem>,
+              description: string,
+            ) => {
+              const events = eventsFromItems(items);
+              assert.isAbove(events.length, 0, `${description} must receive events`);
+              const sequences = events.map((event) => event.sequence);
+              assert.isTrue(
+                sequences.every(
+                  (sequence, index) => index === 0 || sequence > sequences[index - 1]!,
+                ),
+                `${description} sequences must be strictly increasing`,
+              );
+              const eventIds = events.map((event) => String(event.eventId));
+              assert.equal(
+                new Set(eventIds).size,
+                eventIds.length,
+                `${description} must suppress duplicate event IDs`,
+              );
+            };
+            const canonicalFromThread = (thread: OrchestrationThreadDetailSnapshot["thread"]) => ({
+              messages: thread.messages
+                .map((message) => ({
+                  id: String(message.id),
+                  role: message.role,
+                  text: message.text,
+                  streaming: message.streaming,
+                }))
+                .sort((left, right) => left.id.localeCompare(right.id)),
+              tasks: thread.activities
+                .filter((activity) => activity.kind.startsWith("task."))
+                .map((activity) => {
+                  const payload =
+                    typeof activity.payload === "object" && activity.payload !== null
+                      ? (activity.payload as Record<string, unknown>)
+                      : {};
+                  return {
+                    id: String(activity.id),
+                    kind: activity.kind,
+                    summary: activity.summary,
+                    taskId: typeof payload.taskId === "string" ? payload.taskId : null,
+                    status: typeof payload.status === "string" ? payload.status : null,
+                  };
+                })
+                .sort((left, right) => left.id.localeCompare(right.id)),
+              checkpoints: thread.checkpoints
+                .map((checkpoint) => ({
+                  turnId: String(checkpoint.turnId),
+                  checkpointRef: String(checkpoint.checkpointRef),
+                  checkpointTurnCount: checkpoint.checkpointTurnCount,
+                  status: checkpoint.status,
+                  nativeRuntime: checkpoint.nativeCheckpoint?.runtime ?? null,
+                }))
+                .sort((left, right) => left.checkpointRef.localeCompare(right.checkpointRef)),
+              latestTurnState: thread.latestTurn?.state ?? null,
+              sessionStatus: thread.session?.status ?? null,
+            });
+            const applyClientEvents = (
+              initial: OrchestrationThreadDetailSnapshot["thread"],
+              initialSequence: number,
+              events: ReadonlyArray<OrchestrationEvent>,
+            ) => {
+              let thread = initial;
+              let lastSequence = initialSequence;
+              for (const event of events) {
+                if (!isThreadEventSequenceNewer(lastSequence, event.sequence)) {
+                  continue;
+                }
+                lastSequence = event.sequence;
+                const result = applyThreadDetailEvent(thread, event);
+                if (result.kind === "deleted") {
+                  throw new Error(
+                    "The restart convergence target thread was unexpectedly deleted.",
+                  );
+                }
+                if (result.kind === "updated") {
+                  thread = result.thread;
+                }
+              }
+              return canonicalFromThread(thread);
+            };
+            const makeLiveSubscription = (input: {
+              readonly wsUrl: string;
+              readonly cookie: string;
+              readonly afterSequence: number;
+              readonly queue: Queue.Queue<OrchestrationThreadStreamItem>;
+              readonly recorder: WebSocketTransferRecorder;
+            }) =>
+              Effect.gen(function* () {
+                const client = yield* makeCountingWsRpcClient;
+                yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                  threadId: targetThreadId,
+                  afterSequence: input.afterSequence,
+                  requestCompletionMarker: true,
+                }).pipe(
+                  Stream.runForEach((item) => Queue.offer(input.queue, item).pipe(Effect.asVoid)),
+                );
+              }).pipe(
+                Effect.provide(
+                  countingWsRpcProtocolLayer({
+                    url: input.wsUrl,
+                    cookie: input.cookie,
+                    recorder: input.recorder,
+                  }),
+                ),
+              );
+            const startTurn = (authenticatedWsUrl: string) =>
+              Effect.scoped(
+                withWsRpcClient(authenticatedWsUrl, (client) =>
+                  client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                    type: "thread.turn.start",
+                    commandId: CommandId.make(`restart-convergence:${providerName}:turn-start`),
+                    threadId: targetThreadId,
+                    message: {
+                      messageId: MessageId.make(`restart-convergence:${providerName}:message`),
+                      role: "user",
+                      text: `Complete the ${providerName} restart convergence turn.`,
+                      attachments: [],
+                    },
+                    modelSelection,
+                    runtimeMode: "approval-required",
+                    interactionMode: "default",
+                    createdAt: now,
+                  }),
+                ),
+              );
+
+            const stageOne = yield* Effect.gen(function* () {
+              yield* buildAppUnderTest({
+                config: { baseDir: harness.rootDir },
+                layers: {
+                  orchestrationEngine: harness.engine,
+                  projectionSnapshotQuery: harness.snapshotQuery,
+                },
+              });
+              const baseUrl = yield* getHttpServerUrl();
+              const cookie = yield* getAuthenticatedSessionCookieHeader();
+              const authenticatedWsUrl = appendSessionCookieToWsUrl(
+                baseUrl.replace(/^http:/, "ws:") + "/ws",
+                cookie,
+              );
+              const wsUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+              const readThreadSnapshot = Effect.fn(
+                `RestartConvergence.${providerName}.readThreadSnapshot`,
+              )(function* () {
+                const response = yield* fetchEffect(
+                  `${baseUrl}/api/orchestration/threads/${targetThreadId}`,
+                  { headers: { cookie } },
+                );
+                assert.equal(response.status, 200);
+                return yield* responseJsonEffect<OrchestrationThreadDetailSnapshot>(response);
+              });
+              const initialSnapshot = yield* readThreadSnapshot();
+              assert.isAtLeast(initialSnapshot.snapshotSequence, baseline.sequence);
+              const replayCursor = Math.max(0, baseline.sequence - 1);
+              assert.isBelow(replayCursor, initialSnapshot.snapshotSequence);
+
+              const clientAQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+              const clientBQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+              const clientARecorder = makeWebSocketTransferRecorder();
+              const clientBRecorder = makeWebSocketTransferRecorder();
+              const clientAFiber = yield* makeLiveSubscription({
+                wsUrl,
+                cookie,
+                afterSequence: initialSnapshot.snapshotSequence,
+                queue: clientAQueue,
+                recorder: clientARecorder,
+              }).pipe(Effect.forkScoped);
+              const clientBFiber = yield* makeLiveSubscription({
+                wsUrl,
+                cookie,
+                afterSequence: replayCursor,
+                queue: clientBQueue,
+                recorder: clientBRecorder,
+              }).pipe(Effect.forkScoped);
+              const clientAItems = yield* collectQueueUntil(
+                clientAQueue,
+                (item) => item.kind === "synchronized",
+                `${providerName} restart client A initial synchronization`,
+              );
+              const clientBItems = yield* collectQueueUntil(
+                clientBQueue,
+                (item) => item.kind === "synchronized",
+                `${providerName} restart client B staggered synchronization`,
+              );
+              assert.isFalse(
+                clientAItems.some((item) => item.kind === "event"),
+                "client A starts at the HTTP snapshot sequence",
+              );
+              assert.isTrue(
+                clientBItems.some(
+                  (item) =>
+                    item.kind === "event" &&
+                    item.event.sequence === baseline.sequence &&
+                    activityKindFromEvent(item.event) === "restart.baseline",
+                ),
+                "client B starts at an earlier sequence and replays the baseline activity",
+              );
+
+              yield* adapterHarness.queueTurnResponseForNextSession(makeTurnResponse());
+              yield* startTurn(authenticatedWsUrl);
+              clientAItems.push(
+                ...(yield* collectQueueUntil(
+                  clientAQueue,
+                  isTaskStartedItem,
+                  `${providerName} restart client A active task`,
+                )),
+              );
+              yield* Effect.sync(() => clientARecorder.terminate());
+              yield* Fiber.await(clientAFiber).pipe(Effect.timeout("5 seconds"));
+              clientBItems.push(
+                ...(yield* collectQueueUntil(
+                  clientBQueue,
+                  isTaskStartedItem,
+                  `${providerName} restart client B active task`,
+                )),
+              );
+              yield* Effect.sync(() => clientBRecorder.terminate());
+              yield* Fiber.await(clientBFiber).pipe(Effect.timeout("5 seconds"));
+
+              return {
+                baseUrl,
+                initialSnapshot,
+                clientAItems,
+                clientBItems,
+              };
+            }).pipe(Effect.provide(makeNodeHttpServerTestWithWsDeflate()), Effect.scoped);
+
+            yield* harness.waitForThread(
+              targetThreadId,
+              (thread) =>
+                thread.latestTurn?.state === "completed" &&
+                thread.session?.status === "ready" &&
+                thread.messages.some(
+                  (message) => message.text === assistantText && !message.streaming,
+                ),
+              20_000,
+            );
+            yield* harness.drainProviderRuntime;
+            yield* harness.drainCheckpointReactor;
+            yield* harness.waitForThread(
+              targetThreadId,
+              (thread) =>
+                thread.activities.some((activity) => activity.kind === "checkpoint.captured"),
+              20_000,
+            );
+            yield* harness.engine.dispatch({
+              type: "thread.activity.append",
+              commandId: CommandId.make(`restart-convergence:${providerName}:unrelated-tail`),
+              threadId: unrelatedThreadId,
+              activity: {
+                id: EventId.make(`restart-convergence:${providerName}:unrelated-tail-activity`),
+                tone: "info",
+                kind: "restart.unrelated",
+                summary: "unrelated thread remained isolated",
+                payload: null,
+                turnId: null,
+                createdAt: now,
+              },
+              createdAt: now,
+            });
+            yield* harness.waitForThread(unrelatedThreadId, (thread) =>
+              thread.activities.some((activity) => activity.kind === "restart.unrelated"),
+            );
+
+            const lastAcknowledgedSequence = (
+              items: ReadonlyArray<OrchestrationThreadStreamItem>,
+            ) => Math.max(...eventsFromItems(items).map((event) => event.sequence));
+            const clientAAfterSequence = lastAcknowledgedSequence(stageOne.clientAItems);
+            const clientBAfterSequence = lastAcknowledgedSequence(stageOne.clientBItems);
+            assert.equal(
+              clientAAfterSequence,
+              clientBAfterSequence,
+              "both clients acknowledge the same active-task sequence before restart",
+            );
+            const activeClientAState = applyClientEvents(
+              stageOne.initialSnapshot.thread,
+              stageOne.initialSnapshot.snapshotSequence,
+              eventsFromItems(stageOne.clientAItems),
+            );
+            const activeClientBState = applyClientEvents(
+              stageOne.initialSnapshot.thread,
+              stageOne.initialSnapshot.snapshotSequence,
+              eventsFromItems(stageOne.clientBItems),
+            );
+            assert.deepEqual(
+              activeClientAState,
+              activeClientBState,
+              "both clients converge on the active task state before reconnect",
+            );
+            assert.isTrue(
+              activeClientAState.tasks.some(
+                (task) => task.kind === "task.started" && task.taskId === taskId,
+              ),
+              "the disconnected client acknowledges an active task before restart",
+            );
+            assert.isFalse(
+              activeClientAState.tasks.some(
+                (task) => task.kind === "task.completed" && task.taskId === taskId,
+              ),
+              "the active-task tail does not contain the terminal task state",
+            );
+            assert.isFalse(
+              eventsFromItems(stageOne.clientAItems).some(
+                (event) => activityKindFromEvent(event) === "checkpoint.captured",
+              ),
+              "the disconnected client must miss checkpoint activity until reconnect",
+            );
+            assert.isFalse(
+              eventsFromItems(stageOne.clientBItems).some(
+                (event) => activityKindFromEvent(event) === "checkpoint.captured",
+              ),
+              "the continuously connected client must also resume checkpoint activity after restart",
+            );
+
+            const persistedEvents = yield* harness.engine.readEvents(0).pipe(
+              Stream.runCollect,
+              Effect.map((events) => Array.from(events)),
+            );
+            const persistedTargetEvents = persistedEvents.filter(
+              (event) => event.aggregateId === targetThreadId && isThreadDetailEvent(event),
+            );
+            const persistedTargetSequences = persistedTargetEvents.map((event) => event.sequence);
+            assert.isTrue(
+              persistedTargetSequences.every(
+                (sequence, index) => index === 0 || sequence > persistedTargetSequences[index - 1]!,
+              ),
+              "persisted target event sequences must be monotonic",
+            );
+            assert.isTrue(
+              persistedTargetEvents.some(
+                (event) => activityKindFromEvent(event) === "task.started",
+              ),
+              "the active task event is persisted before reconnect",
+            );
+            assert.isTrue(
+              persistedTargetEvents.some(
+                (event) => activityKindFromEvent(event) === "checkpoint.captured",
+              ),
+              "the checkpoint activity is persisted before reconnect",
+            );
+            assert.equal(
+              persistedTargetEvents.filter(
+                (event) => activityKindFromEvent(event) === "task.completed",
+              ).length,
+              1,
+              "persisted terminal task state must be exactly once",
+            );
+            assert.equal(
+              persistedTargetEvents.filter(
+                (event) => activityKindFromEvent(event) === "checkpoint.captured",
+              ).length,
+              1,
+              "persisted checkpoint state must be exactly once",
+            );
+
+            const stageTwo = yield* Effect.gen(function* () {
+              yield* buildAppUnderTest({
+                config: { baseDir: harness.rootDir },
+                layers: {
+                  orchestrationEngine: harness.engine,
+                  projectionSnapshotQuery: harness.snapshotQuery,
+                },
+              });
+              const baseUrl = yield* getHttpServerUrl();
+              assert.notEqual(
+                baseUrl,
+                stageOne.baseUrl,
+                "restart must bind a fresh HTTP server listener",
+              );
+              const cookie = yield* getAuthenticatedSessionCookieHeader();
+              const wsUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+              const readThreadSnapshot = Effect.fn(
+                `RestartConvergence.${providerName}.readRestartedThreadSnapshot`,
+              )(function* () {
+                const response = yield* fetchEffect(
+                  `${baseUrl}/api/orchestration/threads/${targetThreadId}`,
+                  { headers: { cookie } },
+                );
+                assert.equal(response.status, 200);
+                return yield* responseJsonEffect<OrchestrationThreadDetailSnapshot>(response);
+              });
+              const restartedSnapshot = yield* readThreadSnapshot();
+              assert.isAtLeast(
+                restartedSnapshot.snapshotSequence,
+                stageOne.initialSnapshot.snapshotSequence,
+                "restarted HTTP server must reopen the persisted projection boundary",
+              );
+              const clientAQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+              const clientBQueue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+              const clientARecorder = makeWebSocketTransferRecorder();
+              const clientBRecorder = makeWebSocketTransferRecorder();
+              const clientAFiber = yield* makeLiveSubscription({
+                wsUrl,
+                cookie,
+                afterSequence: clientAAfterSequence,
+                queue: clientAQueue,
+                recorder: clientARecorder,
+              }).pipe(Effect.forkScoped);
+              const clientBFiber = yield* makeLiveSubscription({
+                wsUrl,
+                cookie,
+                afterSequence: clientBAfterSequence,
+                queue: clientBQueue,
+                recorder: clientBRecorder,
+              }).pipe(Effect.forkScoped);
+              const clientAItems = yield* collectQueueUntil(
+                clientAQueue,
+                (item) => item.kind === "synchronized",
+                `${providerName} restart client A bounded reconnect`,
+              );
+              const clientBItems = yield* collectQueueUntil(
+                clientBQueue,
+                (item) => item.kind === "synchronized",
+                `${providerName} restart client B bounded reconnect`,
+              );
+              yield* Effect.sync(() => {
+                clientARecorder.terminate();
+                clientBRecorder.terminate();
+              });
+              yield* Fiber.await(clientAFiber).pipe(Effect.timeout("5 seconds"));
+              yield* Fiber.await(clientBFiber).pipe(Effect.timeout("5 seconds"));
+              const finalSnapshot = yield* readThreadSnapshot();
+              return {
+                restartedSnapshot,
+                finalSnapshot,
+                clientAItems,
+                clientBItems,
+              };
+            }).pipe(Effect.provide(makeNodeHttpServerTestWithWsDeflate()), Effect.scoped);
+
+            const clientAEvents = eventsFromItems(
+              stageOne.clientAItems.concat(stageTwo.clientAItems),
+            );
+            const clientBEvents = eventsFromItems(
+              stageOne.clientBItems.concat(stageTwo.clientBItems),
+            );
+            const clientAReconnectEvents = eventsFromItems(stageTwo.clientAItems);
+            const clientBReconnectEvents = eventsFromItems(stageTwo.clientBItems);
+            assertOrderedEvents(stageOne.clientAItems, `${providerName} client A pre-restart`);
+            assertOrderedEvents(stageOne.clientBItems, `${providerName} client B pre-restart`);
+            assertOrderedEvents(stageTwo.clientAItems, `${providerName} client A reconnect`);
+            assertOrderedEvents(stageTwo.clientBItems, `${providerName} client B reconnect`);
+            assertOrderedEvents(
+              stageOne.clientAItems.concat(stageTwo.clientAItems),
+              `${providerName} client A`,
+            );
+            assertOrderedEvents(
+              stageOne.clientBItems.concat(stageTwo.clientBItems),
+              `${providerName} client B`,
+            );
+            assert.isFalse(
+              stageTwo.clientAItems.some((item) => item.kind === "snapshot"),
+              "client A must resume from its last acknowledged sequence without a snapshot",
+            );
+            assert.isFalse(
+              stageTwo.clientBItems.some((item) => item.kind === "snapshot"),
+              "client B must resume from its last acknowledged sequence without a snapshot",
+            );
+            assert.isAtMost(
+              clientAReconnectEvents.length,
+              32,
+              "client A reconnect must receive a bounded tail",
+            );
+            assert.isAtMost(
+              clientBReconnectEvents.length,
+              32,
+              "client B reconnect must receive a bounded tail",
+            );
+            assert.deepEqual(
+              clientAReconnectEvents.map(eventKey),
+              clientBReconnectEvents.map(eventKey),
+              "both clients must receive the same post-restart bounded tail",
+            );
+            assert.isTrue(
+              clientAReconnectEvents.every((event) => event.aggregateId === targetThreadId),
+              "client A must remain isolated from unrelated threads",
+            );
+            assert.isTrue(
+              clientBReconnectEvents.every((event) => event.aggregateId === targetThreadId),
+              "client B must remain isolated from unrelated threads",
+            );
+            assert.isTrue(
+              clientAReconnectEvents.some(
+                (event) => activityKindFromEvent(event) === "checkpoint.captured",
+              ),
+              "client A must receive the checkpoint activity after reconnect",
+            );
+            assert.isTrue(
+              clientBReconnectEvents.some(
+                (event) => activityKindFromEvent(event) === "checkpoint.captured",
+              ),
+              "client B must receive the checkpoint activity after reconnect",
+            );
+
+            const finalCanonical = canonicalFromThread(stageTwo.finalSnapshot.thread);
+            assert.deepEqual(
+              applyClientEvents(
+                stageOne.initialSnapshot.thread,
+                stageOne.initialSnapshot.snapshotSequence,
+                clientAEvents,
+              ),
+              finalCanonical,
+              "client A must converge on one canonical state after restart",
+            );
+            assert.deepEqual(
+              applyClientEvents(
+                stageOne.initialSnapshot.thread,
+                stageOne.initialSnapshot.snapshotSequence,
+                clientBEvents,
+              ),
+              finalCanonical,
+              "client B must converge on one canonical state after restart",
+            );
+            assert.deepEqual(
+              applyClientEvents(
+                stageOne.initialSnapshot.thread,
+                stageOne.initialSnapshot.snapshotSequence,
+                [...clientAEvents, ...clientAReconnectEvents],
+              ),
+              finalCanonical,
+              "duplicate replay delivery must be suppressed by sequence",
+            );
+            assert.equal(finalCanonical.latestTurnState, "completed");
+            assert.equal(finalCanonical.sessionStatus, "ready");
+            assert.equal(
+              stageTwo.finalSnapshot.thread.messages.filter(
+                (message) => message.role === "assistant" && message.text === assistantText,
+              ).length,
+              1,
+              "terminal assistant state must be exactly once",
+            );
+            assert.equal(
+              stageTwo.finalSnapshot.thread.activities.filter(
+                (activity) => activity.kind === "task.completed",
+              ).length,
+              1,
+              "terminal task state must be exactly once",
+            );
+            assert.equal(
+              stageTwo.finalSnapshot.thread.activities.filter(
+                (activity) => activity.kind === "checkpoint.captured",
+              ).length,
+              1,
+              "checkpoint terminal state must be exactly once",
+            );
+            assert.equal(stageTwo.finalSnapshot.thread.checkpoints.length, 1);
+            assert.equal(stageTwo.finalSnapshot.thread.checkpoints[0]?.status, "ready");
+
+            const unrelatedSnapshot = yield* harness.snapshotQuery
+              .getThreadDetailSnapshot(unrelatedThreadId)
+              .pipe(Effect.map(Option.getOrThrow));
+            assert.include(
+              unrelatedSnapshot.thread.activities.map((activity) => activity.summary),
+              "unrelated thread remained isolated",
+            );
+          }),
+        (harness) => harness.dispose,
+      ).pipe(Effect.provide(NodeServices.layer)),
+    { timeout: 60_000, concurrent: false },
+  );
+}
 const nativeReplayProviders = ["pi", "omp"] as const;
 for (const runtime of nativeReplayProviders) {
   const provider = ProviderDriverKind.make(runtime);
@@ -8911,7 +9622,7 @@ for (const config of configuredNativeLiveConfigurations()) {
         makeNativeLiveModelServer,
         (modelServer) =>
           Effect.acquireUseRelease(
-            makeNativeLiveAgentDirectory(`/tmp/t3-native-matrix-http-${config.runtime}-`),
+            makeNativeLiveAgentDirectory(`t3-native-matrix-http-${config.runtime}-`),
             (agentDirectory) =>
               Effect.gen(function* () {
                 yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
@@ -9180,9 +9891,187 @@ for (const config of configuredNativeLiveConfigurations()) {
                         clientBItems.every((item) => item.kind === "synchronized"),
                         `${config.runtime} disconnected client must not receive live events`,
                       );
+                      const taskCursor = targetSequence;
+                      const taskActivityCountBefore = completed.activities.length;
+                      const taskMessage =
+                        config.runtime === "omp"
+                          ? "NATIVE-MATRIX-SUBAGENT-PARENT"
+                          : "Reply with NATIVE-MATRIX-OK after the Pi convergence reconnect.";
+                      yield* Effect.scoped(
+                        withWsRpcClient(authenticatedWsUrl, (client) =>
+                          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                            type: "thread.turn.start",
+                            commandId: CommandId.make(
+                              `native-live-http:${config.runtime}:task-turn`,
+                            ),
+                            threadId,
+                            message: {
+                              messageId: MessageId.make(
+                                `native-live-http-${config.runtime}-task-user`,
+                              ),
+                              role: "user",
+                              text: taskMessage,
+                              attachments: [],
+                            },
+                            modelSelection,
+                            runtimeMode: "approval-required",
+                            interactionMode: "default",
+                            createdAt,
+                          }),
+                        ),
+                      );
+                      const taskProjected = yield* harness.waitForThread(
+                        threadId,
+                        (thread) =>
+                          config.runtime === "pi"
+                            ? thread.latestTurn?.state === "completed" &&
+                              thread.session?.status === "ready" &&
+                              thread.messages.some(
+                                (message) =>
+                                  message.role === "user" && message.text === taskMessage,
+                              )
+                            : thread.activities.slice(taskActivityCountBefore).some((activity) => {
+                                const payload = activity.payload as Readonly<
+                                  Record<string, unknown>
+                                >;
+                                return (
+                                  (activity.kind === "task.started" ||
+                                    activity.kind === "task.progress") &&
+                                  payload.parentAgentId === "MatrixChild"
+                                );
+                              }),
+                        30_000,
+                      );
+                      if (config.runtime === "omp") {
+                        assert.isAbove(taskProjected.activities.length, taskActivityCountBefore);
+                      }
+                      if (config.runtime === "omp") {
+                        yield* harness.engine.dispatch({
+                          type: "thread.session.stop",
+                          commandId: CommandId.make("native-live-http:omp:task-stop"),
+                          threadId,
+                          createdAt,
+                        });
+                      }
+                      const taskSettled = yield* harness.waitForThread(
+                        threadId,
+                        (thread) => {
+                          const taskActivities = thread.activities.slice(taskActivityCountBefore);
+                          if (config.runtime === "pi") {
+                            return (
+                              thread.latestTurn?.state === "completed" &&
+                              thread.session?.status === "ready" &&
+                              thread.messages.some(
+                                (message) =>
+                                  message.role === "user" && message.text === taskMessage,
+                              )
+                            );
+                          }
+                          const completedTasks = taskActivities
+                            .filter((activity) => activity.kind === "task.completed")
+                            .map(
+                              (activity) => activity.payload as Readonly<Record<string, unknown>>,
+                            );
+                          return (
+                            thread.session?.status === "stopped" &&
+                            completedTasks.some(
+                              (payload) =>
+                                payload.taskId === "MatrixChild" &&
+                                (payload.status === "completed" || payload.status === "stopped"),
+                            ) &&
+                            completedTasks.some(
+                              (payload) =>
+                                payload.parentAgentId === "MatrixChild" &&
+                                payload.status === "stopped",
+                            )
+                          );
+                        },
+                        30_000,
+                      );
+                      yield* harness.drainProviderRuntime;
+                      yield* harness.drainCheckpointReactor;
+                      const taskTargetSequence = yield* harness.engine
+                        .readEvents(taskCursor, 10_000)
+                        .pipe(
+                          Stream.runFold(
+                            () => taskCursor,
+                            (sequence, event) =>
+                              event.aggregateId === threadId && isThreadDetailEvent(event)
+                                ? Math.max(sequence, event.sequence)
+                                : sequence,
+                          ),
+                        );
+                      assert.isAbove(taskTargetSequence, taskCursor);
+                      const taskClientQueue =
+                        yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                      const taskClientRecorder = makeWebSocketTransferRecorder();
+                      const taskClientFiber = yield* makeSubscription(
+                        taskCursor,
+                        taskClientQueue,
+                        taskClientRecorder,
+                        (item) =>
+                          item.kind === "event" && item.event.sequence >= taskTargetSequence,
+                      ).pipe(Effect.forkScoped);
+                      const taskClientItems = yield* collectQueueUntil(
+                        taskClientQueue,
+                        (item) =>
+                          item.kind === "event" && item.event.sequence >= taskTargetSequence,
+                        `${config.runtime} native task client`,
+                      );
+                      yield* Effect.sync(() => taskClientRecorder.terminate());
+                      yield* Fiber.await(taskClientFiber).pipe(Effect.timeout("5 seconds"));
+                      const taskReconnectQueue =
+                        yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+                      const taskReconnectRecorder = makeWebSocketTransferRecorder();
+                      const taskReconnectFiber = yield* makeSubscription(
+                        taskCursor,
+                        taskReconnectQueue,
+                        taskReconnectRecorder,
+                        (item) =>
+                          item.kind === "event" && item.event.sequence >= taskTargetSequence,
+                      ).pipe(Effect.forkScoped);
+                      const taskReconnectItems = yield* collectQueueUntil(
+                        taskReconnectQueue,
+                        (item) =>
+                          item.kind === "event" && item.event.sequence >= taskTargetSequence,
+                        `${config.runtime} native task reconnect`,
+                      );
+                      yield* Effect.sync(() => taskReconnectRecorder.terminate());
+                      yield* Fiber.await(taskReconnectFiber).pipe(Effect.timeout("5 seconds"));
+                      const persistedTaskEvents = yield* harness.engine
+                        .readEvents(taskCursor, 10_000)
+                        .pipe(
+                          Stream.filter(
+                            (event) => event.aggregateId === threadId && isThreadDetailEvent(event),
+                          ),
+                          Stream.runCollect,
+                          Effect.map((events) => Array.from(events).map(projectActivityEvent)),
+                        );
+                      assertOrdered(taskClientItems, `${config.runtime} task client`);
+                      assertOrdered(taskReconnectItems, `${config.runtime} task reconnect`);
+                      assert.deepEqual(
+                        eventsFromItems(taskClientItems),
+                        persistedTaskEvents,
+                        `${config.runtime} task client must match persisted events`,
+                      );
+                      assert.deepEqual(
+                        eventsFromItems(taskReconnectItems),
+                        persistedTaskEvents,
+                        `${config.runtime} task reconnect must match persisted events`,
+                      );
+                      if (config.runtime === "omp") {
+                        assert.isTrue(
+                          taskSettled.activities
+                            .slice(taskActivityCountBefore)
+                            .some((activity) => activity.kind === "task.completed"),
+                          "omp task completion must remain projected",
+                        );
+                      }
                       const finalSnapshot = yield* readThreadSnapshot();
-                      assert.equal(finalSnapshot.thread.latestTurn?.state, "completed");
-                      assert.equal(finalSnapshot.thread.session?.status, "ready");
+                      assert.equal(
+                        finalSnapshot.thread.session?.status,
+                        config.runtime === "omp" ? "stopped" : "ready",
+                      );
                       assert.isTrue(
                         finalSnapshot.thread.messages.some(
                           (message) =>
@@ -9191,19 +10080,37 @@ for (const config of configuredNativeLiveConfigurations()) {
                             message.text.includes("NATIVE-MATRIX-OK"),
                         ),
                       );
-
-                      yield* harness.engine.dispatch({
-                        type: "thread.session.stop",
-                        commandId: CommandId.make(`native-live-http:${config.runtime}:stop`),
-                        threadId,
-                        createdAt,
-                      });
-                      const stopped = yield* harness.waitForThread(
-                        threadId,
-                        (thread) => thread.session?.status === "stopped",
-                        30_000,
+                      const nativeCheckpoints = finalSnapshot.thread.checkpoints.filter(
+                        (checkpoint) => checkpoint.nativeCheckpoint != null,
                       );
-                      assert.equal(stopped.session?.status, "stopped");
+                      if (config.runtime === "pi") {
+                        assert.isTrue(
+                          nativeCheckpoints.every(
+                            (checkpoint) => checkpoint.nativeCheckpoint?.runtime === "pi",
+                          ),
+                          "pi must not retain a native checkpoint for another runtime",
+                        );
+                      } else {
+                        assert.isEmpty(
+                          nativeCheckpoints,
+                          "omp must not fabricate an unsupported native checkpoint",
+                        );
+                      }
+
+                      if (config.runtime === "pi") {
+                        yield* harness.engine.dispatch({
+                          type: "thread.session.stop",
+                          commandId: CommandId.make(`native-live-http:${config.runtime}:stop`),
+                          threadId,
+                          createdAt,
+                        });
+                        const stopped = yield* harness.waitForThread(
+                          threadId,
+                          (thread) => thread.session?.status === "stopped",
+                          30_000,
+                        );
+                        assert.equal(stopped.session?.status, "stopped");
+                      }
                       const deadline = (yield* Clock.currentTimeMillis) + 30_000;
                       while (true) {
                         const sessions = yield* harness.providerService.listSessions();
@@ -9227,7 +10134,439 @@ for (const config of configuredNativeLiveConfigurations()) {
           ),
         (modelServer) => Effect.tryPromise(() => modelServer.close()),
       ).pipe(Effect.provide(Layer.merge(NodeHttpServerTestWithWsDeflate, NodeServices.layer))),
-    60_000,
+    { timeout: 180_000, concurrent: false },
+  );
+}
+
+const nativeParityNondeterministicFields = new Set([
+  "id",
+  "turnId",
+  "assistantMessageId",
+  "checkpointRef",
+  "activeTurnId",
+  "eventId",
+  "sessionId",
+  "leafEntryId",
+  "sessionFile",
+  "createdAt",
+  "updatedAt",
+  "requestedAt",
+  "startedAt",
+  "completedAt",
+  "runtimeVersion",
+  "timestamp",
+  "sequence",
+]);
+
+const normalizeNativeParityValue = <A>(value: A): A => {
+  const identities = new Map<string, string>();
+  const visit = (current: unknown, field?: string): unknown => {
+    if (field !== undefined && nativeParityNondeterministicFields.has(field)) {
+      const serialized = JSON.stringify(current);
+      const existing = identities.get(serialized);
+      if (existing !== undefined) return existing;
+      const replacement = `<${field}:${identities.size + 1}>`;
+      identities.set(serialized, replacement);
+      return replacement;
+    }
+    if (Array.isArray(current)) return current.map((entry) => visit(entry));
+    if (typeof current !== "object" || current === null) return current;
+    return Object.fromEntries(
+      Object.entries(current)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, visit(entry, key)]),
+    );
+  };
+  return visit(value) as A;
+};
+
+const scrubNativeCheckpointReplayData = (value: unknown, field?: string): unknown => {
+  if (
+    field !== undefined &&
+    field !== "runtimeVersion" &&
+    nativeParityNondeterministicFields.has(field)
+  ) {
+    return `<redacted-${field}>`;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => scrubNativeCheckpointReplayData(entry));
+  }
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, scrubNativeCheckpointReplayData(entry, key)]),
+  );
+};
+
+const runNativeHttpParityScenario = (
+  harness: OrchestrationIntegrationHarness,
+  runtime: "pi" | "omp",
+  scenario: "live" | "replay",
+  captured?: readonly JsonRecord[],
+) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make(`native-parity-${runtime}-project`);
+    const threadId = ThreadId.make(`native-parity-${runtime}-thread`);
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make(runtime),
+      model: "local/test",
+    } as const;
+    const createdAt = "2026-08-25T00:00:00.000Z";
+    yield* harness.engine.dispatch({
+      type: "project.create",
+      commandId: CommandId.make(`native-parity:${runtime}:${scenario}:project`),
+      projectId,
+      title: `${runtime} native parity project`,
+      workspaceRoot: harness.workspaceDir,
+      defaultModelSelection: modelSelection,
+      createdAt,
+    });
+    yield* harness.engine.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`native-parity:${runtime}:${scenario}:thread`),
+      threadId,
+      projectId,
+      title: `${runtime} native parity thread`,
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: harness.workspaceDir,
+      createdAt,
+    });
+    yield* buildAppUnderTest({
+      layers: {
+        orchestrationEngine: harness.engine,
+        projectionSnapshotQuery: harness.snapshotQuery,
+      },
+    });
+    const baseUrl = yield* getHttpServerUrl();
+    const cookie = yield* getAuthenticatedSessionCookieHeader();
+    const wsBaseUrl = baseUrl.replace(/^http:/, "ws:") + "/ws";
+    const authenticatedWsUrl = appendSessionCookieToWsUrl(wsBaseUrl, cookie);
+    const readSnapshot = Effect.fn(`NativeParity.${runtime}.${scenario}.readSnapshot`)(
+      function* () {
+        const response = yield* fetchEffect(`${baseUrl}/api/orchestration/threads/${threadId}`, {
+          headers: { cookie },
+        });
+        assert.equal(response.status, 200);
+        return yield* responseJsonEffect<OrchestrationThreadDetailSnapshot>(response);
+      },
+    );
+    const initialSnapshot = yield* readSnapshot();
+    const queue = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
+    const recorder = makeWebSocketTransferRecorder();
+    const streamFiber = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* makeCountingWsRpcClient;
+        yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+          threadId,
+          afterSequence: initialSnapshot.snapshotSequence,
+          requestCompletionMarker: true,
+        }).pipe(Stream.runForEach((item) => Queue.offer(queue, item).pipe(Effect.asVoid)));
+      }).pipe(
+        Effect.provide(
+          countingWsRpcProtocolLayer({
+            url: wsBaseUrl,
+            cookie,
+            recorder,
+          }),
+        ),
+      ),
+    ).pipe(Effect.forkScoped);
+    yield* collectQueueUntil(
+      queue,
+      (item) => item.kind === "synchronized",
+      `${runtime} ${scenario} parity synchronization`,
+    );
+    yield* Effect.scoped(
+      withWsRpcClient(authenticatedWsUrl, (client) =>
+        client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`native-parity:${runtime}:turn`),
+          threadId,
+          message: {
+            messageId: MessageId.make(`native-parity-${runtime}-user`),
+            role: "user",
+            text:
+              runtime === "pi"
+                ? "NATIVE-MATRIX-TASK: emit semantic host task lifecycle, then reply with the NATIVE-MATRIX-OK marker for pi."
+                : "NATIVE-MATRIX-SUBAGENT-PARITY-PARENT: complete one nested task, then reply with the NATIVE-MATRIX-OK marker for omp.",
+            attachments: [],
+          },
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt,
+        }),
+      ),
+    );
+    yield* harness.waitForThread(
+      threadId,
+      (thread) =>
+        runtime === "pi"
+          ? thread.latestTurn?.state === "completed" &&
+            thread.session?.status === "ready" &&
+            thread.messages.some(
+              (message) =>
+                message.role === "assistant" &&
+                !message.streaming &&
+                message.text.includes("NATIVE-MATRIX-OK"),
+            )
+          : thread.activities.some((activity) => activity.kind.startsWith("task.")),
+      30_000,
+    );
+    if (runtime === "omp") {
+      yield* harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make(`native-parity:${runtime}:stop-active-task`),
+        threadId,
+        createdAt,
+      });
+      yield* harness.waitForThread(
+        threadId,
+        (thread) => thread.session?.status === "stopped",
+        30_000,
+      );
+    }
+    yield* harness.drainProviderRuntime;
+    yield* harness.drainCheckpointReactor;
+    const persistedEvents = yield* harness.engine
+      .readEvents(initialSnapshot.snapshotSequence, 10_000)
+      .pipe(
+        Stream.filter((event) => event.aggregateId === threadId && isThreadDetailEvent(event)),
+        Stream.runCollect,
+        Effect.map((events) => Array.from(events)),
+      );
+    const targetSequence = persistedEvents.reduce(
+      (sequence, event) => Math.max(sequence, event.sequence),
+      initialSnapshot.snapshotSequence,
+    );
+    assert.isAbove(targetSequence, initialSnapshot.snapshotSequence);
+    const streamItems = yield* collectQueueUntil(
+      queue,
+      (item) => item.kind === "event" && item.event.sequence >= targetSequence,
+      `${runtime} ${scenario} parity terminal event`,
+    );
+    yield* Effect.sync(() => recorder.terminate());
+    yield* Fiber.await(streamFiber).pipe(Effect.timeout("5 seconds"));
+    const streamEvents = streamItems.flatMap((item) => (item.kind === "event" ? [item.event] : []));
+    assert.deepEqual(
+      streamEvents,
+      persistedEvents.map(projectActivityEvent),
+      `${runtime} ${scenario} WebSocket projection must match persistence`,
+    );
+    const finalSnapshot = yield* readSnapshot();
+    const capturedTrace = captured?.slice() ?? [];
+    if (finalSnapshot.thread.session?.status !== "stopped") {
+      yield* harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make(`native-parity:${runtime}:stop`),
+        threadId,
+        createdAt,
+      });
+      yield* harness.waitForThread(
+        threadId,
+        (thread) => thread.session?.status === "stopped",
+        30_000,
+      );
+    }
+    const exitDeadline = (yield* Clock.currentTimeMillis) + 30_000;
+    while (true) {
+      const sessions = yield* harness.providerService.listSessions();
+      if (!sessions.some((session) => session.threadId === threadId)) break;
+      if ((yield* Clock.currentTimeMillis) >= exitDeadline) {
+        return yield* Effect.die(`${runtime} ${scenario} parity session did not exit`);
+      }
+      yield* Effect.sleep(10);
+    }
+    const activities = finalSnapshot.thread.activities
+      .map((activity) => ({
+        kind: activity.kind,
+        summary: activity.summary,
+        payload: activity.payload,
+      }))
+      .sort((left, right) =>
+        `${left.kind}:${left.summary}:${JSON.stringify(left.payload)}`.localeCompare(
+          `${right.kind}:${right.summary}:${JSON.stringify(right.payload)}`,
+        ),
+      );
+    const taskTree = activities.filter((activity) => activity.kind.startsWith("task."));
+    const websocketEvents = streamEvents
+      .map((event) => {
+        const {
+          eventId: _eventId,
+          sequence: _sequence,
+          commandId: _commandId,
+          correlationId: _correlationId,
+          causationEventId: _causationEventId,
+          occurredAt: _occurredAt,
+          ...canonical
+        } = event;
+        return normalizeNativeParityValue(canonical);
+      })
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    const checkpointOpaque = finalSnapshot.thread.checkpoints.at(-1)?.nativeCheckpoint?.opaque;
+    const checkpointResponseData =
+      typeof checkpointOpaque === "object" &&
+      checkpointOpaque !== null &&
+      !Array.isArray(checkpointOpaque) &&
+      typeof (checkpointOpaque as JsonRecord).opaque === "object" &&
+      (checkpointOpaque as JsonRecord).opaque !== null &&
+      !Array.isArray((checkpointOpaque as JsonRecord).opaque)
+        ? (scrubNativeCheckpointReplayData((checkpointOpaque as JsonRecord).opaque) as JsonRecord)
+        : undefined;
+    return {
+      http: normalizeNativeParityValue({
+        modelSelection: finalSnapshot.thread.modelSelection,
+        messages: finalSnapshot.thread.messages.map((message) => ({
+          id: String(message.id),
+          role: message.role,
+          text: message.text,
+          streaming: message.streaming,
+        })),
+        activities,
+        taskTree,
+        checkpoints: finalSnapshot.thread.checkpoints.map((checkpoint) => ({
+          turnId: String(checkpoint.turnId),
+          checkpointRef: String(checkpoint.checkpointRef),
+          checkpointTurnCount: checkpoint.checkpointTurnCount,
+          status: checkpoint.status,
+          nativeCheckpoint: checkpoint.nativeCheckpoint,
+        })),
+        latestTurn: finalSnapshot.thread.latestTurn,
+        session: finalSnapshot.thread.session,
+      }),
+      websocketEvents,
+      capturedTrace,
+      checkpointResponseData,
+    };
+  });
+
+for (const config of configuredNativeLiveConfigurations()) {
+  it.live(
+    `matches configured ${config.runtime} live and exact replay through T3 HTTP and WebSocket`,
+    () =>
+      Effect.acquireUseRelease(
+        makeNativeLiveModelServer,
+        (modelServer) =>
+          Effect.acquireUseRelease(
+            makeNativeLiveAgentDirectory(`t3-native-parity-${config.runtime}-`),
+            (agentDirectory) =>
+              Effect.gen(function* () {
+                yield* writeNativeLiveConfig(config, agentDirectory, modelServer, {
+                  asyncEnabled: config.runtime !== "omp",
+                });
+                const extensionPath = yield* writeNativeLiveExtension(agentDirectory);
+                const captured: JsonRecord[] = [];
+                const live = yield* Effect.acquireUseRelease(
+                  makeOrchestrationIntegrationHarness({
+                    provider: config.provider,
+                    nativeLive: {
+                      runtime: config.runtime,
+                      binaryPath: config.binaryPath,
+                      launchArguments: [...config.launchArguments, "--extension", extensionPath],
+                      agentDirectory,
+                      environment: { PI_OFFLINE: "1", PI_NO_PTY: "1" },
+                      ...(config.trustMode === undefined ? {} : { trustMode: config.trustMode }),
+                      traceSinkFactory: makeNativeLivePromptCaptureSinkFactory(
+                        config.runtime,
+                        captured,
+                      ),
+                    },
+                  }),
+                  (harness) =>
+                    runNativeHttpParityScenario(harness, config.runtime, "live", captured).pipe(
+                      Effect.provide(makeNodeHttpServerTestWithWsDeflate()),
+                      Effect.scoped,
+                    ),
+                  (harness) => harness.dispose,
+                );
+                assert.isNotEmpty(
+                  live.capturedTrace,
+                  `${config.runtime} live prompt capture was empty`,
+                );
+                assert.isTrue(
+                  live.capturedTrace.some((frame) =>
+                    config.runtime === "pi"
+                      ? frame.type === "agent_end"
+                      : frame.type === "subagent_event" ||
+                        frame.type === "tool_execution_start" ||
+                        frame.type === "host_task_started",
+                  ),
+                  `${config.runtime} live prompt capture lacked the scenario's terminal or task event`,
+                );
+                const traceIncludesTask = live.capturedTrace.some(
+                  (frame) =>
+                    frame.type === "host_task_started" ||
+                    frame.type === "subagent_event" ||
+                    frame.type === "tool_execution_start",
+                );
+                if (traceIncludesTask) {
+                  assert.isNotEmpty(
+                    live.http.taskTree,
+                    `${config.runtime} live parity scenario must project emitted native task state`,
+                  );
+                } else {
+                  assert.isEmpty(
+                    live.http.taskTree,
+                    `${config.runtime} live parity scenario must not fabricate native task state`,
+                  );
+                }
+                const nativeCheckpoints = live.http.checkpoints.filter(
+                  (checkpoint) => checkpoint.nativeCheckpoint != null,
+                );
+                if (config.runtime === "pi") {
+                  assert.isTrue(
+                    nativeCheckpoints.every(
+                      (checkpoint) => checkpoint.nativeCheckpoint?.runtime === "pi",
+                    ),
+                    "Pi live parity scenario must not project another runtime's native checkpoint",
+                  );
+                } else {
+                  assert.isEmpty(
+                    nativeCheckpoints,
+                    "OMP live parity scenario must preserve unsupported native-checkpoint truth",
+                  );
+                }
+                const replay = yield* Effect.acquireUseRelease(
+                  makeOrchestrationIntegrationHarness({
+                    provider: config.provider,
+                    nativeReplay: {
+                      runtime: config.runtime,
+                      launchArguments: nativeReplayLaunchArguments(
+                        config.runtime,
+                        live.capturedTrace,
+                        live.checkpointResponseData ?? null,
+                      ),
+                    },
+                  }),
+                  (harness) =>
+                    runNativeHttpParityScenario(harness, config.runtime, "replay").pipe(
+                      Effect.provide(makeNodeHttpServerTestWithWsDeflate()),
+                      Effect.scoped,
+                    ),
+                  (harness) => harness.dispose,
+                );
+                assert.deepEqual(
+                  replay.http,
+                  live.http,
+                  `${config.runtime} live and replay HTTP snapshots must match`,
+                );
+                assert.deepEqual(
+                  replay.websocketEvents,
+                  live.websocketEvents,
+                  `${config.runtime} live and replay WebSocket events must match`,
+                );
+              }),
+            (agentDirectory) =>
+              Effect.gen(function* () {
+                const fileSystem = yield* FileSystem.FileSystem;
+                yield* fileSystem.remove(agentDirectory, { recursive: true });
+              }),
+          ),
+        (modelServer) => Effect.tryPromise(() => modelServer.close()),
+      ).pipe(Effect.provide(NodeServices.layer)),
+    { timeout: 180_000, concurrent: false },
   );
 }
 
@@ -9442,7 +10781,10 @@ it.live(
         { concurrency: 1 },
       );
 
-      const report = formatTransferBudgetReport(runs);
+      const sourceHead = yield* Config.string("T3CODE_TRANSFER_BUDGET_SOURCE_HEAD").pipe(
+        Config.option,
+      );
+      const report = formatTransferBudgetReport(runs, Option.getOrUndefined(sourceHead));
       yield* Effect.logInfo(`\n${report}`);
       const reportPath = yield* Config.string("T3CODE_TRANSFER_BUDGET_REPORT_PATH").pipe(
         Config.option,
@@ -9455,8 +10797,16 @@ it.live(
         Config.option,
       );
       if (Option.isSome(resultPath)) {
+        if (Option.isNone(sourceHead)) {
+          return yield* Effect.die(
+            "T3CODE_TRANSFER_BUDGET_SOURCE_HEAD is required when writing a result",
+          );
+        }
         const fileSystem = yield* FileSystem.FileSystem;
-        yield* fileSystem.writeFileString(resultPath.value, formatTransferBudgetResult(runs));
+        yield* fileSystem.writeFileString(
+          resultPath.value,
+          formatTransferBudgetResult(runs, sourceHead.value),
+        );
       }
       assert.deepEqual(transferBudgetViolations(runs), []);
     }).pipe(Effect.provide(NodeServices.layer)),

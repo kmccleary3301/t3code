@@ -100,11 +100,17 @@ function validateProviderEntries(providers, providerNames, observedKeys, ceiling
 }
 
 function validateResult(value) {
-  assertExactKeys(value, ["schemaVersion", "scenario", "providers"], "result");
-  if (value.schemaVersion !== 1) {
-    throw new Error("result.schemaVersion must be 1");
+  if (value?.schemaVersion === 2) {
+    assertExactKeys(value, ["schemaVersion", "sourceHead", "scenario", "providers"], "result");
+    if (!/^[0-9a-f]{40}$/.test(value.sourceHead)) {
+      throw new Error("result.sourceHead must be a full Git SHA");
+    }
+  } else {
+    assertExactKeys(value, ["schemaVersion", "scenario", "providers"], "result");
+    if (value.schemaVersion !== 1) {
+      throw new Error("result.schemaVersion must be 1 or 2");
+    }
   }
-
   assertExactKeys(value.scenario, SCENARIO_KEYS, "result.scenario");
   if (value.scenario.id !== "thread-transfer-v1") {
     throw new Error("result.scenario.id is not supported");
@@ -141,7 +147,7 @@ function validateResult(value) {
   return value;
 }
 
-function readResult(directory) {
+function readResult(directory, expectedSha, options = {}) {
   if (!directory) return undefined;
   const file = path.join(directory, RESULT_FILE);
   if (!fs.existsSync(file)) return undefined;
@@ -149,7 +155,16 @@ function readResult(directory) {
   if (!stat.isFile() || stat.size > 64 * 1_024) {
     throw new Error("thread transfer result must be a regular file smaller than 64 KiB");
   }
-  return validateResult(JSON.parse(fs.readFileSync(file, "utf8")));
+  const result = validateResult(JSON.parse(fs.readFileSync(file, "utf8")));
+  if (expectedSha) {
+    if (result.schemaVersion !== 2 && !options.allowLegacy) {
+      throw new Error("current thread transfer result is not source-head bound");
+    }
+    if (result.schemaVersion === 2 && result.sourceHead !== expectedSha) {
+      throw new Error(`stale thread transfer result ${result.sourceHead}; expected ${expectedSha}`);
+    }
+  }
+  return result;
 }
 
 function formatBytes(bytes) {
@@ -434,7 +449,7 @@ async function publish({ github, context, core }) {
     throw new Error("PR_NUMBER is invalid");
   }
 
-  const current = readResult(process.env.PR_RESULT_DIR);
+  const current = readResult(process.env.PR_RESULT_DIR, process.env.PR_SHA);
   const currentRun = {
     sha: process.env.PR_SHA,
     conclusion: process.env.PR_CONCLUSION,
@@ -460,7 +475,9 @@ async function publish({ github, context, core }) {
     return;
   }
 
-  const baseline = readResult(process.env.BASELINE_RESULT_DIR);
+  const baseline = readResult(process.env.BASELINE_RESULT_DIR, process.env.BASELINE_SHA, {
+    allowLegacy: true,
+  });
   const baselineRun = baseline
     ? {
         sha: process.env.BASELINE_SHA,

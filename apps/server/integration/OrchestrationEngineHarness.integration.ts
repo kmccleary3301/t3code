@@ -183,6 +183,7 @@ const tryRuntimePromise = <A>(operation: string, run: () => Promise<A>) =>
 export interface OrchestrationIntegrationHarness {
   readonly rootDir: string;
   readonly workspaceDir: string;
+  readonly attachmentsDir: string;
   readonly dbPath: string;
   readonly adapterHarness: TestProviderAdapterHarness | null;
   readonly engine: OrchestrationEngineShape;
@@ -653,6 +654,7 @@ export const makeOrchestrationIntegrationHarness = (
     return {
       rootDir,
       workspaceDir,
+      attachmentsDir,
       dbPath,
       adapterHarness,
       engine,

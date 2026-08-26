@@ -4,6 +4,8 @@ import {
   ProviderDriverKind,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -22,12 +24,7 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import type { ProviderDriverCreateInput } from "../ProviderDriver.ts";
-import {
-  DEFAULT_TIMEOUT_MS,
-  isCommandMissingCause,
-  parseGenericCliVersion,
-  spawnAndCollect,
-} from "../providerSnapshot.ts";
+import { DEFAULT_TIMEOUT_MS, isCommandMissingCause, spawnAndCollect } from "../providerSnapshot.ts";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import { makePiFamilyAdapter } from "../piFamily/NativeAdapter.ts";
 import {
@@ -36,6 +33,42 @@ import {
 } from "../piFamily/ModelDiscovery.ts";
 import { makePiFamilyTextGeneration } from "../../textGeneration/PiFamilyTextGeneration.ts";
 
+const SUPPORTED_PI_VERSION = "0.84.2";
+const SUPPORTED_OMP_VERSION = "17.3.7";
+
+export function parsePiFamilyCliVersion(output: string): string | null {
+  const match = output.match(
+    /(?<![\d.])v?(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?(?![0-9A-Za-z.])/u,
+  );
+  const core = match?.[1];
+  if (core === undefined) return null;
+  const prerelease = match?.[2];
+  if (parseSemver(prerelease === undefined ? core : `${core}-${prerelease}`) === null) {
+    return null;
+  }
+  return core;
+}
+
+export function piFamilyVersionCompatibilityError(
+  provider: "pi" | "omp",
+  version: string | null,
+): string | undefined {
+  const required = provider === "omp" ? SUPPORTED_OMP_VERSION : SUPPORTED_PI_VERSION;
+  if (version === null) {
+    return `${provider} native version could not be parsed. Configure the audited ${provider} ${required} binary and refresh provider health.`;
+  }
+  const parsed = parseSemver(version);
+  if (parsed === null || parsed.prerelease.length > 0) {
+    return `${provider} native version '${version}' is malformed or unsupported. Configure the audited ${provider} ${required} binary and refresh provider health.`;
+  }
+  if (compareSemverVersions(version, required) !== 0) {
+    if (provider === "omp" && version === "18.0.0") {
+      return "OMP 18.0.0 is unsupported because it does not implement T3 get_capabilities. Configure the audited OMP 17.3.7 integration binary instead.";
+    }
+    return `${provider} native version '${version}' is unsupported. T3 supports only the audited ${provider} ${required} binary; configure that binary and refresh provider health.`;
+  }
+  return undefined;
+}
 export type PiFamilySettings = typeof PiSettings.Type | typeof OmpSettings.Type;
 
 const maintenance = (provider: ProviderDriverKind): ProviderMaintenanceCapabilities => ({
@@ -53,6 +86,7 @@ function makeSnapshot(
   },
 ): ServerProviderShape {
   const config = input.config;
+  const cwd = resolvePiFamilyWorkingDirectory(config.workingDirectory, dependencies.cwd);
   const environment = resolvePiFamilyEnvironment(
     {
       ...process.env,
@@ -86,14 +120,20 @@ function makeSnapshot(
         message: "Provider is disabled in settings.",
       } satisfies ServerProvider;
     }
-    const probe = yield* spawnAndCollect(
-      config.binaryPath,
-      ChildProcess.make(config.binaryPath, ["--version"], {
-        cwd: dependencies.cwd,
+    const probe = yield* Effect.gen(function* () {
+      const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, ["--version"], {
         env: environment,
-        extendEnv: false,
-      }),
-    ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+      });
+      return yield* spawnAndCollect(
+        config.binaryPath,
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          cwd,
+          env: environment,
+          extendEnv: false,
+          shell: spawnCommand.shell,
+        }),
+      );
+    }).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
     if (Result.isFailure(probe)) {
       const cause = probe.failure;
       return {
@@ -120,7 +160,7 @@ function makeSnapshot(
       } satisfies ServerProvider;
     }
     const result = probe.success.value;
-    const version = parseGenericCliVersion(`${result.stdout}\n${result.stderr}`);
+    const version = parsePiFamilyCliVersion(`${result.stdout}\n${result.stderr}`);
     if (result.code !== 0) {
       return {
         ...base,
@@ -132,11 +172,26 @@ function makeSnapshot(
         message: `${provider} version probe exited unsuccessfully.`,
       } satisfies ServerProvider;
     }
+    const compatibilityError = piFamilyVersionCompatibilityError(
+      provider === "omp" ? "omp" : "pi",
+      version,
+    );
+    if (compatibilityError !== undefined) {
+      return {
+        ...base,
+        installed: true,
+        version,
+        status: "error" as const,
+        auth: { status: "unknown" as const },
+        checkedAt,
+        message: compatibilityError,
+      } satisfies ServerProvider;
+    }
     const discovery = yield* discoverPiFamilyModels({
       runtime: provider === "omp" ? "omp" : "pi",
       provider,
       binaryPath: config.binaryPath,
-      cwd: dependencies.cwd,
+      cwd,
       ...(config.agentDirectory ? { agentDirectory: config.agentDirectory } : {}),
       environment,
       launchArguments: config.launchArguments,
@@ -183,6 +238,12 @@ export function resolvePiFamilyEnvironment(
     ...configEnvironment,
   });
 }
+export function resolvePiFamilyWorkingDirectory(
+  configuredWorkingDirectory: string,
+  serverWorkingDirectory: string,
+): string {
+  return configuredWorkingDirectory || serverWorkingDirectory;
+}
 
 function makeAdapter(
   input: ProviderDriverCreateInput<PiFamilySettings>,
@@ -206,7 +267,7 @@ function makeAdapter(
       provider,
       runtime: provider === "omp" ? "omp" : "pi",
       binaryPath: config.binaryPath,
-      cwd: serverConfig.cwd,
+      cwd: resolvePiFamilyWorkingDirectory(config.workingDirectory, serverConfig.cwd),
       ...(config.agentDirectory ? { agentDirectory: config.agentDirectory } : {}),
       attachmentsDir: serverConfig.attachmentsDir,
       environment: processEnvironment,

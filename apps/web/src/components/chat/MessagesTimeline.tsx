@@ -14,6 +14,7 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
+const NOOP_OPEN_NATIVE_TERMINAL = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -33,6 +34,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
+  type WorkLogEntry,
   workEntryDisplayIndicatesToolFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
@@ -145,6 +147,7 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+  onOpenNativeTerminal: (fallback: NonNullable<WorkLogEntry["nativeTerminalFallback"]>) => void;
 }
 
 interface TimelineRowActivityState {
@@ -204,6 +207,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
 interface MessagesTimelineProps {
   agentPanelModel?: AgentPanelModel;
   onOpenAgents?: () => void;
+  onOpenNativeTerminal?: (fallback: NonNullable<WorkLogEntry["nativeTerminalFallback"]>) => void;
   isWorking: boolean;
   workingStepLabel?: string | null;
   activeTurnStartedAt: string | null;
@@ -252,6 +256,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeTurnStartedAt,
   agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
   onOpenAgents = NOOP_OPEN_AGENTS,
+  onOpenNativeTerminal = NOOP_OPEN_NATIVE_TERMINAL,
   listRef,
   timelineEntries,
   latestTurn,
@@ -515,6 +520,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      onOpenNativeTerminal,
     }),
     [
       timestampFormat,
@@ -531,6 +537,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       agentPanelModel,
       onOpenAgents,
+      onOpenNativeTerminal,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -2607,6 +2614,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   isExpandedToolGroupEntry: boolean;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry } = props;
+  const { onOpenNativeTerminal } = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -2615,7 +2623,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     showWarningIndicator || showFailedIndicator ? "x" : workEntryIconName(workEntry);
   const displayText = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null;
+  const terminalFallback = workEntry.nativeTerminalFallback;
+  const canExpand = expandedBody !== null && terminalFallback === undefined;
   const showDestructiveRowStyle =
     showFailedIndicator &&
     (workEntry.sourceActivityKind === "runtime.error" || !workLogEntryIsToolLike(workEntry));
@@ -2679,15 +2688,43 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           />
         </span>
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
-              <span className={cn("min-w-0 flex-1 truncate", headingClass)}>{displayText}</span>
+          <div
+            className={cn(
+              "flex min-w-0 flex-1 gap-2 overflow-hidden",
+              terminalFallback
+                ? "flex-col items-start sm:flex-row sm:items-center"
+                : "items-center",
+            )}
+          >
+            <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm leading-relaxed">
+              <span
+                className={cn(
+                  "min-w-0 flex-1",
+                  terminalFallback ? "break-words whitespace-normal" : "truncate",
+                  headingClass,
+                )}
+              >
+                {displayText}
+              </span>
             </p>
+            {terminalFallback ? (
+              <button
+                type="button"
+                className="max-w-full shrink-0 whitespace-normal rounded-md border border-border/70 px-2 py-1 text-left text-xs font-medium text-foreground transition hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+                aria-label={`Open ${terminalFallback.runtime.toUpperCase()} client in terminal for provider ${terminalFallback.providerInstanceId}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenNativeTerminal(terminalFallback);
+                }}
+              >
+                Open {terminalFallback.runtime.toUpperCase()} client in terminal
+              </button>
+            ) : null}
           </div>
           <span
             className={cn(
               "flex size-4 shrink-0 items-center justify-center",
-              !canExpand && "invisible",
+              terminalFallback ? "hidden" : !canExpand && "invisible",
             )}
             aria-hidden
           >

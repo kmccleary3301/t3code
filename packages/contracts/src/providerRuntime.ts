@@ -578,6 +578,8 @@ const taskAgentLinkageFields = {
   outputFile: Schema.optional(TrimmedNonEmptyStringSchema),
   /** Codex agent hierarchy path, e.g. "/root/marlow". */
   agentPath: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** True when the provider detached the task from its owning turn. */
+  isBackgrounded: Schema.optional(Schema.Boolean),
   /**
    * Set on provider-synthesized child-agent events (Codex) whose activity
    * belongs in the Agents surface, never the parent timeline.
@@ -632,7 +634,6 @@ const TaskUpdatedPayload = Schema.Struct({
   description: Schema.optional(TrimmedNonEmptyStringSchema),
   error: Schema.optional(TrimmedNonEmptyStringSchema),
   endedAt: Schema.optional(IsoDateTime),
-  isBackgrounded: Schema.optional(Schema.Boolean),
   ...taskAgentLinkageFields,
 });
 export type TaskUpdatedPayload = typeof TaskUpdatedPayload.Type;

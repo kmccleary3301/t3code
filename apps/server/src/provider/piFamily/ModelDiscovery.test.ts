@@ -1,5 +1,8 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -52,9 +55,46 @@ function makeConfig(runtime: "pi" | "omp"): PiFamilyModelDiscoveryConfig {
     trustMode: "approve-for-this-run",
     requestTimeoutMs: 1_000,
     startupTimeoutMs: 1_000,
+
     maxLineBytes: 1_048_576,
     maxMessageBytes: 67_108_864,
   };
+}
+function realProbeScript(
+  mode:
+    | "pi"
+    | "omp"
+    | "omp-missing-capabilities"
+    | "omp-malformed-capabilities"
+    | "omp-empty-capabilities"
+    | "omp-bad-ready"
+    | "pi-empty",
+) {
+  const runtime = mode.startsWith("omp") ? "omp" : "pi";
+  return (
+    [
+      "#!/usr/bin/env node",
+      'import { createInterface } from "node:readline";',
+      'const send = (frame) => process.stdout.write(JSON.stringify(frame) + "\\n");',
+      `const runtime = ${JSON.stringify(runtime)};`,
+      `const mode = ${JSON.stringify(mode)};`,
+      'if (runtime === "omp") send({ type: "ready", protocolVersion: mode === "omp-bad-ready" ? 0 : 1, supportedProtocolVersions: [1, 2], maxFrameBytes: 1048576, maxReassembledFrameBytes: 67108864 });',
+      'if (mode === "omp-bad-ready") setTimeout(() => process.exit(1), 100);',
+      "const input = createInterface({ input: process.stdin });",
+      'input.on("line", (line) => {',
+      "  const request = JSON.parse(line);",
+      "  let data;",
+      '  if (request.type === "get_capabilities") data = mode === "omp-missing-capabilities" ? undefined : mode === "omp-malformed-capabilities" ? [] : mode === "omp-empty-capabilities" ? {} : { models: { discover: true } };',
+      '  else if (request.type === "get_state") data = { model: { provider: "probe", id: "model" } };',
+      '  else if (request.type === "get_available_models") data = { models: mode === "pi-empty" ? [] : [{ provider: "probe", id: "model", name: "Probe Model" }] };',
+      '  else if (request.type === "negotiate_protocol") data = { protocolVersion: 2 };',
+      "  else return;",
+      '  send({ id: request.id, type: "response", command: request.type, success: mode === "omp-missing-capabilities" && request.type === "get_capabilities" ? false : true, ...(data === undefined ? {} : { data }) });',
+      '  if (request.type === "get_available_models" || (request.type === "get_capabilities" && mode.includes("capabilities"))) setTimeout(() => process.exit(0), 50);',
+      "});",
+      "setInterval(() => {}, 1000);",
+    ].join("\n") + "\n"
+  );
 }
 
 function makeSpawner(
@@ -223,6 +263,13 @@ describe("Pi-family model discovery RPC", () => {
           makeSpawner(
             jsonl(
               {
+                id: "get_capabilities-1",
+                type: "response",
+                command: "get_capabilities",
+                success: true,
+                data: { models: { discover: true } },
+              },
+              {
                 id: "get_state-1",
                 type: "response",
                 command: "get_state",
@@ -257,6 +304,13 @@ describe("Pi-family model discovery RPC", () => {
           ChildProcessSpawner.ChildProcessSpawner,
           makeSpawner(
             jsonl(
+              {
+                id: "get_capabilities-1",
+                type: "response",
+                command: "get_capabilities",
+                success: true,
+                data: { models: { discover: true } },
+              },
               {
                 id: "get_state-1",
                 type: "response",
@@ -302,6 +356,13 @@ describe("Pi-family model discovery RPC", () => {
           command: "negotiate_protocol",
           success: true,
           data: { protocolVersion: 2 },
+        },
+        {
+          id: "get_capabilities-1",
+          type: "response",
+          command: "get_capabilities",
+          success: true,
+          data: { tasks: { lifecycle: true } },
         },
         {
           id: "get_state-1",
@@ -354,6 +415,63 @@ describe("Pi-family model discovery RPC", () => {
       expect(error).toBeInstanceOf(Error);
       expect(killed.value).toBeGreaterThan(0);
     }),
+  );
+});
+
+it.layer(NodeServices.layer)("Pi-family executable discovery boundaries", (it) => {
+  it.effect("probes supported and unsupported native protocol lanes through child processes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pi-family-probe-" });
+      const run = (
+        mode:
+          | "pi"
+          | "omp"
+          | "omp-missing-capabilities"
+          | "omp-malformed-capabilities"
+          | "omp-empty-capabilities"
+          | "omp-bad-ready"
+          | "pi-empty",
+      ) =>
+        Effect.gen(function* () {
+          const executablePath = path.join(tempDir, `${mode}.mjs`);
+          yield* fs.writeFileString(executablePath, realProbeScript(mode));
+          yield* fs.chmod(executablePath, 0o755);
+          const runtime = mode.startsWith("omp") ? "omp" : "pi";
+          return yield* discoverPiFamilyModels({
+            ...makeConfig(runtime),
+            binaryPath: process.execPath,
+            launchArguments: [executablePath],
+            cwd: tempDir,
+            requestTimeoutMs: 500,
+            startupTimeoutMs: 500,
+          });
+        });
+
+      const pi = yield* run("pi");
+      expect(pi.models.map((model) => model.slug)).toEqual(["probe/model"]);
+      const omp = yield* run("omp");
+      expect(omp.models.map((model) => model.slug)).toEqual(["probe/model"]);
+
+      const missingCapabilities = yield* run("omp-missing-capabilities").pipe(Effect.flip);
+      expect(missingCapabilities).toMatchObject({ code: "unsupported" });
+      expect(missingCapabilities.message).toContain("get_capabilities");
+
+      const malformedCapabilities = yield* run("omp-malformed-capabilities").pipe(Effect.flip);
+      expect(malformedCapabilities).toMatchObject({ code: "unsupported" });
+      expect(malformedCapabilities.message).toContain("get_capabilities");
+
+      const emptyCapabilities = yield* run("omp-empty-capabilities").pipe(Effect.flip);
+      expect(emptyCapabilities).toMatchObject({ code: "unsupported" });
+      expect(emptyCapabilities.message).toContain("get_capabilities");
+
+      const badReady = yield* run("omp-bad-ready").pipe(Effect.flip);
+      expect(badReady).toMatchObject({ code: "protocol" });
+
+      const empty = yield* run("pi-empty").pipe(Effect.flip);
+      expect(empty).toMatchObject({ code: "empty" });
+    }).pipe(Effect.scoped),
   );
 });
 

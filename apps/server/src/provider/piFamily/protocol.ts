@@ -265,6 +265,7 @@ export interface NativeTaskIdentity {
 }
 
 export interface NativeTaskRunHandles {
+  readonly runId?: string;
   readonly sessionFile?: string;
   readonly transcript?: string;
   readonly outputPath?: string;

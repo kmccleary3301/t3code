@@ -21,6 +21,7 @@ import {
   type ProviderUserInputAnswers,
   type ThreadId,
 } from "@t3tools/contracts";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -100,7 +101,8 @@ interface NativeSession {
   readonly turns: ProviderThreadTurnSnapshot[];
   readonly startedAt: string;
   readonly session: ProviderSession;
-  readonly ready?: Deferred.Deferred<void, never>;
+  readonly ready?: Deferred.Deferred<void, ProviderAdapterError>;
+  readonly stopComplete: Deferred.Deferred<void, never>;
   readonly traceSink?: NativeTraceSink;
   readonly stdoutDrained: Deferred.Deferred<void, never>;
   readonly stderrDrained: Deferred.Deferred<void, never>;
@@ -615,6 +617,9 @@ function eventForProjection(
         ...(projected.task.model ? { model: projected.task.model } : {}),
         ...(projected.task.parentToolCallId ? { toolUseId: projected.task.parentToolCallId } : {}),
         ...(projected.task.parentTaskId ? { parentAgentId: projected.task.parentTaskId } : {}),
+        ...(projected.task.detached === undefined
+          ? {}
+          : { isBackgrounded: projected.task.detached }),
         ...(projected.task.workflow?.name ? { workflowName: projected.task.workflow.name } : {}),
         ...(projected.task.workflow?.phaseIndex === undefined
           ? {}
@@ -709,12 +714,35 @@ function eventForProjection(
       return {
         ...base,
         type: "runtime.warning",
-        payload: { message: `Native UI request: ${request.kind}`, detail: request },
+        payload: {
+          message:
+            request.kind === "unsupported_terminal_ui"
+              ? `${request.message}. Open the native ${config.runtime.toUpperCase()} terminal for this thread to continue.`
+              : `Native UI request: ${request.kind}`,
+          detail: request,
+          ...(request.kind === "unsupported_terminal_ui"
+            ? {
+                nativeTerminalFallback: {
+                  runtime: config.runtime,
+                  providerInstanceId: config.instanceId,
+                  feature: request.feature,
+                },
+              }
+            : {}),
+        },
       };
     }
+    case "compaction.completed":
+      return {
+        ...base,
+        type: "thread.state.changed",
+        payload: {
+          state: "compacted",
+          detail: persistedNativeEnvelope(projected.raw),
+        },
+      };
     case "queue.changed":
     case "compaction.started":
-    case "compaction.completed":
     case "retry.scheduled":
       return {
         ...base,
@@ -1002,34 +1030,112 @@ export const makePiFamilyAdapter = (
       threadId: ThreadId,
       closeScope = true,
       awaitDrain = true,
+      cancelTasks = true,
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
         const session = sessions.get(threadId);
         if (!session) return;
+        if (session.stopped) {
+          yield* Deferred.await(session.stopComplete);
+          return;
+        }
         session.stopped = true;
-        sessions.delete(threadId);
         session.interruptedTurnIds.clear();
+        const cancellableTasks =
+          cancelTasks && config.runtime === "omp"
+            ? session.projector.snapshotTasks().flatMap((task) => {
+                const runId = task.runHandles?.runId;
+                return task.detached === true &&
+                  task.status !== "completed" &&
+                  task.status !== "failed" &&
+                  task.status !== "cancelled" &&
+                  task.status !== "interrupted" &&
+                  typeof runId === "string"
+                  ? [{ taskId: task.id, runId }]
+                  : [];
+              })
+            : [];
+        const acknowledgedTaskIds = (yield* Effect.forEach(
+          cancellableTasks,
+          (task) =>
+            request(
+              session,
+              {
+                type: "cancel_task",
+                taskId: task.taskId,
+                runId: task.runId,
+              },
+              "cancel_task",
+              1_500,
+            ).pipe(
+              Effect.interruptible,
+              Effect.timeout("2 seconds"),
+              Effect.as(task.taskId),
+              Effect.catch(() => Effect.succeed(undefined)),
+            ),
+          { concurrency: 1 },
+        )).filter((taskId): taskId is string => taskId !== undefined);
+        if (acknowledgedTaskIds.length > 0) {
+          const acknowledged = new Set(acknowledgedTaskIds);
+          const snapshots = session.projector.snapshotTasks();
+          const byId = new Map(snapshots.map((task) => [task.id, task]));
+          const belongsToAcknowledgedTask = (taskId: string): boolean => {
+            let current = byId.get(taskId);
+            const visited = new Set<string>();
+            while (current !== undefined && !visited.has(current.id)) {
+              if (acknowledged.has(current.id)) return true;
+              visited.add(current.id);
+              current =
+                current.parentTaskId === undefined ? undefined : byId.get(current.parentTaskId);
+            }
+            return false;
+          };
+          const unsettled = snapshots
+            .filter(
+              (task) =>
+                belongsToAcknowledgedTask(task.id) &&
+                task.status !== "completed" &&
+                task.status !== "failed" &&
+                task.status !== "cancelled" &&
+                task.status !== "interrupted",
+            )
+            .toReversed();
+          yield* Effect.forEach(
+            unsettled,
+            (task) =>
+              Effect.forEach(
+                session.projector.project({
+                  type: "subagent_lifecycle",
+                  payload: {
+                    id: task.id,
+                    status: "aborted",
+                    ...(task.parentTaskId === undefined ? {} : { parentId: task.parentTaskId }),
+                    ...(task.parentToolCallId === undefined
+                      ? {}
+                      : { parentToolCallId: task.parentToolCallId }),
+                    ...(task.detached === undefined ? {} : { detached: task.detached }),
+                  },
+                }),
+                (projection) => offerProjection(session, projection),
+                { discard: true },
+              ),
+            { concurrency: 1, discard: true },
+          );
+        }
         const error = nativeError(config.provider, "session", "Native session stopped");
+        if (session.ready !== undefined) {
+          yield* Deferred.fail(session.ready, error).pipe(Effect.ignore);
+        }
         yield* failPending(session, error);
         yield* Queue.shutdown(session.input);
-        yield* Effect.forkDetach(
-          session.child
-            .kill({ killSignal: "SIGTERM", forceKillAfter: "2 seconds" })
-            .pipe(Effect.ignore),
+        yield* session.child
+          .kill({ killSignal: "SIGTERM", forceKillAfter: "2 seconds" })
+          .pipe(Effect.ignore);
+        const observedExit = yield* Effect.exit(
+          session.child.exitCode.pipe(Effect.timeout("3 seconds")),
         );
+        const streamsDrained = !awaitDrain || (yield* awaitTraceDrain(session));
         if (session.traceSink !== undefined) {
-          const observedExitDeferred = yield* Deferred.make<Exit.Exit<number, unknown>>();
-          yield* Effect.forkDetach(
-            Effect.exit(session.child.exitCode).pipe(
-              Effect.flatMap((result) => Deferred.succeed(observedExitDeferred, result)),
-            ),
-          );
-          const boundedExit = yield* Effect.exit(
-            Deferred.await(observedExitDeferred).pipe(Effect.timeout("3 seconds")),
-          );
-          const observedExit: Exit.Exit<number, unknown> = Exit.isSuccess(boundedExit)
-            ? boundedExit.value
-            : Exit.failCause(boundedExit.cause);
           const traceExit = Exit.isSuccess(observedExit)
             ? { code: Number(observedExit.value), signal: null }
             : {
@@ -1037,8 +1143,10 @@ export const makePiFamilyAdapter = (
                 signal: exitSignalFromCause(Cause.squash(observedExit.cause)),
               };
           const exitObserved = Exit.isSuccess(observedExit) || traceExit.signal !== null;
-          let captureComplete = exitObserved && !session.traceInvalidated;
-          if (captureComplete && awaitDrain && !(yield* awaitTraceDrain(session))) {
+          if (!session.startupComplete) yield* invalidateTrace(session);
+          let captureComplete =
+            exitObserved && session.startupComplete && !session.traceInvalidated;
+          if (captureComplete && !streamsDrained) {
             captureComplete = false;
             yield* invalidateTrace(session);
             yield* reportTraceFailure(
@@ -1079,7 +1187,9 @@ export const makePiFamilyAdapter = (
             Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore),
           );
         }
-      });
+        if (sessions.get(threadId) === session) sessions.delete(threadId);
+        yield* Deferred.succeed(session.stopComplete, undefined).pipe(Effect.ignore);
+      }).pipe(Effect.uninterruptible);
     const failSession = (
       session: NativeSession,
       failure: ProviderAdapterProcessError,
@@ -1088,7 +1198,7 @@ export const makePiFamilyAdapter = (
         if (session.stopped) return;
         yield* invalidateTrace(session);
         yield* reportTraceFailure(session, failure);
-        yield* stopSession(session.threadId, false, false);
+        yield* stopSession(session.threadId, false, false, false);
         yield* Effect.forkDetach(
           Scope.close(session.scope, Exit.succeed(undefined)).pipe(Effect.ignore),
         );
@@ -1373,12 +1483,17 @@ export const makePiFamilyAdapter = (
           config.launchArguments,
           config.trustMode,
         );
+        const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, launchArguments, {
+          env: environment,
+          extendEnv: true,
+        });
         const child = yield* spawner
           .spawn(
-            ChildProcess.make(config.binaryPath, launchArguments, {
+            ChildProcess.make(spawnCommand.command, spawnCommand.args, {
               cwd: input.cwd ?? config.cwd,
               env: environment,
               extendEnv: true,
+              shell: spawnCommand.shell,
               stdin: { stream: "pipe", endOnDone: false },
               stdout: "pipe",
               stderr: "pipe",
@@ -1395,9 +1510,11 @@ export const makePiFamilyAdapter = (
           );
         const inputQueue = yield* Queue.bounded<Uint8Array>(NATIVE_INPUT_QUEUE_CAPACITY);
         const startedAt = nowIso();
-        const ready = config.runtime === "omp" ? yield* Deferred.make<void>() : undefined;
+        const ready =
+          config.runtime === "omp" ? yield* Deferred.make<void, ProviderAdapterError>() : undefined;
         const stdoutDrained = yield* Deferred.make<void>();
         const stderrDrained = yield* Deferred.make<void>();
+        const stopComplete = yield* Deferred.make<void>();
         const session: NativeSession = {
           threadId: input.threadId,
           child,
@@ -1407,6 +1524,7 @@ export const makePiFamilyAdapter = (
           pending: new Map(),
           acceptedPromptIds: new Set(),
           uiRequestKinds: new Map(),
+          stopComplete,
           activeTurns: new Set(),
           interruptedTurnIds: new Set(),
           activeTools: new Set(),

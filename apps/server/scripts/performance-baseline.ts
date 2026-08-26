@@ -120,8 +120,43 @@ const measureWebSocketPayload = () => {
   };
 };
 
+const sourceHead = process.env.T3_EVIDENCE_SOURCE_HEAD;
+if (!sourceHead || !/^[0-9a-f]{40}$/u.test(sourceHead)) {
+  throw new Error("T3_EVIDENCE_SOURCE_HEAD must be a full Git SHA");
+}
+
+const thresholds = {
+  piReplayMedianMilliseconds: 25,
+  ompReplayMedianMilliseconds: 50,
+  snapshotMilliseconds: 100,
+  websocketCompressionMedianMilliseconds: 25,
+} as const;
+
+const measured = {
+  piReplay: measureReplay(piNativeTraceJsonl, "pi", false),
+  ompReplay: measureReplay(ompNativeChunkedTraceJsonl, "omp", true),
+  snapshot: measureSnapshot(),
+  websocketCompression: measureWebSocketPayload(),
+};
+const violations = [
+  measured.piReplay.medianMilliseconds > thresholds.piReplayMedianMilliseconds
+    ? `Pi replay median ${measured.piReplay.medianMilliseconds}ms exceeded ${thresholds.piReplayMedianMilliseconds}ms`
+    : null,
+  measured.ompReplay.medianMilliseconds > thresholds.ompReplayMedianMilliseconds
+    ? `OMP replay median ${measured.ompReplay.medianMilliseconds}ms exceeded ${thresholds.ompReplayMedianMilliseconds}ms`
+    : null,
+  measured.snapshot.milliseconds > thresholds.snapshotMilliseconds
+    ? `snapshot ${measured.snapshot.milliseconds}ms exceeded ${thresholds.snapshotMilliseconds}ms`
+    : null,
+  measured.websocketCompression.medianMilliseconds >
+  thresholds.websocketCompressionMedianMilliseconds
+    ? `WebSocket compression median ${measured.websocketCompression.medianMilliseconds}ms exceeded ${thresholds.websocketCompressionMedianMilliseconds}ms`
+    : null,
+].filter((violation): violation is string => violation !== null);
+
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  sourceHead,
   node: process.version,
   generatedAt: new Date().toISOString(),
   fixtureLoad: {
@@ -130,13 +165,22 @@ const report = {
     piRecords: piNativeTrace.length,
   },
   decodeReplayProjection: {
-    pi: measureReplay(piNativeTraceJsonl, "pi", false),
-    omp: measureReplay(ompNativeChunkedTraceJsonl, "omp", true),
+    pi: measured.piReplay,
+    omp: measured.ompReplay,
   },
-  snapshot: measureSnapshot(),
-  websocketCompression: measureWebSocketPayload(),
+  snapshot: measured.snapshot,
+  websocketCompression: measured.websocketCompression,
+  thresholds,
+  violations,
+  conclusion: violations.length === 0 ? "success" : "failure",
   memory: process.memoryUsage(),
-  note: "Run beside the focused transfer-budget report; compare like-for-like Node/runtime and fixture revisions before adding thresholds.",
+  note: "Ceilings are deliberately wider than the exact-head baseline so runner jitter does not fail CI while order-of-magnitude regressions remain blocking.",
 };
 
-process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+const serialized = `${JSON.stringify(report, null, 2)}\n`;
+const reportPath = process.env.T3_PERFORMANCE_REPORT_PATH?.trim();
+if (reportPath) {
+  NodeFS.writeFileSync(reportPath, serialized, { mode: 0o600 });
+}
+process.stdout.write(serialized);
+if (violations.length > 0) process.exitCode = 1;

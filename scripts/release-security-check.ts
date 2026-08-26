@@ -24,10 +24,15 @@ const posixLifecycle = NodeFS.readFileSync(
   "utf8",
 );
 const installer = NodeFS.readFileSync(NodePath.join(root, "scripts/install.sh"), "utf8");
+const installedNativeTest = NodeFS.readFileSync(
+  NodePath.join(root, "apps/server/integration/installedArtifactNative.integration.test.ts"),
+  "utf8",
+);
 const workflowDir = NodePath.join(root, ".github/workflows");
 const workflowSources = NodeFS.readdirSync(workflowDir)
   .filter((name) => name.endsWith(".yml"))
   .map((name) => [name, NodeFS.readFileSync(NodePath.join(workflowDir, name), "utf8")] as const);
+const ciWorkflow = workflowSources.find(([name]) => name === "ci.yml")?.[1] ?? "";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -124,6 +129,37 @@ assert(
 assert(
   posixLifecycle.includes('"partial-download-no-mutation"'),
   "POSIX lifecycle report must record the partial-download no-mutation check.",
+);
+assert(
+  (releaseLifecycleWorkflow.match(/Sanitize installed native test evidence/gu) ?? []).length === 2,
+  "Every lifecycle platform must sanitize installed-native Vitest evidence.",
+);
+assert(
+  (
+    releaseLifecycleWorkflow.match(/T3_LIFECYCLE_INSTALLED_NATIVE_TEST_REPORT:.*\.raw\.json/gu) ??
+    []
+  ).length === 2,
+  "Installed-native Vitest reporters must write only temporary raw inputs.",
+);
+assert(
+  !installedNativeTest.includes("installedCli: NodeFS.realpathSync(installedCli)"),
+  "Installed-native evidence must not publish the absolute installed CLI path.",
+);
+assert(
+  !installedNativeTest.includes("runtimes: results,"),
+  "Installed-native evidence must not publish assistant response text.",
+);
+assert(
+  ciWorkflow.includes("T3_PERFORMANCE_REPORT_PATH: ${{ runner.temp }}/pi-omp-performance.json"),
+  "Performance evidence must be written directly to its artifact path.",
+);
+assert(
+  ciWorkflow.includes("run: node apps/server/scripts/performance-baseline.ts"),
+  "Performance evidence must bypass task-runner banner output.",
+);
+assert(
+  !ciWorkflow.includes("performance-baseline | tee"),
+  "Performance evidence must not capture mixed command stdout.",
 );
 
 // Reject the two most common unsafe installer regressions without requiring

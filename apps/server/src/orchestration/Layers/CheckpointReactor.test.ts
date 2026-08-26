@@ -9,6 +9,7 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderInstanceId,
+  VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
 import {
   CommandId,
@@ -64,6 +65,13 @@ import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 
+function checkpointFault(detail: string) {
+  return new VcsUnsupportedOperationError({
+    operation: "CheckpointReactor.test",
+    kind: "git",
+    detail,
+  });
+}
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
   readonly eventId: EventId;
@@ -84,6 +92,7 @@ function createProviderServiceHarness(
   providerName: ProviderSession["provider"] = ProviderDriverKind.make("codex"),
   native?: {
     readonly currentCheckpoint?: unknown;
+    readonly capture?: ProviderServiceShape["captureNativeCheckpoint"];
     readonly restore?: ProviderServiceShape["restoreNativeCheckpoint"];
   },
 ) {
@@ -92,7 +101,8 @@ function createProviderServiceHarness(
   const rollbackConversation = vi.fn(
     (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
   );
-  const captureNativeCheckpoint = vi.fn(() => Effect.succeed(native?.currentCheckpoint));
+  const captureNativeCheckpoint =
+    native?.capture ?? vi.fn(() => Effect.succeed(native?.currentCheckpoint));
   const restoreNativeCheckpoint = native?.restore ?? (() => Effect.void);
 
   const unsupported = <A>() =>
@@ -302,6 +312,10 @@ describe("CheckpointReactor", () => {
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly nativeCurrentCheckpoint?: unknown;
     readonly nativeRestore?: ProviderServiceShape["restoreNativeCheckpoint"];
+    readonly nativeCapture?: ProviderServiceShape["captureNativeCheckpoint"];
+    readonly checkpointStoreTransform?: (
+      store: CheckpointStore.CheckpointStore["Service"],
+    ) => CheckpointStore.CheckpointStore["Service"];
   }) {
     const cwd = createGitRepository();
     tempDirs.push(cwd);
@@ -314,9 +328,20 @@ describe("CheckpointReactor", () => {
         ...(options?.nativeCurrentCheckpoint === undefined
           ? {}
           : { currentCheckpoint: options.nativeCurrentCheckpoint }),
+        ...(options?.nativeCapture === undefined ? {} : { capture: options.nativeCapture }),
         ...(options?.nativeRestore === undefined ? {} : { restore: options.nativeRestore }),
       },
     );
+    const checkpointStoreBaseLayer = CheckpointStore.layer.pipe(
+      Layer.provide(VcsDriverRegistry.layer),
+    );
+    const checkpointStoreLayer =
+      options?.checkpointStoreTransform === undefined
+        ? checkpointStoreBaseLayer
+        : Layer.effect(
+            CheckpointStore.CheckpointStore,
+            Effect.map(CheckpointStore.CheckpointStore, options.checkpointStoreTransform),
+          ).pipe(Layer.provide(checkpointStoreBaseLayer));
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(ThreadBackgroundLiveness.layer),
@@ -363,7 +388,7 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(RuntimeReceiptBusLive),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
-      Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer))),
+      Layer.provideMerge(checkpointStoreLayer),
       Layer.provideMerge(
         WorkspaceEntries.layer.pipe(
           Layer.provide(WorkspacePaths.layer),
@@ -481,6 +506,75 @@ describe("CheckpointReactor", () => {
     command: Parameters<Awaited<ReturnType<typeof createHarness>>["engine"]["dispatch"]>[0],
   ): Promise<void> {
     await Effect.runPromise(harness.engine.dispatch(command));
+  }
+
+  async function dispatchNativeCheckpointRevert(
+    harness: Awaited<ReturnType<typeof createHarness>>,
+    suffix: string,
+    descriptorOverrides?: {
+      readonly provider?: ProviderDriverKind;
+      readonly instanceId?: ProviderInstanceId;
+      readonly threadId?: ThreadId;
+      readonly runtime?: string;
+      readonly sessionId?: string;
+    },
+  ) {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const provider = descriptorOverrides?.provider ?? ProviderDriverKind.make("pi");
+    const instanceId = descriptorOverrides?.instanceId ?? ProviderInstanceId.make("pi");
+    const threadId = descriptorOverrides?.threadId ?? ThreadId.make("thread-1");
+    const runtimeName = descriptorOverrides?.runtime ?? "pi";
+    const sessionId = descriptorOverrides?.sessionId ?? "native-session-target";
+
+    await dispatchCommand(harness, {
+      type: "thread.session.set",
+      commandId: CommandId.make(`cmd-session-set-${suffix}`),
+      threadId: ThreadId.make("thread-1"),
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "ready",
+        providerName: "pi",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+    await dispatchCommand(harness, {
+      type: "thread.turn.diff.complete",
+      commandId: CommandId.make(`cmd-diff-${suffix}`),
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId(`turn-${suffix}`),
+      completedAt: createdAt,
+      checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+      status: "ready",
+      files: [],
+      checkpointTurnCount: 1,
+      nativeCheckpoint: {
+        version: 1,
+        runtime: runtimeName,
+        provider,
+        instanceId,
+        threadId,
+        sessionId,
+        captureState: "captured",
+        opaque: {
+          runtime: runtimeName,
+          sessionId,
+          leafEntryId: `native-leaf-${suffix}`,
+          opaque: { cursor: "target" },
+        },
+      },
+      createdAt,
+    });
+    await dispatchCommand(harness, {
+      type: "thread.checkpoint.revert",
+      commandId: CommandId.make(`cmd-revert-${suffix}`),
+      threadId: ThreadId.make("thread-1"),
+      turnCount: 1,
+      createdAt,
+    });
   }
 
   it("captures pre-turn baseline on turn.started and post-turn checkpoint on turn.completed", async () => {
@@ -1251,6 +1345,202 @@ describe("CheckpointReactor", () => {
     expect(events.some((event) => event.type === "thread.reverted")).toBe(false);
   });
 
+  it.each([
+    {
+      mode: "native-capture-failure",
+      expectedDetail: "Native checkpoint compensation capture failed",
+    },
+    {
+      mode: "native-capture-unavailable",
+      expectedDetail: "current native leaf could not be captured for compensation",
+    },
+    {
+      mode: "filesystem-capture-failure",
+      expectedDetail: "Filesystem compensation capture failed",
+    },
+    {
+      mode: "filesystem-target-failure",
+      expectedDetail: "Filesystem checkpoint restore failed",
+    },
+    {
+      mode: "filesystem-target-and-compensation-failure",
+      expectedDetail: "Filesystem compensation failed",
+    },
+    {
+      mode: "filesystem-target-unavailable",
+      expectedDetail: "Filesystem checkpoint is unavailable",
+    },
+    {
+      mode: "native-target-failure",
+      expectedDetail: "Native checkpoint restore failed",
+    },
+    {
+      mode: "native-target-and-compensation-failure",
+      expectedDetail: "Native compensation failed",
+    },
+    {
+      mode: "identity-mismatch",
+      expectedDetail: "provider/session identity does not match",
+    },
+  ] as const)(
+    "compensates and blocks prompting for checkpoint saga fault: $mode",
+    async ({ mode, expectedDetail }) => {
+      const restoreRefs: string[] = [];
+      const deletedRefs: string[] = [];
+      let nativeRestoreAttempts = 0;
+      const nativeCapture =
+        mode === "native-capture-failure"
+          ? vi.fn(() =>
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "pi",
+                  method: "capture_checkpoint",
+                  detail: "injected native compensation capture failure",
+                }),
+              ),
+            )
+          : mode === "native-capture-unavailable"
+            ? vi.fn(() => Effect.succeed(undefined))
+            : vi.fn(() =>
+                Effect.succeed({
+                  runtime: "pi",
+                  sessionId: "native-session-current",
+                  leafEntryId: "native-leaf-current",
+                  opaque: { cursor: "current" },
+                }),
+              );
+      const nativeRestore = vi.fn(() => {
+        nativeRestoreAttempts += 1;
+        if (mode === "native-target-failure" || mode === "native-target-and-compensation-failure") {
+          if (nativeRestoreAttempts === 1 || mode === "native-target-and-compensation-failure") {
+            return Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "pi",
+                method: "restore_checkpoint",
+                detail:
+                  nativeRestoreAttempts === 1
+                    ? "injected native target restore failure"
+                    : "injected native compensation failure",
+              }),
+            );
+          }
+        }
+        return Effect.void;
+      });
+      const harness = await createHarness({
+        providerName: ProviderDriverKind.make("pi"),
+        nativeCapture,
+        nativeRestore,
+        checkpointStoreTransform: (store) => ({
+          ...store,
+          captureCheckpoint: (input) => {
+            if (
+              mode === "filesystem-capture-failure" &&
+              String(input.checkpointRef).includes("/restore-compensation/")
+            ) {
+              return Effect.fail(
+                checkpointFault("injected filesystem compensation capture failure"),
+              );
+            }
+            return store.captureCheckpoint(input);
+          },
+          restoreCheckpoint: (input) => {
+            const checkpointRef = String(input.checkpointRef);
+            restoreRefs.push(checkpointRef);
+            if (checkpointRef.includes("/turn/1")) {
+              if (
+                mode === "filesystem-target-failure" ||
+                mode === "filesystem-target-and-compensation-failure"
+              ) {
+                return Effect.fail(checkpointFault("injected filesystem target restore failure"));
+              }
+              if (mode === "filesystem-target-unavailable") {
+                return Effect.succeed(false);
+              }
+            }
+            if (checkpointRef.includes("/restore-compensation/")) {
+              if (mode === "filesystem-target-and-compensation-failure") {
+                return Effect.fail(
+                  checkpointFault("injected filesystem compensation restore failure"),
+                );
+              }
+              if (mode === "native-target-and-compensation-failure") {
+                return Effect.succeed(false);
+              }
+            }
+            return store.restoreCheckpoint(input);
+          },
+          deleteCheckpointRefs: (input) => {
+            deletedRefs.push(...input.checkpointRefs.map(String));
+            return store.deleteCheckpointRefs(input);
+          },
+        }),
+      });
+
+      await dispatchNativeCheckpointRevert(
+        harness,
+        mode,
+        mode === "identity-mismatch"
+          ? { instanceId: ProviderInstanceId.make("different-pi-instance") }
+          : undefined,
+      );
+
+      const thread = await waitForThread(harness.readModel, (entry) =>
+        entry.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
+      );
+      expect(thread.session?.status).toBe("error");
+      expect(thread.session?.lastError).toContain(expectedDetail);
+      expect(thread.session?.lastError).toContain("checkpoint recovery blocked:");
+      expect(
+        (
+          await Effect.runPromise(
+            Stream.runCollect(harness.engine.readEvents(0)).pipe(
+              Effect.map((chunk) => Array.from(chunk)),
+            ),
+          )
+        ).some((event) => event.type === "thread.reverted"),
+      ).toBe(false);
+
+      const compensationRefs = restoreRefs.filter((ref) => ref.includes("/restore-compensation/"));
+      if (
+        mode === "filesystem-target-failure" ||
+        mode === "filesystem-target-and-compensation-failure" ||
+        mode === "filesystem-target-unavailable" ||
+        mode === "native-target-failure" ||
+        mode === "native-target-and-compensation-failure"
+      ) {
+        expect(compensationRefs).toHaveLength(1);
+        expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe(
+          mode === "native-target-and-compensation-failure" ? "v2\n" : "v3\n",
+        );
+      }
+      expect(deletedRefs.some((ref) => ref.includes("/restore-compensation/"))).toBe(true);
+    },
+  );
+
+  it("completes coordinated filesystem and native checkpoint restore", async () => {
+    const nativeRestore = vi.fn(() => Effect.void);
+    const harness = await createHarness({
+      providerName: ProviderDriverKind.make("pi"),
+      nativeCurrentCheckpoint: {
+        runtime: "pi",
+        sessionId: "native-session-current",
+        leafEntryId: "native-leaf-current",
+        opaque: { cursor: "current" },
+      },
+      nativeRestore,
+    });
+
+    await dispatchNativeCheckpointRevert(harness, "native-success");
+    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+
+    expect(nativeRestore).toHaveBeenCalledTimes(1);
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+    await harness.drain();
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("ready");
+  });
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
     const harness = await createHarness({ providerName: ProviderDriverKind.make("claudeAgent") });
     const createdAt = "2026-01-01T00:00:00.000Z";

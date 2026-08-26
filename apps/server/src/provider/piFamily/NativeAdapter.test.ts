@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -160,6 +161,20 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
         ]),
     "      return;",
     "    }",
+    '    if (command.message === "terminal-fallback") {',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_start" });']
+      : ['      out({ type: "turn_start", id: command.id });']),
+    '      out({ type: "extension_ui_request", id: "ui-terminal", method: "setTitle", title: "Native title" });',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_end", isTerminal: true });']
+      : [
+          '      out({ type: "turn_end", id: command.id });',
+          '      out({ type: "agent_end", willRetry: false });',
+          '      out({ type: "agent_settled" });',
+        ]),
+    "      return;",
+    "    }",
     '    if (command.message === "portable-ui") {',
     ...(runtime === "omp"
       ? ['      out({ type: "agent_start" });']
@@ -175,6 +190,13 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
           '      out({ type: "agent_end", willRetry: false });',
           '      out({ type: "agent_settled" });',
         ]),
+    "      return;",
+    "    }",
+    '    if (command.message === "compaction-events") {',
+    '      out({ type: "agent_start" });',
+    '      out({ type: "auto_compaction_start", reason: "threshold" });',
+    '      out({ type: "auto_compaction_end", result: { summary: "retained context", firstKeptEntryId: "entry-2", tokensBefore: 2048 } });',
+    '      out({ type: "agent_end", isTerminal: true });',
     "      return;",
     "    }",
     '    if (command.message === "anonymous-pi-lifecycle") {',
@@ -644,6 +666,82 @@ describe("Pi-family native adapter", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("invalidates a trace when a session is stopped during startup", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("omp");
+      const threadId = ThreadId.make("omp-trace-startup-stop-thread");
+      const instanceId = ProviderInstanceId.make("omp-trace-startup-stop-instance");
+      const recorder = new BoundedNativeTraceRecorder();
+      let invalidations = 0;
+      let finalizations = 0;
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "omp",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", "setInterval(() => {}, 1_000)", "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 10_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        traceSinkFactory: {
+          create: () => ({
+            recordBytes: (stream, bytes) => recorder.recordBytes(stream, bytes),
+            recordExit: (code, signal) => recorder.recordExit(code, signal),
+            invalidate: () => {
+              invalidations += 1;
+              recorder.invalidate();
+            },
+            finalize: () => {
+              finalizations += 1;
+              recorder.finalize();
+            },
+          }),
+        },
+        instanceId,
+      });
+      const startFiber = yield* adapter
+        .startSession({
+          threadId,
+          provider,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      const ownershipDeadline = (yield* Clock.currentTimeMillis) + 2_000;
+      while (!(yield* adapter.hasSession(threadId))) {
+        assert.isBelow(
+          yield* Clock.currentTimeMillis,
+          ownershipDeadline,
+          "OMP startup session was not installed before the ownership deadline",
+        );
+        yield* Effect.sleep(10);
+      }
+
+      yield* adapter.stopSession(threadId).pipe(
+        Effect.timeoutOrElse({
+          duration: "5 seconds",
+          orElse: () => Effect.die("stopSession did not finish within 5 seconds"),
+        }),
+      );
+      const startExit = yield* Fiber.join(startFiber).pipe(
+        Effect.timeoutOrElse({
+          duration: "5 seconds",
+          orElse: () => Effect.die("startSession did not settle within 5 seconds after stop"),
+        }),
+      );
+      assert.isTrue(Exit.isFailure(startExit));
+      assert.equal(invalidations, 1);
+      assert.equal(finalizations, 0);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      const capture = recorder.snapshot().capture;
+      assert.isTrue(capture.truncated);
+      assert.equal(capture.truncationReason, "lifecycle-error");
+      assert.deepEqual(capture.exits, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("does not expose native stderr in exit events", () =>
     Effect.gen(function* () {
       const provider = ProviderDriverKind.make("pi");
@@ -836,6 +934,48 @@ describe("Pi-family native adapter", () => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+  it.effect("maps completed OMP compaction to persisted thread state", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-compaction-thread");
+      const instanceId = ProviderInstanceId.make("omp-compaction-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextEvent(adapter.streamEvents);
+
+      const compactedEvent = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "thread.state.changed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* adapter.sendTurn({ threadId, input: "compaction-events" });
+      const compacted = Option.getOrUndefined(yield* Fiber.join(compactedEvent));
+      assert.equal(compacted?.type, "thread.state.changed");
+      if (compacted?.type === "thread.state.changed") {
+        assert.equal(compacted.payload.state, "compacted");
+      }
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.effect("maps an OMP aborted assistant message to an interrupted turn", () =>
     Effect.gen(function* () {
       const runtime = "omp" as const;
@@ -999,7 +1139,54 @@ describe("Pi-family native adapter", () => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.live("force-kills an unresponsive child and starts a replacement session", () =>
+
+  it.effect("projects unsupported native UI as an explicit terminal fallback action", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-terminal-fallback-thread");
+      const instanceId = ProviderInstanceId.make("omp-terminal-fallback-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextEvent(adapter.streamEvents);
+      yield* adapter.sendTurn({ threadId, input: "terminal-fallback" });
+
+      const turnStarted = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      const warning = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      const turnCompleted = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      assert.equal(turnStarted?.type, "turn.started");
+      assert.equal(warning?.type, "runtime.warning");
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (warning?.type === "runtime.warning") {
+        assert.match(warning.payload.message, /Open the native OMP terminal/);
+        assert.deepEqual((warning.payload as Record<string, unknown>).nativeTerminalFallback, {
+          runtime,
+          providerInstanceId: instanceId,
+          feature: "setTitle",
+        });
+      }
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.live("preserves replacement ownership while force-killing the prior session", () =>
     Effect.gen(function* () {
       const runtime = "pi" as const;
       const provider = ProviderDriverKind.make(runtime);
@@ -1010,7 +1197,11 @@ describe("Pi-family native adapter", () => {
         runtime,
         binaryPath: process.execPath,
         cwd: process.cwd(),
-        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        launchArguments: [
+          "-e",
+          `${makeNativeScript(runtime)}\nprocess.on("SIGTERM", () => {});`,
+          "--",
+        ],
         requestTimeoutMs: 2_000,
         startupTimeoutMs: 2_000,
         maxLineBytes: 1_048_576,
@@ -1029,10 +1220,11 @@ describe("Pi-family native adapter", () => {
       yield* nextEvent(adapter.streamEvents);
       yield* adapter.sendTurn({ threadId, input: "arm-hang" });
       for (let index = 0; index < 4; index += 1) yield* nextEvent(adapter.streamEvents);
-      yield* adapter.stopSession(threadId);
-      assert.equal(yield* adapter.hasSession(threadId), false);
-
+      const stopFiber = yield* Effect.forkScoped(adapter.stopSession(threadId));
+      yield* Effect.sleep("50 millis");
       yield* adapter.startSession(start);
+      yield* Fiber.join(stopFiber);
+      assert.equal(yield* adapter.hasSession(threadId), true);
       const restarted = yield* nextEvent(adapter.streamEvents);
       assert.equal(Option.getOrUndefined(restarted)?.type, "session.started");
       yield* adapter.stopSession(threadId);

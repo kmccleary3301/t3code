@@ -980,9 +980,20 @@ const make = Effect.gen(function* () {
         };
       }
       if (!restoredFilesystem.success) {
+        const compensatedFilesystem = yield* checkpointStore
+          .restoreCheckpoint({
+            cwd: sessionRuntime.value.cwd,
+            checkpointRef: compensationRef,
+          })
+          .pipe(Effect.result);
+        const compensationDetail = Result.isFailure(compensatedFilesystem)
+          ? ` Filesystem compensation failed: ${failureDetail(compensatedFilesystem.failure)}`
+          : compensatedFilesystem.success
+            ? ""
+            : " Filesystem compensation checkpoint was unavailable.";
         return {
           ok: false as const,
-          detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
+          detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.${compensationDetail}`,
         };
       }
 
