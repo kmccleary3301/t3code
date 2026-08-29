@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 
 import {
   ProviderEvent,
+  ProviderNativeSessionListInput,
+  ProviderNativeSessionListRequest,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
@@ -12,6 +14,12 @@ const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSession
 const decodeProviderSendTurnInput = Schema.decodeUnknownSync(ProviderSendTurnInput);
 const decodeProviderSession = Schema.decodeUnknownSync(ProviderSession);
 const decodeProviderEvent = Schema.decodeUnknownSync(ProviderEvent);
+const decodeProviderNativeSessionListRequest = Schema.decodeUnknownSync(
+  ProviderNativeSessionListRequest,
+);
+const decodeProviderNativeSessionListInput = Schema.decodeUnknownSync(
+  ProviderNativeSessionListInput,
+);
 
 function getOptionValue(
   options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
@@ -19,6 +27,17 @@ function getOptionValue(
 ): unknown {
   return options?.find((option) => option.id === id)?.value;
 }
+
+describe("ProviderNativeSessionListRequest", () => {
+  it("supports environment-wide discovery without a project or cwd", () => {
+    expect(decodeProviderNativeSessionListRequest({ providerInstanceId: "omp" })).toEqual({
+      providerInstanceId: "omp",
+    });
+    expect(decodeProviderNativeSessionListInput({ providerInstanceId: "omp" })).toEqual({
+      providerInstanceId: "omp",
+    });
+  });
+});
 
 describe("ProviderSessionStartInput", () => {
   it("accepts codex-compatible payloads", () => {

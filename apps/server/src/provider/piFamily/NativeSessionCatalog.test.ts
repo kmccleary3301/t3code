@@ -126,6 +126,15 @@ describe("NativeSessionCatalog", () => {
         cwd: "/workspace",
         status: "complete",
       });
+
+      const allSessions = yield* listOmpNativeSessions(
+        config(temporaryDirectory),
+        ProviderInstanceId.make("omp"),
+      );
+      expect(allSessions.map((session) => session.sessionId).sort()).toEqual([
+        "other",
+        "session-1",
+      ]);
     }),
   );
 

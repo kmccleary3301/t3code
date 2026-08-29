@@ -48,16 +48,21 @@ orchestration, contract, or client change is required for the common case.
 
 ## Opening existing OMP sessions
 
-The web command palette exposes **Open OMP session** when the active project has an enabled,
-installed OMP instance. [`NativeSessionCatalog`][native-catalog] reads that instance's native session
-directory and returns only sessions whose recorded working directory matches the project's workspace
-root. Session directory resolution follows OMP's launch configuration: `--session-dir`, then the
-configured agent directory or `PI_CODING_AGENT_DIR`, then `--profile` or `OMP_PROFILE`, then
-`~/.omp/agent/sessions`.
+The web command palette exposes **Open OMP session** when any connected environment has an enabled,
+installed OMP instance. [`NativeSessionCatalog`][native-catalog] reads each instance's primary native
+session files and returns sessions across their recorded working directories; nested subagent
+transcripts stay out of the picker. Session directory resolution follows OMP's launch configuration:
+`--session-dir`, then the configured agent directory or `PI_CODING_AGENT_DIR`, then `--profile` or
+`OMP_PROFILE`, then `~/.omp/agent/sessions`.
+
+Each picker result includes its workspace and environment. Selecting a result reuses the T3 project
+whose workspace root matches the session working directory, or registers that existing directory as
+a project before opening the session. Project registration does not recreate a workspace that has
+been removed.
 
 Opening a result goes through [`NativeSessionCoordinator`][native-coordinator]. The server verifies
-that the session came from the project's catalog, reuses its existing T3 thread when one is already
-bound, and starts OMP with the exact native session ID through `--resume`. On first open, the
+that the session came from the selected project's catalog, reuses its existing T3 thread when one is
+already bound, and starts OMP with the exact native session ID through `--resume`. On first open, the
 coordinator follows the JSONL parent chain for the active branch and projects user, system, and
 assistant text through `thread.native-history-imported`. Native tool records remain in OMP; T3 keeps
 the canonical text transcript and all subsequent live events. A directory marker makes the initial

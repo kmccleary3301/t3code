@@ -176,14 +176,18 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     input: ProviderNativeSessionListRequest,
   ) {
     const readModel = yield* snapshots.getCommandReadModel();
-    const project = readModel.projects.find(
-      (candidate) => candidate.id === input.projectId && candidate.deletedAt === null,
-    );
-    if (project === undefined) {
-      return yield* new ProviderNativeSessionError({
-        code: "not_found",
-        message: `Project '${input.projectId}' was not found.`,
-      });
+    let cwd: string | undefined;
+    if (input.projectId !== undefined) {
+      const project = readModel.projects.find(
+        (candidate) => candidate.id === input.projectId && candidate.deletedAt === null,
+      );
+      if (project === undefined) {
+        return yield* new ProviderNativeSessionError({
+          code: "not_found",
+          message: `Project '${input.projectId}' was not found.`,
+        });
+      }
+      cwd = project.workspaceRoot;
     }
     const providers = yield* providerRegistry.getProviders;
     const provider = providers.find(
@@ -207,10 +211,10 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
         message: "This server has no native session catalog.",
       });
     }
-    const sessions = yield* listNativeSessions({
-      providerInstanceId: input.providerInstanceId,
-      cwd: project.workspaceRoot,
-    });
+    const sessions =
+      cwd === undefined
+        ? yield* listNativeSessions({ providerInstanceId: input.providerInstanceId })
+        : yield* listNativeSessions({ providerInstanceId: input.providerInstanceId, cwd });
     return { sessions };
   });
 

@@ -620,6 +620,28 @@ function OpenCommandPaletteDialog(props: {
     }
     return map;
   }, [environments, primaryEnvironmentId, providers]);
+  const ompSessionTargets = useMemo(() => {
+    const targets: Array<{
+      readonly environmentId: EnvironmentId;
+      readonly environmentLabel: string;
+      readonly entry: ProviderInstanceEntry;
+    }> = [];
+    for (const environment of environments) {
+      if (environment.connection.phase !== "connected") continue;
+      const environmentProviders =
+        environment.serverConfig?.providers ??
+        (environment.environmentId === primaryEnvironmentId ? providers : []);
+      for (const entry of deriveProviderInstanceEntries(environmentProviders)) {
+        if (entry.driverKind !== "omp" || !entry.enabled || !entry.installed) continue;
+        targets.push({
+          environmentId: environment.environmentId,
+          environmentLabel: environment.label,
+          entry,
+        });
+      }
+    }
+    return targets;
+  }, [environments, primaryEnvironmentId, providers]);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
   const environmentIds = useMemo(
@@ -1184,46 +1206,44 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const openNativeSessionPicker = useCallback(async () => {
-    if (currentProjectEnvironmentId === null || currentProjectId === null) return;
-    const ompInstances = [...providerEntryByEnvironmentAndInstanceId.entries()]
-      .filter(
-        ([key, entry]) =>
-          key.startsWith(`${currentProjectEnvironmentId}:`) &&
-          entry.driverKind === "omp" &&
-          entry.enabled &&
-          entry.installed,
-      )
-      .map(([, entry]) => entry);
     const results = await Promise.all(
-      ompInstances.map(async (entry) => ({
-        entry,
+      ompSessionTargets.map(async (target) => ({
+        target,
         result: await loadNativeSessions({
-          environmentId: currentProjectEnvironmentId,
+          environmentId: target.environmentId,
           input: {
-            projectId: currentProjectId,
-            providerInstanceId: entry.instanceId,
+            providerInstanceId: target.entry.instanceId,
           },
         }),
       })),
     );
     const sessions: Array<{
+      readonly environmentId: EnvironmentId;
+      readonly environmentLabel: string;
       readonly entry: ProviderInstanceEntry;
       readonly session: ProviderNativeSessionSummary;
     }> = [];
-    for (const { entry, result } of results) {
+    for (const { target, result } of results) {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: `Could not load ${entry.displayName} sessions`,
+              title: `Could not load ${target.entry.displayName} sessions`,
               description: errorMessage(squashAtomCommandFailure(result)),
             }),
           );
         }
         continue;
       }
-      for (const session of result.value.sessions) sessions.push({ entry, session });
+      for (const session of result.value.sessions) {
+        sessions.push({
+          environmentId: target.environmentId,
+          environmentLabel: target.environmentLabel,
+          entry: target.entry,
+          session,
+        });
+      }
     }
     sessions.sort((left, right) => right.session.updatedAt.localeCompare(left.session.updatedAt));
     const items: CommandPaletteActionItem[] =
@@ -1233,67 +1253,119 @@ function OpenCommandPaletteDialog(props: {
               kind: "action",
               value: "native-session:none",
               searchTerms: [],
-              title: "No OMP sessions found for this project",
+              title: "No OMP sessions found",
               icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
               disabled: true,
               run: async () => {},
             },
           ]
-        : sessions.map(({ entry, session }) => ({
-            kind: "action",
-            value: `native-session:${entry.instanceId}:${session.sessionId}`,
-            searchTerms: [session.title, session.model ?? "", session.status, entry.displayName],
-            title: session.title,
-            description: [
-              entry.displayName,
-              session.model,
-              formatRelativeTimeLabel(session.updatedAt),
-            ]
-              .filter((part): part is string => part !== undefined)
-              .join(" · "),
-            icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
-            keepOpen: true,
-            run: async () => {
-              const result = await openNativeSession({
-                environmentId: currentProjectEnvironmentId,
-                input: {
-                  projectId: currentProjectId,
-                  providerInstanceId: entry.instanceId,
-                  sessionId: session.sessionId,
-                },
-              });
-              if (result._tag === "Failure") {
-                if (!isAtomCommandInterrupted(result)) {
-                  toastManager.add(
-                    stackedThreadToast({
-                      type: "error",
-                      title: "Could not open OMP session",
-                      description: errorMessage(squashAtomCommandFailure(result)),
-                    }),
-                  );
+        : sessions.map(({ environmentId, environmentLabel, entry, session }) => {
+            const workspaceTitle = inferProjectTitleFromPath(session.cwd);
+            return {
+              kind: "action",
+              value: `native-session:${environmentId}:${entry.instanceId}:${session.sessionId}`,
+              searchTerms: [
+                session.title,
+                session.cwd,
+                workspaceTitle,
+                environmentLabel,
+                session.model ?? "",
+                session.status,
+                entry.displayName,
+              ],
+              title: session.title,
+              description: [
+                workspaceTitle,
+                environmentLabel,
+                entry.displayName,
+                session.model,
+                formatRelativeTimeLabel(session.updatedAt),
+              ]
+                .filter((part): part is string => part !== undefined)
+                .join(" · "),
+              icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
+              keepOpen: true,
+              run: async () => {
+                const existingProject = findProjectByPath(
+                  projects.filter((project) => project.environmentId === environmentId),
+                  session.cwd,
+                );
+                let projectId = existingProject?.id;
+                if (projectId === undefined) {
+                  projectId = newProjectId();
+                  const targetEnvironmentProviders =
+                    environments.find((environment) => environment.environmentId === environmentId)
+                      ?.serverConfig?.providers ??
+                    (environmentId === primaryEnvironmentId ? providers : []);
+                  const createResult = await createProject({
+                    environmentId,
+                    input: {
+                      projectId,
+                      title: workspaceTitle,
+                      workspaceRoot: session.cwd,
+                      defaultModelSelection: resolveDefaultProviderModelSelection(
+                        targetEnvironmentProviders,
+                        null,
+                      ),
+                    },
+                  });
+                  if (createResult._tag === "Failure") {
+                    if (!isAtomCommandInterrupted(createResult)) {
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title: `Could not add ${workspaceTitle}`,
+                          description: errorMessage(squashAtomCommandFailure(createResult)),
+                        }),
+                      );
+                    }
+                    return;
+                  }
                 }
-                return;
-              }
-              setOpen(false);
-              await navigate({
-                to: "/$environmentId/$threadId",
-                params: buildThreadRouteParams(
-                  scopeThreadRef(currentProjectEnvironmentId, result.value.threadId),
-                ),
-              });
-            },
-          }));
+                const result = await openNativeSession({
+                  environmentId,
+                  input: {
+                    projectId,
+                    providerInstanceId: entry.instanceId,
+                    sessionId: session.sessionId,
+                  },
+                });
+                if (result._tag === "Failure") {
+                  if (!isAtomCommandInterrupted(result)) {
+                    toastManager.add(
+                      stackedThreadToast({
+                        type: "error",
+                        title: "Could not open OMP session",
+                        description: errorMessage(squashAtomCommandFailure(result)),
+                      }),
+                    );
+                  }
+                  return;
+                }
+                setOpen(false);
+                await navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(
+                    scopeThreadRef(environmentId, result.value.threadId),
+                  ),
+                });
+              },
+            };
+          });
     pushPaletteView({
       addonIcon: <HistoryIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "native-sessions", label: "OMP sessions", items }],
     });
   }, [
-    currentProjectEnvironmentId,
-    currentProjectId,
+    createProject,
+    environments,
     loadNativeSessions,
     navigate,
+    ompSessionTargets,
     openNativeSession,
-    providerEntryByEnvironmentAndInstanceId,
+    primaryEnvironmentId,
+    projects,
+    providers,
     pushPaletteView,
     setOpen,
   ]);
@@ -1655,17 +1727,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (
-    currentProjectEnvironmentId !== null &&
-    currentProjectId !== null &&
-    [...providerEntryByEnvironmentAndInstanceId.entries()].some(
-      ([key, entry]) =>
-        key.startsWith(`${currentProjectEnvironmentId}:`) &&
-        entry.driverKind === "omp" &&
-        entry.enabled &&
-        entry.installed,
-    )
-  ) {
+  if (ompSessionTargets.length > 0) {
     actionItems.push({
       kind: "action",
       value: "action:open-omp-session",

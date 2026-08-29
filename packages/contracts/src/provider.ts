@@ -88,14 +88,14 @@ export const ProviderNativeSessionSummary = Schema.Struct({
 });
 export type ProviderNativeSessionSummary = typeof ProviderNativeSessionSummary.Type;
 export const ProviderNativeSessionListRequest = Schema.Struct({
-  projectId: ProjectId,
+  projectId: Schema.optional(ProjectId),
   providerInstanceId: ProviderInstanceId,
 });
 export type ProviderNativeSessionListRequest = typeof ProviderNativeSessionListRequest.Type;
 
 export const ProviderNativeSessionListInput = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
-  cwd: TrimmedNonEmptyString,
+  cwd: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderNativeSessionListInput = typeof ProviderNativeSessionListInput.Type;
 

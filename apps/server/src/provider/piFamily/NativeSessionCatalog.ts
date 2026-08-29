@@ -284,7 +284,7 @@ async function mapConcurrent<A, B>(
 export function listOmpNativeSessions(
   config: PiFamilyNativeConfig,
   providerInstanceId: ProviderInstanceId,
-  cwd: string,
+  cwd?: string,
 ): Effect.Effect<ReadonlyArray<ProviderNativeSessionSummary>, ProviderNativeSessionError> {
   if (config.runtime !== "omp") {
     return Effect.fail(
@@ -314,7 +314,10 @@ export function listOmpNativeSessions(
               NodeFSP.stat(filePath),
             ]);
             const header = parseSessionHeader(window.prefix);
-            if (header === undefined || NodePath.resolve(header.cwd) !== NodePath.resolve(cwd)) {
+            if (
+              header === undefined ||
+              (cwd !== undefined && NodePath.resolve(header.cwd) !== NodePath.resolve(cwd))
+            ) {
               return undefined;
             }
             const createdAt =
