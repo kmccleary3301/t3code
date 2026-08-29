@@ -81,6 +81,14 @@ describe("NativeSessionCatalog", () => {
       yield* Effect.promise(() =>
         NodeFSP.writeFile(sessionPath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`),
       );
+      const duplicatePath = NodePath.join(sessionsDirectory, "duplicate.jsonl");
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          duplicatePath,
+          '{"type":"session","id":"session-1","cwd":"/workspace","title":"Old duplicate"}\n',
+        ),
+      );
+      yield* Effect.promise(() => NodeFSP.utimes(duplicatePath, 0, 0));
       yield* Effect.promise(() =>
         NodeFSP.writeFile(
           NodePath.join(sessionsDirectory, "corrupt.jsonl"),

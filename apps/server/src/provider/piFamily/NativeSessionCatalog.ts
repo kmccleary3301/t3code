@@ -339,9 +339,15 @@ export function listOmpNativeSessions(
           }
         },
       );
-      return summaries
+      const ordered = summaries
         .filter((summary): summary is ProviderNativeSessionSummary => summary !== undefined)
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      const seenSessionIds = new Set<string>();
+      return ordered.filter((summary) => {
+        if (seenSessionIds.has(summary.sessionId)) return false;
+        seenSessionIds.add(summary.sessionId);
+        return true;
+      });
     },
     catch: (cause) =>
       new ProviderNativeSessionError({
