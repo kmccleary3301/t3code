@@ -120,7 +120,7 @@ const makeNativeScript = (
               '  if (command.type === "get_capabilities") out({ id: 42, type: "response", command: "get_capabilities", success: true, data: {} });',
             ]
           : []),
-    '  if (command.type === "get_state") out({ id: command.id, type: "response", command: "get_state", success: true, data: { model: ' +
+    '  if (command.type === "get_state") out({ id: command.id, type: "response", command: "get_state", success: true, data: { sessionId: process.argv.includes("--resume") ? process.argv[process.argv.indexOf("--resume") + 1] : "test-session", model: ' +
       JSON.stringify(
         runtime === "omp"
           ? {
@@ -826,6 +826,13 @@ describe("Pi-family native adapter", () => {
         assert.equal(session.threadId, threadId);
         assert.equal(yield* adapter.hasSession(threadId), true);
         assert.equal(adapter.capabilities.sessionModelSwitch, "in-session");
+        if (runtime === "omp") {
+          assert.deepEqual(session.resumeCursor, {
+            kind: "native-session",
+            runtime: "omp",
+            sessionId: "test-session",
+          });
+        }
 
         const started = yield* nextEvent(adapter.streamEvents);
         assert.equal(Option.isSome(started), true);
@@ -873,6 +880,58 @@ describe("Pi-family native adapter", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+
+  it.effect("resumes the exact OMP native session id", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("omp");
+      const instanceId = ProviderInstanceId.make("omp-native-resume-instance");
+      const threadId = ThreadId.make("omp-native-resume-thread");
+      const script = [
+        'if (process.argv.filter((argument) => argument === "--resume").length !== 1 || !process.argv.includes("existing-session") || process.argv.includes("stale-session") || process.argv.includes("--continue") || process.argv.includes("-c")) process.exit(71);',
+        makeNativeScript("omp"),
+      ].join("\n");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "omp",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: [
+          "-e",
+          script,
+          "--",
+          "--resume",
+          "stale-session",
+          "--continue",
+          "-r",
+          "stale-session",
+          "-c",
+        ],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        resumeCursor: {
+          kind: "native-session",
+          runtime: "omp",
+          sessionId: "existing-session",
+        },
+        runtimeMode: "full-access",
+      });
+      assert.deepEqual(session.resumeCursor, {
+        kind: "native-session",
+        runtime: "omp",
+        sessionId: "existing-session",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.live("uses the OMP v2 baseline when capability discovery is silent", () =>
     Effect.gen(function* () {
       const runtime = "omp" as const;

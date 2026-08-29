@@ -465,6 +465,7 @@ export function createServerEnvironmentAtoms<R, E>(
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
+  const nativeSessionScheduler = createAtomCommandScheduler();
   // Updates stay serial end-to-end, but only their handoff phase occupies the config lane.
   const updateScheduler = createAtomCommandScheduler();
   const configConcurrency = {
@@ -685,6 +686,20 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    nativeSessions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:native-sessions",
+      tag: WS_METHODS.serverListNativeSessions,
+      staleTimeMs: 5_000,
+    }),
+    openNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:open-native-session",
+      tag: WS_METHODS.serverOpenNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,

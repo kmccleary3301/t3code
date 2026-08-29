@@ -454,6 +454,55 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.native-history-imported", () => {
+    it("upserts imported messages and advances the latest turn", () => {
+      const event = {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T08:00:00.000Z",
+        aggregateKind: "thread" as const,
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.native-history-imported" as const,
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messages: [
+            {
+              id: MessageId.make("native-message-1"),
+              role: "user" as const,
+              text: "Resume this work",
+              turnId: TurnId.make("native-turn-1"),
+              streaming: false,
+              createdAt: "2026-04-01T07:00:00.000Z",
+              updatedAt: "2026-04-01T07:00:00.000Z",
+            },
+          ],
+          turns: [
+            {
+              turnId: TurnId.make("native-turn-1"),
+              state: "interrupted" as const,
+              requestedAt: "2026-04-01T07:00:00.000Z",
+              startedAt: "2026-04-01T07:00:00.000Z",
+              completedAt: "2026-04-01T07:00:00.000Z",
+              assistantMessageId: null,
+            },
+          ],
+          importedAt: "2026-04-01T08:00:00.000Z",
+        },
+      };
+
+      const first = applyThreadDetailEvent(baseThread, event);
+      expect(first.kind).toBe("updated");
+      if (first.kind !== "updated") return;
+      const second = applyThreadDetailEvent(first.thread, event);
+      expect(second.kind).toBe("updated");
+      if (second.kind !== "updated") return;
+      expect(second.thread.messages).toHaveLength(1);
+      expect(second.thread.messages[0]?.text).toBe("Resume this work");
+      expect(second.thread.latestTurn?.turnId).toBe("native-turn-1");
+      expect(second.thread.latestTurn?.state).toBe("interrupted");
+    });
+  });
+
   describe("thread.session-set", () => {
     it("settles a running latestTurn when the session leaves the running status", () => {
       const threadWithRunningTurn: OrchestrationThread = {

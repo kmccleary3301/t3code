@@ -46,6 +46,27 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Opening existing OMP sessions
+
+The web command palette exposes **Open OMP session** when the active project has an enabled,
+installed OMP instance. [`NativeSessionCatalog`][native-catalog] reads that instance's native session
+directory and returns only sessions whose recorded working directory matches the project's workspace
+root. Session directory resolution follows OMP's launch configuration: `--session-dir`, then the
+configured agent directory or `PI_CODING_AGENT_DIR`, then `--profile` or `OMP_PROFILE`, then
+`~/.omp/agent/sessions`.
+
+Opening a result goes through [`NativeSessionCoordinator`][native-coordinator]. The server verifies
+that the session came from the project's catalog, reuses its existing T3 thread when one is already
+bound, and starts OMP with the exact native session ID through `--resume`. On first open, the
+coordinator follows the JSONL parent chain for the active branch and projects user, system, and
+assistant text through `thread.native-history-imported`. Native tool records remain in OMP; T3 keeps
+the canonical text transcript and all subsequent live events. A directory marker makes the initial
+projection idempotent across reopen and restart.
+
+The list and open RPCs live in the shared client runtime. The picker is currently a web/desktop
+surface; after opening, the resulting canonical T3 thread is available to mobile clients like any
+other thread.
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method
@@ -99,3 +120,5 @@ when a request opens (approval) or user input is requested, via
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+[native-catalog]: ../../apps/server/src/provider/piFamily/NativeSessionCatalog.ts
+[native-coordinator]: ../../apps/server/src/provider/Layers/NativeSessionCoordinator.ts

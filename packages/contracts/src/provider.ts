@@ -4,6 +4,7 @@ import {
   ApprovalRequestId,
   EventId,
   IsoDateTime,
+  ProjectId,
   ProviderItemId,
   ThreadId,
   TurnId,
@@ -64,6 +65,71 @@ export const ProviderSessionStartInput = Schema.Struct({
   runtimeMode: RuntimeMode,
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
+
+export const ProviderNativeSessionStatus = Schema.Literals([
+  "complete",
+  "interrupted",
+  "aborted",
+  "error",
+  "pending",
+  "unknown",
+]);
+export type ProviderNativeSessionStatus = typeof ProviderNativeSessionStatus.Type;
+
+export const ProviderNativeSessionSummary = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  sessionId: TrimmedNonEmptyString,
+  cwd: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  model: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  status: ProviderNativeSessionStatus,
+});
+export type ProviderNativeSessionSummary = typeof ProviderNativeSessionSummary.Type;
+export const ProviderNativeSessionListRequest = Schema.Struct({
+  projectId: ProjectId,
+  providerInstanceId: ProviderInstanceId,
+});
+export type ProviderNativeSessionListRequest = typeof ProviderNativeSessionListRequest.Type;
+
+export const ProviderNativeSessionListInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  cwd: TrimmedNonEmptyString,
+});
+export type ProviderNativeSessionListInput = typeof ProviderNativeSessionListInput.Type;
+
+export const ProviderNativeSessionListResult = Schema.Struct({
+  sessions: Schema.Array(ProviderNativeSessionSummary),
+});
+export type ProviderNativeSessionListResult = typeof ProviderNativeSessionListResult.Type;
+
+export const ProviderNativeSessionOpenInput = Schema.Struct({
+  projectId: ProjectId,
+  providerInstanceId: ProviderInstanceId,
+  sessionId: TrimmedNonEmptyString,
+});
+export type ProviderNativeSessionOpenInput = typeof ProviderNativeSessionOpenInput.Type;
+
+export const ProviderNativeSessionOpenResult = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ProviderNativeSessionOpenResult = typeof ProviderNativeSessionOpenResult.Type;
+
+export const ProviderNativeSessionResumeCursor = Schema.Struct({
+  kind: Schema.Literal("native-session"),
+  runtime: Schema.Literal("omp"),
+  sessionId: TrimmedNonEmptyString,
+});
+export type ProviderNativeSessionResumeCursor = typeof ProviderNativeSessionResumeCursor.Type;
+
+export class ProviderNativeSessionError extends Schema.TaggedErrorClass<ProviderNativeSessionError>()(
+  "ProviderNativeSessionError",
+  {
+    code: Schema.Literals(["unsupported", "not_found", "invalid", "native"]),
+    message: TrimmedNonEmptyString,
+  },
+) {}
 
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,

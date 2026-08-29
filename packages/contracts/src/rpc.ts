@@ -68,6 +68,13 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProviderNativeSessionError,
+  ProviderNativeSessionListRequest,
+  ProviderNativeSessionListResult,
+  ProviderNativeSessionOpenInput,
+  ProviderNativeSessionOpenResult,
+} from "./provider.ts";
+import {
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestCommentInput,
@@ -263,6 +270,8 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverListNativeSessions: "server.listNativeSessions",
+  serverOpenNativeSession: "server.openNativeSession",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
@@ -391,6 +400,18 @@ export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscov
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsServerListNativeSessionsRpc = Rpc.make(WS_METHODS.serverListNativeSessions, {
+  payload: ProviderNativeSessionListRequest,
+  success: ProviderNativeSessionListResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerOpenNativeSessionRpc = Rpc.make(WS_METHODS.serverOpenNativeSession, {
+  payload: ProviderNativeSessionOpenInput,
+  success: ProviderNativeSessionOpenResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -994,6 +1015,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerListNativeSessionsRpc,
+  WsServerOpenNativeSessionRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
