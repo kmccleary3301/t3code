@@ -184,6 +184,7 @@ import {
 import { nativeReplayLaunchArguments } from "../integration/NativeReplayRuntime.integration.ts";
 import {
   configuredNativeLiveConfigurations,
+  exerciseNativeLiveQueueModes,
   makeNativeLiveAgentDirectory,
   makeNativeLivePromptCaptureSinkFactory,
   makeNativeLiveModelServer,
@@ -9626,6 +9627,12 @@ for (const config of configuredNativeLiveConfigurations()) {
             (agentDirectory) =>
               Effect.gen(function* () {
                 yield* writeNativeLiveConfig(config, agentDirectory, modelServer);
+                const queueObservation =
+                  config.runtime === "omp"
+                    ? yield* exerciseNativeLiveQueueModes(config, agentDirectory)
+                    : undefined;
+                const supportsTaskReconnect =
+                  queueObservation?.responseCommands.includes("get_subagents") === true;
                 yield* Effect.acquireUseRelease(
                   makeOrchestrationIntegrationHarness({
                     provider: config.provider,
@@ -9893,10 +9900,9 @@ for (const config of configuredNativeLiveConfigurations()) {
                       );
                       const taskCursor = targetSequence;
                       const taskActivityCountBefore = completed.activities.length;
-                      const taskMessage =
-                        config.runtime === "omp"
-                          ? "NATIVE-MATRIX-SUBAGENT-PARENT"
-                          : "Reply with NATIVE-MATRIX-OK after the Pi convergence reconnect.";
+                      const taskMessage = supportsTaskReconnect
+                        ? "NATIVE-MATRIX-SUBAGENT-PARENT"
+                        : "Reply with NATIVE-MATRIX-OK after the convergence reconnect.";
                       yield* Effect.scoped(
                         withWsRpcClient(authenticatedWsUrl, (client) =>
                           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
@@ -9923,14 +9929,8 @@ for (const config of configuredNativeLiveConfigurations()) {
                       const taskProjected = yield* harness.waitForThread(
                         threadId,
                         (thread) =>
-                          config.runtime === "pi"
-                            ? thread.latestTurn?.state === "completed" &&
-                              thread.session?.status === "ready" &&
-                              thread.messages.some(
-                                (message) =>
-                                  message.role === "user" && message.text === taskMessage,
-                              )
-                            : thread.activities.slice(taskActivityCountBefore).some((activity) => {
+                          supportsTaskReconnect
+                            ? thread.activities.slice(taskActivityCountBefore).some((activity) => {
                                 const payload = activity.payload as Readonly<
                                   Record<string, unknown>
                                 >;
@@ -9939,25 +9939,30 @@ for (const config of configuredNativeLiveConfigurations()) {
                                     activity.kind === "task.progress") &&
                                   payload.parentAgentId === "MatrixChild"
                                 );
-                              }),
+                              })
+                            : thread.latestTurn?.state === "completed" &&
+                              thread.session?.status === "ready" &&
+                              thread.messages.some(
+                                (message) =>
+                                  message.role === "user" && message.text === taskMessage,
+                              ),
                         30_000,
                       );
-                      if (config.runtime === "omp") {
+                      if (supportsTaskReconnect) {
                         assert.isAbove(taskProjected.activities.length, taskActivityCountBefore);
-                      }
-                      if (config.runtime === "omp") {
                         yield* harness.engine.dispatch({
                           type: "thread.session.stop",
                           commandId: CommandId.make("native-live-http:omp:task-stop"),
                           threadId,
                           createdAt,
                         });
+                      } else {
+                        assert.isAtLeast(taskProjected.messages.length, completed.messages.length);
                       }
                       const taskSettled = yield* harness.waitForThread(
                         threadId,
                         (thread) => {
-                          const taskActivities = thread.activities.slice(taskActivityCountBefore);
-                          if (config.runtime === "pi") {
+                          if (!supportsTaskReconnect) {
                             return (
                               thread.latestTurn?.state === "completed" &&
                               thread.session?.status === "ready" &&
@@ -9967,7 +9972,8 @@ for (const config of configuredNativeLiveConfigurations()) {
                               )
                             );
                           }
-                          const completedTasks = taskActivities
+                          const completedTasks = thread.activities
+                            .slice(taskActivityCountBefore)
                             .filter((activity) => activity.kind === "task.completed")
                             .map(
                               (activity) => activity.payload as Readonly<Record<string, unknown>>,
@@ -10059,18 +10065,20 @@ for (const config of configuredNativeLiveConfigurations()) {
                         persistedTaskEvents,
                         `${config.runtime} task reconnect must match persisted events`,
                       );
-                      if (config.runtime === "omp") {
+                      if (supportsTaskReconnect) {
                         assert.isTrue(
                           taskSettled.activities
                             .slice(taskActivityCountBefore)
                             .some((activity) => activity.kind === "task.completed"),
-                          "omp task completion must remain projected",
+                          "advertised OMP task completion must remain projected",
                         );
+                      } else {
+                        assert.isAtLeast(taskSettled.messages.length, completed.messages.length);
                       }
                       const finalSnapshot = yield* readThreadSnapshot();
                       assert.equal(
                         finalSnapshot.thread.session?.status,
-                        config.runtime === "omp" ? "stopped" : "ready",
+                        supportsTaskReconnect ? "stopped" : "ready",
                       );
                       assert.isTrue(
                         finalSnapshot.thread.messages.some(
@@ -10097,7 +10105,7 @@ for (const config of configuredNativeLiveConfigurations()) {
                         );
                       }
 
-                      if (config.runtime === "pi") {
+                      if (!supportsTaskReconnect) {
                         yield* harness.engine.dispatch({
                           type: "thread.session.stop",
                           commandId: CommandId.make(`native-live-http:${config.runtime}:stop`),

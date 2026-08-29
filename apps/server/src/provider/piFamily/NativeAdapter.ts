@@ -54,6 +54,7 @@ import {
   asString,
   isRpcResponse,
   makeOmpNegotiateProtocolCommand,
+  negotiatedRuntimeCapabilities,
   parseJsonObject,
   validateOmpNegotiateProtocolResponse,
   validateOmpReadyFrame,
@@ -117,7 +118,10 @@ interface NativeSession {
   readonly eventOccurrenceBuckets: Float64Array;
 }
 
-type Pending = Deferred.Deferred<RpcResponse, ProviderAdapterRequestError>;
+interface Pending {
+  readonly command: string;
+  readonly deferred: Deferred.Deferred<RpcResponse, ProviderAdapterRequestError>;
+}
 
 const encode = (value: unknown): Uint8Array =>
   new TextEncoder().encode(`${JSON.stringify(value)}\n`);
@@ -174,6 +178,7 @@ const nativeError = (
     provider,
     method,
     detail: cause instanceof Error ? cause.message : String(cause),
+    reason: "native",
     cause,
   });
 
@@ -767,8 +772,9 @@ function capabilitiesFrom(
     maxReassembledFrameBytes?: number;
   },
 ): RuntimeCapabilities {
-  const base = absentRuntimeCapabilities(runtime);
   const record = asRecord(value);
+  const protocolVersion = record?.protocolVersion === 2 || ready?.protocolVersion === 2 ? 2 : 1;
+  const base = negotiatedRuntimeCapabilities(runtime, protocolVersion);
   const transport = asRecord(record?.transport);
   const models = asRecord(record?.models);
   const thinking = asRecord(record?.thinking);
@@ -790,7 +796,8 @@ function capabilitiesFrom(
         (version): version is 1 | 2 => version === 1 || version === 2,
       )
     : (ready?.supportedProtocolVersions ?? base.supportedProtocolVersions);
-  const protocolVersion = record?.protocolVersion === 2 || ready?.protocolVersion === 2 ? 2 : 1;
+  const negotiatedProtocolVersion =
+    record?.negotiatedProtocolVersion === 2 || protocolVersion === 2 ? 2 : undefined;
   return {
     ...base,
     ...(typeof record?.runtimeVersion === "string"
@@ -798,9 +805,7 @@ function capabilitiesFrom(
       : {}),
     protocolVersion,
     supportedProtocolVersions: supported.length > 0 ? supported : base.supportedProtocolVersions,
-    ...(record?.negotiatedProtocolVersion === 2 || protocolVersion === 2
-      ? { negotiatedProtocolVersion: 2 }
-      : {}),
+    ...(negotiatedProtocolVersion === 2 ? { negotiatedProtocolVersion: 2 } : {}),
     transport: {
       ...base.transport,
       ...(maxFrameBytes === undefined ? {} : { maxFrameBytes }),
@@ -919,7 +924,7 @@ export const makePiFamilyAdapter = (
     ): Effect.Effect<void> =>
       Effect.forEach(
         [...session.pending.values()],
-        (deferred) => Deferred.fail(deferred, error).pipe(Effect.ignore),
+        (pending) => Deferred.fail(pending.deferred, error).pipe(Effect.ignore),
         {
           discard: true,
         },
@@ -1250,7 +1255,7 @@ export const makePiFamilyAdapter = (
       const requestEnvelope = { ...envelope, id, type: String(envelope.type) } as RpcEnvelope;
       return Effect.gen(function* () {
         const deferred = yield* Deferred.make<RpcResponse, ProviderAdapterRequestError>();
-        session.pending.set(id, deferred);
+        session.pending.set(id, { command: requestEnvelope.type, deferred });
         yield* send(session, requestEnvelope);
         return yield* Deferred.await(deferred).pipe(
           Effect.timeout(timeoutMs),
@@ -1260,6 +1265,7 @@ export const makePiFamilyAdapter = (
                 provider: config.provider,
                 method,
                 detail: `RPC timed out after ${timeoutMs}ms`,
+                reason: "timeout",
               }),
             ),
           ),
@@ -1302,6 +1308,25 @@ export const makePiFamilyAdapter = (
       return projection.kind === "turn.settled" ? undefined : projection;
     };
 
+    const correlateResponse = (
+      session: NativeSession,
+      frame: RpcResponse,
+    ): { readonly id: string; readonly pending: Pending } | undefined => {
+      const responseId = asString(frame.id);
+      if (Object.hasOwn(frame, "id")) {
+        if (responseId === undefined) return undefined;
+        const pending = session.pending.get(responseId);
+        return pending === undefined ? undefined : { id: responseId, pending };
+      }
+      let match: { readonly id: string; readonly pending: Pending } | undefined;
+      for (const [id, pending] of session.pending) {
+        if (pending.command !== frame.command) continue;
+        if (match !== undefined) return undefined;
+        match = { id, pending };
+      }
+      return match;
+    };
+
     const handleFrame = (
       session: NativeSession,
       value: unknown,
@@ -1312,25 +1337,44 @@ export const makePiFamilyAdapter = (
       }).pipe(
         Effect.flatMap((frame) => {
           const id = asString(frame.id);
-          if (isRpcResponse(frame) && id) {
-            const pending = session.pending.get(id);
-            if (pending) {
-              session.pending.delete(id);
+          if (isRpcResponse(frame)) {
+            if (Object.hasOwn(frame, "id") && id === undefined) {
+              const matches = [...session.pending].filter(
+                ([, pending]) => pending.command === frame.command,
+              );
+              if (matches.length !== 1) return Effect.void;
+              const [pendingId, pending] = matches[0]!;
+              session.pending.delete(pendingId);
+              return Deferred.fail(
+                pending.deferred,
+                new ProviderAdapterRequestError({
+                  provider: config.provider,
+                  method: frame.command,
+                  detail: "Native RPC response ID must be a string.",
+                  reason: "protocol",
+                }),
+              ).pipe(Effect.ignore);
+            }
+            const correlation = correlateResponse(session, frame);
+            if (correlation) {
+              const correlatedId = correlation.id;
+              const pending = correlation.pending.deferred;
+              session.pending.delete(correlatedId);
               if (frame.success && frame.command === "prompt") {
                 if (asRecord(frame.data)?.agentInvoked === false) {
-                  session.acceptedPromptIds.delete(id);
-                  session.activeTurns.delete(id);
+                  session.acceptedPromptIds.delete(correlatedId);
+                  session.activeTurns.delete(correlatedId);
                   return Deferred.succeed(pending, frame).pipe(
                     Effect.andThen(
                       offerProjection(session, {
                         kind: "turn.settled",
-                        requestId: id,
+                        requestId: correlatedId,
                         raw: frame,
                       }),
                     ),
                   );
                 }
-                session.acceptedPromptIds.add(id);
+                session.acceptedPromptIds.add(correlatedId);
               }
               return frame.success
                 ? Deferred.succeed(pending, frame).pipe(Effect.ignore)
@@ -1340,6 +1384,7 @@ export const makePiFamilyAdapter = (
                   ).pipe(Effect.ignore);
             }
             if (
+              id !== undefined &&
               !frame.success &&
               frame.command === "prompt" &&
               session.acceptedPromptIds.delete(id)
@@ -1731,13 +1776,22 @@ export const makePiFamilyAdapter = (
               maxReassembledFrameBytes: 67_108_864,
             },
           );
+        } else {
+          session.capabilities = capabilitiesFrom(config.runtime, undefined);
         }
 
         const capabilitiesResponse = yield* request(
           session,
           { type: "get_capabilities" },
           "get_capabilities",
-        ).pipe(Effect.catch(() => Effect.succeed(undefined)));
+          Math.min(config.requestTimeoutMs, 1_000),
+        ).pipe(
+          Effect.catch((error) =>
+            error.reason === "native" || error.reason === "timeout"
+              ? Effect.succeed(undefined)
+              : Effect.fail(error),
+          ),
+        );
         if (session.stopped) {
           return yield* processError(
             config.provider,
@@ -1746,6 +1800,16 @@ export const makePiFamilyAdapter = (
           );
         }
         if (capabilitiesResponse) {
+          if (
+            capabilitiesResponse.data !== undefined &&
+            asRecord(capabilitiesResponse.data) === undefined
+          ) {
+            return yield* new ProviderAdapterRequestError({
+              provider: config.provider,
+              method: "get_capabilities",
+              detail: "Native capability discovery returned malformed response data.",
+            });
+          }
           const maxFrameBytes = session.capabilities.transport.maxFrameBytes;
           const maxReassembledFrameBytes = session.capabilities.transport.maxReassembledFrameBytes;
           session.capabilities = capabilitiesFrom(config.runtime, capabilitiesResponse.data, {

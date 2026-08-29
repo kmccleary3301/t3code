@@ -165,6 +165,57 @@ export function absentRuntimeCapabilities(runtime: PiFamilyRuntimeKind): Runtime
   };
 }
 
+/**
+ * Capabilities guaranteed by the accepted stock RPC contracts.
+ *
+ * Native `get_capabilities` responses may refine this profile. They are not a
+ * prerequisite: upstream Pi has no capability command, and stock OMP v2 may
+ * return an id-less unknown-command response for it.
+ */
+export function negotiatedRuntimeCapabilities(
+  runtime: PiFamilyRuntimeKind,
+  protocolVersion: 1 | 2 = 1,
+): RuntimeCapabilities {
+  const base = absentRuntimeCapabilities(runtime);
+  if (runtime === "omp" && protocolVersion !== 2) return base;
+  const omp = runtime === "omp";
+  return {
+    ...base,
+    protocolVersion,
+    ...(protocolVersion === 2 ? { negotiatedProtocolVersion: 2 as const } : {}),
+    models: { discover: true, switch: true },
+    thinking: { discover: true, switch: true },
+    commands: { discover: true, invokeNative: true },
+    sessions: {
+      resume: true,
+      tree: true,
+      fork: true,
+      compact: true,
+      nativeCheckpoint: false,
+      completeTurnRollback: false,
+    },
+    ui: {
+      select: true,
+      confirm: true,
+      input: true,
+      editor: true,
+      notify: true,
+      status: true,
+      widget: true,
+      openUrl: false,
+      arbitraryTerminalComponents: false,
+    },
+    tasks: {
+      lifecycle: omp,
+      nested: false,
+      childTranscript: omp,
+      workflows: false,
+      background: false,
+      targetedCancellation: false,
+    },
+  };
+}
+
 export interface NativeCheckpoint {
   readonly runtime: PiFamilyRuntimeKind;
   readonly runtimeVersion?: string;

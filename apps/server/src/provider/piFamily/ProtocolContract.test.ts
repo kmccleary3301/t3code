@@ -5,6 +5,7 @@ import {
   absentRuntimeCapabilities,
   isRpcResponse,
   makeOmpNegotiateProtocolCommand,
+  negotiatedRuntimeCapabilities,
   parseJsonObject,
   validateOmpNegotiateProtocolResponse,
   validateOmpReadyFrame,
@@ -21,6 +22,24 @@ describe("Pi and OMP protocol contracts", () => {
     assert.strictEqual(omp.transport.chunking, true);
     assert.strictEqual(pi.models.discover, false);
     assert.strictEqual(omp.tasks.lifecycle, false);
+  });
+
+  it("uses the stock RPC contract when capability discovery is absent", () => {
+    const pi = negotiatedRuntimeCapabilities("pi");
+    const ompBeforeNegotiation = negotiatedRuntimeCapabilities("omp");
+    const omp = negotiatedRuntimeCapabilities("omp", 2);
+
+    assert.strictEqual(pi.models.switch, true);
+    assert.strictEqual(pi.sessions.fork, true);
+    assert.strictEqual(pi.tasks.lifecycle, false);
+    assert.strictEqual(ompBeforeNegotiation.models.switch, false);
+    assert.strictEqual(omp.models.switch, true);
+    assert.strictEqual(omp.sessions.compact, true);
+    assert.strictEqual(omp.tasks.lifecycle, true);
+    assert.strictEqual(omp.tasks.nested, false);
+    assert.strictEqual(omp.tasks.childTranscript, true);
+    assert.strictEqual(omp.tasks.background, false);
+    assert.strictEqual(omp.tasks.targetedCancellation, false);
   });
 
   it("validates OMP ready and negotiate frames exactly", () => {

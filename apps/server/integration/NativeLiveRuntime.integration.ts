@@ -525,6 +525,8 @@ export const exerciseNativeLiveQueueModes = (
         let nestedTaskId: string | undefined;
         let parentTerminalStatus: string | undefined;
         let cancellationConfirmed = false;
+        let supportsTargetedCancellation = false;
+        let supportsTaskHierarchy = false;
         let compactionResult:
           | {
               readonly firstKeptEntryId: string;
@@ -594,42 +596,37 @@ export const exerciseNativeLiveQueueModes = (
               return;
             }
             if (frame.command === "get_capabilities") {
-              const data =
-                typeof frame.data === "object" && frame.data !== null
-                  ? (frame.data as Readonly<Record<string, unknown>>)
-                  : undefined;
-              const sessions =
-                typeof data?.sessions === "object" && data.sessions !== null
-                  ? (data.sessions as Readonly<Record<string, unknown>>)
-                  : undefined;
-              const tasks =
-                typeof data?.tasks === "object" && data.tasks !== null
-                  ? (data.tasks as Readonly<Record<string, unknown>>)
-                  : undefined;
-              if (sessions?.fork !== true || sessions.resume !== true) {
-                stop(
-                  new Error("OMP queue probe requires advertised fork and resume capabilities."),
-                );
-                return;
-              }
-              if (config.runtime === "omp") {
+              if (frame.success === true) {
+                const data =
+                  typeof frame.data === "object" && frame.data !== null
+                    ? (frame.data as Readonly<Record<string, unknown>>)
+                    : undefined;
+                const sessions =
+                  typeof data?.sessions === "object" && data.sessions !== null
+                    ? (data.sessions as Readonly<Record<string, unknown>>)
+                    : undefined;
+                const tasks =
+                  typeof data?.tasks === "object" && data.tasks !== null
+                    ? (data.tasks as Readonly<Record<string, unknown>>)
+                    : undefined;
                 if (
+                  sessions?.fork !== true ||
+                  sessions.resume !== true ||
                   sessions.compact !== true ||
                   tasks?.nested !== true ||
-                  tasks.background !== true ||
-                  tasks.targetedCancellation !== true
+                  tasks.background !== true
                 ) {
-                  stop(new Error("OMP queue probe requires task and compaction capabilities."));
+                  stop(new Error("OMP queue probe received an incomplete capability profile."));
                   return;
                 }
-                send({
-                  id: "native-matrix-subagent-subscription",
-                  type: "set_subagent_subscription",
-                  level: "events",
-                });
-                return;
+                supportsTargetedCancellation = tasks.targetedCancellation === true;
+                supportsTaskHierarchy = tasks.nested === true && tasks.background === true;
               }
-              send({ id: "native-matrix-state", type: "get_state" });
+              send({
+                id: "native-matrix-subagent-subscription",
+                type: "set_subagent_subscription",
+                level: "events",
+              });
               return;
             }
             if (frame.command === "set_subagent_subscription") {
@@ -749,6 +746,15 @@ export const exerciseNativeLiveQueueModes = (
                 tokensBefore: data.tokensBefore,
               };
               compactionSummary = data.summary;
+              if (!supportsTaskHierarchy) {
+                stop({
+                  responseCommands: [...responseCommands],
+                  frameTypes: [...frameTypes],
+                  subagentStatuses: [...subagentStatuses],
+                  compaction: compactionResult,
+                });
+                return;
+              }
               phase = "subagent-root";
               send({
                 id: "native-matrix-subagent-root",
@@ -775,6 +781,7 @@ export const exerciseNativeLiveQueueModes = (
                   typeof snapshot.id !== "string" ||
                   typeof snapshot.runId !== "string" ||
                   nestedTaskId === undefined ||
+                  compactionResult === undefined ||
                   snapshot.id === nestedTaskId
                 ) {
                   stop(
@@ -786,6 +793,15 @@ export const exerciseNativeLiveQueueModes = (
                 }
                 parentTaskId = snapshot.id;
                 parentRunId = snapshot.runId;
+                if (!supportsTargetedCancellation) {
+                  stop({
+                    responseCommands: [...responseCommands],
+                    frameTypes: [...frameTypes],
+                    subagentStatuses: [...subagentStatuses],
+                    compaction: compactionResult,
+                  });
+                  return;
+                }
                 phase = "cancelling-task";
                 send({
                   id: "native-matrix-cancel-task",

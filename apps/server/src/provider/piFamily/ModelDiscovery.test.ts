@@ -67,6 +67,7 @@ function realProbeScript(
     | "omp-missing-capabilities"
     | "omp-malformed-capabilities"
     | "omp-empty-capabilities"
+    | "omp-malformed-id"
     | "omp-bad-ready"
     | "pi-empty",
 ) {
@@ -89,8 +90,9 @@ function realProbeScript(
       '  else if (request.type === "get_available_models") data = { models: mode === "pi-empty" ? [] : [{ provider: "probe", id: "model", name: "Probe Model" }] };',
       '  else if (request.type === "negotiate_protocol") data = { protocolVersion: 2 };',
       "  else return;",
-      '  send({ id: request.id, type: "response", command: request.type, success: mode === "omp-missing-capabilities" && request.type === "get_capabilities" ? false : true, ...(data === undefined ? {} : { data }) });',
-      '  if (request.type === "get_available_models" || (request.type === "get_capabilities" && mode.includes("capabilities"))) setTimeout(() => process.exit(0), 50);',
+      '  const response = { type: "response", command: request.type, success: mode === "omp-missing-capabilities" && request.type === "get_capabilities" ? false : true, ...(data === undefined ? {} : { data }) };',
+      '  send(mode === "omp-missing-capabilities" && request.type === "get_capabilities" ? response : { id: mode === "omp-malformed-id" && request.type === "get_capabilities" ? 42 : request.id, ...response });',
+      '  if (request.type === "get_available_models") setTimeout(() => process.exit(0), 50);',
       "});",
       "setInterval(() => {}, 1000);",
     ].join("\n") + "\n"
@@ -430,6 +432,7 @@ it.layer(NodeServices.layer)("Pi-family executable discovery boundaries", (it) =
           | "omp"
           | "omp-missing-capabilities"
           | "omp-malformed-capabilities"
+          | "omp-malformed-id"
           | "omp-empty-capabilities"
           | "omp-bad-ready"
           | "pi-empty",
@@ -454,17 +457,17 @@ it.layer(NodeServices.layer)("Pi-family executable discovery boundaries", (it) =
       const omp = yield* run("omp");
       expect(omp.models.map((model) => model.slug)).toEqual(["probe/model"]);
 
-      const missingCapabilities = yield* run("omp-missing-capabilities").pipe(Effect.flip);
-      expect(missingCapabilities).toMatchObject({ code: "unsupported" });
-      expect(missingCapabilities.message).toContain("get_capabilities");
+      const missingCapabilities = yield* run("omp-missing-capabilities");
+      expect(missingCapabilities.models.map((model) => model.slug)).toEqual(["probe/model"]);
 
       const malformedCapabilities = yield* run("omp-malformed-capabilities").pipe(Effect.flip);
-      expect(malformedCapabilities).toMatchObject({ code: "unsupported" });
-      expect(malformedCapabilities.message).toContain("get_capabilities");
+      expect(malformedCapabilities).toMatchObject({ code: "protocol" });
 
-      const emptyCapabilities = yield* run("omp-empty-capabilities").pipe(Effect.flip);
-      expect(emptyCapabilities).toMatchObject({ code: "unsupported" });
-      expect(emptyCapabilities.message).toContain("get_capabilities");
+      const malformedId = yield* run("omp-malformed-id").pipe(Effect.flip);
+      expect(malformedId).toMatchObject({ code: "protocol" });
+
+      const emptyCapabilities = yield* run("omp-empty-capabilities");
+      expect(emptyCapabilities.models.map((model) => model.slug)).toEqual(["probe/model"]);
 
       const badReady = yield* run("omp-bad-ready").pipe(Effect.flip);
       expect(badReady).toMatchObject({ code: "protocol" });

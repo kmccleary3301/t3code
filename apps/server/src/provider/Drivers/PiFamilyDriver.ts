@@ -5,7 +5,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
+import { parseSemver, satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -33,39 +33,34 @@ import {
 } from "../piFamily/ModelDiscovery.ts";
 import { makePiFamilyTextGeneration } from "../../textGeneration/PiFamilyTextGeneration.ts";
 
-const SUPPORTED_PI_VERSION = "0.84.2";
-const SUPPORTED_OMP_VERSION = "17.3.7";
+const SUPPORTED_PI_RANGE = ">=0.84.2 <0.85.0";
+const SUPPORTED_OMP_RANGE = ">=17.3.7 <19.0.0";
 
 export function parsePiFamilyCliVersion(output: string): string | null {
   const match = output.match(
     /(?<![\d.])v?(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?(?![0-9A-Za-z.])/u,
   );
-  const core = match?.[1];
-  if (core === undefined) return null;
+  const version = match?.[1];
+  if (version === undefined) return null;
   const prerelease = match?.[2];
-  if (parseSemver(prerelease === undefined ? core : `${core}-${prerelease}`) === null) {
-    return null;
-  }
-  return core;
+  const parsed = prerelease === undefined ? version : `${version}-${prerelease}`;
+  return parseSemver(parsed) === null ? null : parsed;
 }
 
 export function piFamilyVersionCompatibilityError(
   provider: "pi" | "omp",
   version: string | null,
 ): string | undefined {
-  const required = provider === "omp" ? SUPPORTED_OMP_VERSION : SUPPORTED_PI_VERSION;
+  const supportedRange = provider === "omp" ? SUPPORTED_OMP_RANGE : SUPPORTED_PI_RANGE;
   if (version === null) {
-    return `${provider} native version could not be parsed. Configure the audited ${provider} ${required} binary and refresh provider health.`;
+    return `${provider} native version could not be parsed. Configure a supported ${provider} release (${supportedRange}) and refresh provider health.`;
   }
   const parsed = parseSemver(version);
   if (parsed === null || parsed.prerelease.length > 0) {
-    return `${provider} native version '${version}' is malformed or unsupported. Configure the audited ${provider} ${required} binary and refresh provider health.`;
+    return `${provider} native version '${version}' is malformed or unsupported. Configure a stable ${provider} release in ${supportedRange} and refresh provider health.`;
   }
-  if (compareSemverVersions(version, required) !== 0) {
-    if (provider === "omp" && version === "18.0.0") {
-      return "OMP 18.0.0 is unsupported because it does not implement T3 get_capabilities. Configure the audited OMP 17.3.7 integration binary instead.";
-    }
-    return `${provider} native version '${version}' is unsupported. T3 supports only the audited ${provider} ${required} binary; configure that binary and refresh provider health.`;
+  if (!satisfiesSemverRange(version, supportedRange)) {
+    return `${provider} native version '${version}' is unsupported. T3 supports ${provider} releases in ${supportedRange}; configure a compatible binary and refresh provider health.`;
   }
   return undefined;
 }

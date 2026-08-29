@@ -60,6 +60,7 @@ export class ProviderAdapterRequestError extends Schema.TaggedErrorClass<Provide
     provider: Schema.String,
     method: Schema.String,
     detail: Schema.String,
+    reason: Schema.optional(Schema.Literals(["native", "protocol", "timeout"])),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

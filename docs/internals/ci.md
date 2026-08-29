@@ -81,19 +81,19 @@ name when `T3_PRODUCT_PROFILE` is absent. Neither path infers behavior from a pr
 
 ### Native runtime lanes
 
-The supported native-runtime claim is intentionally narrow. The lane is selected by the
-configured binary path and is never inferred from a provider label:
+Native releases pass two gates: a coarse stable-version band, then the actual RPC contract. A
+version match alone never marks a provider ready.
 
-| Runtime lane           | Version/revision                                                                                                                                                                                     | Protocol proof                                                                               | Support status                                       |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Pi audited binary      | `0.84.2` / `binary-sha256:840d1e8e689ed9e4937bcb00b9a810e02a8567d9afb10a47097f11ca93ea1521`                                                                                                          | Pi RPC v1; strict LF JSONL; model/state/capability discovery                                 | Supported                                            |
-| OMP integration binary | `17.3.7` / `binary-sha256:6a912163e0e2f63ae89ca14dd382b683f15126e783202c68aa783c5fb970f9e1` (clean revalidated; archived fixture `c1434d85392024aab964220b3c3fd27afe1241d13d5488dac84b489d1f052b0d`) | ready v1, v1/v2 advertisement, v2 negotiation, bounded chunk transport, capability discovery | Supported on the clean revalidated integration build |
-| OMP default binary     | `18.0.0` / `binary-sha256:78870640abcb930e1abbe128baf1b636ecd1fe8326af42ac3652e4a4654112f7`                                                                                                          | emits ready v1 but does not implement the T3 `get_capabilities` RPC contract                 | Unsupported; select the audited integration binary   |
+| Runtime lane                   | Validated identity                                                                                                                                                               | Protocol proof                                                                                | Support status                                  |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Pi stock                       | `0.84.4`; npm SRI `sha512-jmOlrqUmvhh/siNWFRXjYLJzhKFIHNsAQaysRwzQPQFnPAaV/vhqHsLH/MBsIISA1Rjj7WTUFR3nJrpXoLx39w==`                                                              | Pi RPC v1; strict LF JSONL; model/state discovery                                             | Supported in `>=0.84.2 <0.85.0`                 |
+| OMP stock                      | `18.0.10`; binary SHA-256 `bf026b63aa3b0acb0afbed8083f76bcec134bf56ffdbbe80fb73a7e079fe278a`                                                                                     | ready v1, v1/v2 advertisement, v2 negotiation, bounded chunk transport, model/state discovery | Supported in `>=17.3.7 <19.0.0`                 |
+| OMP extended integration build | `17.3.7`; binary SHA-256 `6a912163e0e2f63ae89ca14dd382b683f15126e783202c68aa783c5fb970f9e1`; archived fixture `c1434d85392024aab964220b3c3fd27afe1241d13d5488dac84b489d1f052b0d` | Stock OMP contract plus explicit capabilities for checkpoints and advanced task control       | Supported; advertised extensions remain enabled |
 
-The Pi and OMP rows were probed through their native RPC entrypoints on the current
-arm64 workstation. The probe verified version, framing, capability/discovery responses,
-and clean stdin-close teardown. It is not a substitute for the authenticated T3
-root-turn gate; that remains an external compatibility check.
+The current Pi and OMP stock releases were exercised credential-free through their real native
+processes on macOS arm64. CI repeats the current-release core matrix on Linux x64 and retains the
+exact `0.84.2` / `17.3.7` replay corpus and extended integration lane as regressions. These gates
+do not replace authenticated root-turn evidence.
 
 ### Node and package manager
 
@@ -103,29 +103,28 @@ installation and tasks.
 
 ### Pi and OMP runtime protocol baseline
 
-The adapter accepts a runtime only through its wire contract and advertised
-capabilities. It does not use a hidden version heuristic.
+The adapter applies a version band only as an outer safety boundary. Readiness comes from the
+wire contract, with optional capability discovery refining the baseline.
 
-- **Both runtimes:** RPC is strict LF-delimited JSON. Responses correlate by
-  request ID; malformed lines become runtime errors and later valid lines are
-  still processed; process exit fails pending work. Unknown event types are
-  retained as diagnostic raw envelopes rather than guessed into a newer
-  schema. Optional capabilities default to absent until discovery says
-  otherwise.
-- **Pi:** protocol v1 only, with no `ready` frame, protocol negotiation, or
-  chunked transport. The adapter starts RPC mode and best-effort queries
-  `get_capabilities`; a missing response does not grant optional features.
-- **OMP:** must emit a valid `ready` frame (initial protocol v1, support for
-  v1/v2, 1 MiB frame and 64 MiB reassembled-message limits), then successfully
-  negotiate protocol v2. OMP chunking is bounded by those limits. Capability
-  discovery follows negotiation.
-- **Feature gating:** model/thinking switching, commands, checkpoints,
-  session resume/tree/fork/compact, UI requests, and task lifecycle are
-  enabled only when the runtime advertises each capability. The baseline does
-  not advertise arbitrary terminal components. In particular, nested tasks,
-  workflows, background tasks, and child-task presentation are degraded or
-  unavailable for Pi unless its capability response explicitly provides them;
-  OMP may provide them, but CI only proves the adapter fixture behavior.
+- **Both runtimes:** RPC is strict LF-delimited JSON. Responses correlate by request ID. For a
+  native id-less response, T3 correlates only when exactly one pending request has the same command;
+  ambiguity remains unhandled and times out. Malformed lines become runtime errors, process exit
+  fails pending work, and unknown events remain diagnostic raw envelopes.
+- **Pi:** accepted `0.84.x` releases use protocol v1 with no `ready` frame, negotiation, or chunked
+  transport. Successful model/state discovery proves the stock model switching, thinking,
+  commands, session tree/fork/compact, and portable UI contract.
+- **OMP:** accepted `17.x` and `18.x` releases must emit a valid `ready` frame (initial protocol v1,
+  support for v1/v2, 1 MiB frame and 64 MiB reassembled-message limits), then negotiate protocol
+  v2. Successful model/state discovery proves the stock model, thinking, commands, session
+  tree/fork/compact, portable UI, subagent lifecycle, and child-transcript contract.
+- **Capability refinement:** `get_capabilities` is best effort. A successful object response
+  overrides baseline booleans. A native unknown-command failure leaves the stock contract intact;
+  malformed successful data fails closed. Native checkpoints, complete-turn rollback, nested
+  tasks, workflows, background tasks, and targeted cancellation remain disabled unless explicitly
+  advertised.
+- **Version boundaries:** Pi prereleases, Pi `0.85.0+`, OMP prereleases, and OMP `19.0.0+` fail
+  before launch. Patch releases inside the Pi band and minor releases inside the OMP major band
+  proceed to RPC validation, avoiding release-by-release exact pins.
 
 ### Native trace replay layers and fixture governance
 

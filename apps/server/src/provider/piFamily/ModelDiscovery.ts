@@ -159,8 +159,7 @@ export function modelDiscoverySnapshotMessage(provider: string, error: unknown):
       : `${provider} native runtime is unsupported.`;
   }
   if (code === "protocol") {
-    const auditedVersion = provider === "omp" ? "17.3.7" : "0.84.2";
-    return `${provider} returned invalid native protocol data. Configure the audited ${provider} ${auditedVersion} binary and refresh models.`;
+    return `${provider} returned invalid native RPC data. Configure a release in T3's supported compatibility range and refresh models.`;
   }
   if (code === "limit") return `${provider} model discovery exceeded its output limit.`;
   return `${provider} model discovery failed.`;
@@ -278,7 +277,19 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
               ),
             );
           }
-          const id = asString(frame.id);
+          let id = asString(frame.id);
+          if (Object.hasOwn(frame, "id") && id === undefined) {
+            return yield* Effect.fail(
+              new PiFamilyModelDiscoveryError(
+                "protocol",
+                "Native model discovery response ID must be a string.",
+              ),
+            );
+          }
+          if (!Object.hasOwn(frame, "id") && typeof frame.command === "string") {
+            const matches = [...pending].filter(([, request]) => request.command === frame.command);
+            if (matches.length === 1) id = matches[0]?.[0];
+          }
           if (id === undefined) return;
           const request = pending.get(id);
           if (!request) return;
@@ -368,7 +379,7 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
       );
 
       let requestCounter = 0;
-      const request = (command: string, envelope: JsonRecord) => {
+      const request = (command: string, envelope: JsonRecord, timeoutMs = requestTimeoutMs) => {
         const id = asString(envelope.id) ?? `${command}-${++requestCounter}`;
         return Effect.gen(function* () {
           const deferred = yield* Deferred.make<RpcResponse, PiFamilyModelDiscoveryError>();
@@ -384,10 +395,13 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
           );
           return yield* Deferred.await(deferred).pipe(
             Effect.raceFirst(Deferred.await(fatal)),
-            Effect.timeout(requestTimeoutMs),
+            Effect.timeout(timeoutMs),
             Effect.catchTag("TimeoutError", () =>
               Effect.fail(
-                new PiFamilyModelDiscoveryError("timeout", "Native RPC model discovery timed out."),
+                new PiFamilyModelDiscoveryError(
+                  "timeout",
+                  `Native RPC model discovery timed out after ${timeoutMs}ms.`,
+                ),
               ),
             ),
           );
@@ -420,30 +434,30 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
         });
       }
 
-      const capabilitiesResponse = yield* request("get_capabilities", {
-        id: "get_capabilities-1",
-        type: "get_capabilities",
-      }).pipe(Effect.result);
-      if (Result.isFailure(capabilitiesResponse)) {
-        if (config.runtime === "omp") {
-          const cause = capabilitiesResponse.failure;
-          if (cause.code === "protocol") return yield* Effect.fail(cause);
-          return yield* Effect.fail(
-            new PiFamilyModelDiscoveryError(
-              "unsupported",
-              "OMP does not implement the T3 `get_capabilities` discovery contract. Configure the audited OMP 17.3.7 integration binary instead of the default OMP 18.0.0 binary.",
-            ),
-          );
-        }
-      } else if (
-        config.runtime === "omp" &&
-        (!asRecord(capabilitiesResponse.success.data) ||
-          Object.keys(asRecord(capabilitiesResponse.success.data) ?? {}).length === 0)
+      const capabilitiesResponse = yield* request(
+        "get_capabilities",
+        {
+          id: "get_capabilities-1",
+          type: "get_capabilities",
+        },
+        Math.min(requestTimeoutMs, 1_000),
+      ).pipe(Effect.result);
+      if (
+        Result.isFailure(capabilitiesResponse) &&
+        capabilitiesResponse.failure.code !== "native" &&
+        capabilitiesResponse.failure.code !== "timeout"
+      ) {
+        return yield* Effect.fail(capabilitiesResponse.failure);
+      }
+      if (
+        Result.isSuccess(capabilitiesResponse) &&
+        capabilitiesResponse.success.data !== undefined &&
+        asRecord(capabilitiesResponse.success.data) === undefined
       ) {
         return yield* Effect.fail(
           new PiFamilyModelDiscoveryError(
-            "unsupported",
-            "OMP does not implement the T3 `get_capabilities` discovery contract. Configure the audited OMP 17.3.7 integration binary instead of the default OMP 18.0.0 binary.",
+            "protocol",
+            "Native capability discovery returned malformed response data.",
           ),
         );
       }

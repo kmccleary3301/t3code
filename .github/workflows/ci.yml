@@ -166,7 +166,7 @@ jobs:
           ref: c53cd2c2bf521f6eb70cac5484e6474d827498d6
           path: .native/omp
 
-      - name: Build pinned Pi and OMP runtimes
+      - name: Build pinned extended Pi and OMP runtimes
         if: steps.classify.outputs.replay_gate == 'true'
         run: |
           npm install --global bun@1.3.14 @earendil-works/pi-coding-agent@0.84.2
@@ -174,7 +174,34 @@ jobs:
           bun --cwd=.native/omp/packages/natives run build
           bun --cwd=.native/omp/packages/coding-agent run build
 
-      - name: Run credential-free stock native matrix
+      - name: Install current stock Pi and OMP runtimes
+        if: steps.classify.outputs.replay_gate == 'true'
+        run: |
+          npm install --prefix .native/current --no-package-lock --no-save \
+            @earendil-works/pi-coding-agent@0.84.4 \
+            @oh-my-pi/pi-coding-agent@18.0.10
+          test "$(.native/current/node_modules/.bin/pi --version)" = "0.84.4"
+          test "$(.native/current/node_modules/.bin/omp --version)" = "omp/18.0.10"
+          test "$(npm view @earendil-works/pi-coding-agent@0.84.4 dist.integrity)" = \
+            "sha512-jmOlrqUmvhh/siNWFRXjYLJzhKFIHNsAQaysRwzQPQFnPAaV/vhqHsLH/MBsIISA1Rjj7WTUFR3nJrpXoLx39w=="
+          test "$(npm view @oh-my-pi/pi-coding-agent@18.0.10 dist.integrity)" = \
+            "sha512-6rvQdBKcwYO8qKQisVsOUVR4IjBVcaMZ7/xxUq4PqWGLH8utmZdVi4GQXFhteajNiHC1xisCsFZBRFR/WzU90g=="
+
+      - name: Run current stock native compatibility matrix
+        if: steps.classify.outputs.replay_gate == 'true'
+        env:
+          T3_NATIVE_PI_BINARY: ${{ github.workspace }}/.native/current/node_modules/.bin/pi
+          T3_NATIVE_OMP_BINARY: ${{ github.workspace }}/.native/current/node_modules/.bin/omp
+          T3_NATIVE_CURRENT_REPORT: ${{ runner.temp }}/current-native-compatibility-ci.raw.json
+        run: |
+          vp test run \
+            apps/server/src/server.test.ts \
+            apps/server/integration/orchestrationEngine.integration.test.ts \
+            -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket|runs configured (pi|omp) through the native T3 lifecycle matrix" \
+            --reporter=json \
+            --outputFile="$T3_NATIVE_CURRENT_REPORT"
+
+      - name: Run pinned extended native matrix
         if: steps.classify.outputs.replay_gate == 'true'
         env:
           T3_NATIVE_ROOT_REPORT: ${{ runner.temp }}/stock-native-root-ci.raw.json
@@ -225,6 +252,10 @@ jobs:
             "$RUNNER_TEMP/stock-native-matrix-ci.raw.json" \
             "$RUNNER_TEMP/stock-native-matrix-ci.json" \
             stock-native-matrix
+          sanitize \
+            "$RUNNER_TEMP/current-native-compatibility-ci.raw.json" \
+            "$RUNNER_TEMP/current-native-compatibility-ci.json" \
+            current-native-compatibility
 
       - name: Replay scrubbed Pi and OMP traces
         if: steps.classify.outputs.replay_gate == 'true'
@@ -275,6 +306,7 @@ jobs:
             ${{ runner.temp }}/stock-native-root-ci.json
             ${{ runner.temp }}/stock-native-matrix-ci.json
             ${{ runner.temp }}/stock-native-provenance-ci.json
+            ${{ runner.temp }}/current-native-compatibility-ci.json
           if-no-files-found: ignore
           retention-days: 30
 

@@ -84,7 +84,12 @@ const capabilities = (runtime: Runtime, modelSwitch = true) => ({
   },
 });
 
-const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = true): string => {
+const makeNativeScript = (
+  runtime: Runtime,
+  malformed = false,
+  modelSwitch = true,
+  capabilityMode: "advertised" | "idless-unsupported" | "malformed-id" | "silent" = "advertised",
+): string => {
   const lines = [
     'const readline = require("node:readline");',
     'const out = value => process.stdout.write(JSON.stringify(value) + "\\n");',
@@ -100,9 +105,21 @@ const makeNativeScript = (runtime: Runtime, malformed = false, modelSwitch = tru
     'rl.on("line", line => {',
     "  const command = JSON.parse(line);",
     '  if (command.type === "negotiate_protocol") out({ id: command.id, type: "response", command: "negotiate_protocol", success: true, data: { protocolVersion: 2 } });',
-    '  if (command.type === "get_capabilities") out({ id: command.id, type: "response", command: "get_capabilities", success: true, data: ' +
-      JSON.stringify(capabilities(runtime, modelSwitch)) +
-      " });",
+    ...(capabilityMode === "advertised"
+      ? [
+          '  if (command.type === "get_capabilities") out({ id: command.id, type: "response", command: "get_capabilities", success: true, data: ' +
+            JSON.stringify(capabilities(runtime, modelSwitch)) +
+            " });",
+        ]
+      : capabilityMode === "idless-unsupported"
+        ? [
+            '  if (command.type === "get_capabilities") out({ type: "response", command: "get_capabilities", success: false, error: "Unknown command: get_capabilities" });',
+          ]
+        : capabilityMode === "malformed-id"
+          ? [
+              '  if (command.type === "get_capabilities") out({ id: 42, type: "response", command: "get_capabilities", success: true, data: {} });',
+            ]
+          : []),
     '  if (command.type === "get_state") out({ id: command.id, type: "response", command: "get_state", success: true, data: { model: ' +
       JSON.stringify(
         runtime === "omp"
@@ -856,6 +873,68 @@ describe("Pi-family native adapter", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+  it.live("uses the OMP v2 baseline when capability discovery is silent", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-stock-v2-thread");
+      const instanceId = ProviderInstanceId.make("omp-stock-v2-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime, false, true, "silent"), "--"],
+        requestTimeoutMs: 50,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      assert.equal(adapter.capabilities.sessionModelSwitch, "in-session");
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.effect("does not correlate a response with a malformed ID", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-malformed-response-id-thread");
+      const instanceId = ProviderInstanceId.make("omp-malformed-response-id-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime, false, true, "malformed-id"), "--"],
+        requestTimeoutMs: 50,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      const result = yield* Effect.exit(
+        adapter.startSession({
+          threadId,
+          provider,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access",
+        }),
+      );
+      assert.isTrue(Exit.isFailure(result));
+      assert.isFalse(yield* adapter.hasSession(threadId));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   for (const runtime of ["pi", "omp"] as const) {
     it.effect(
       `binds anonymous ${runtime} lifecycle frames to the accepted prompt exactly once`,

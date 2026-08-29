@@ -86,23 +86,24 @@ it.effect("probes version compatibility through real executable children", () =>
         );
       });
 
-    const pi = yield* probe("pi 0.84.2+audited.1");
+    const pi = yield* probe("pi 0.84.4+audited.1");
     const piVersion = parsePiFamilyCliVersion(`${pi.stdout}\n${pi.stderr}`);
-    expect(piVersion).toBe("0.84.2");
+    expect(piVersion).toBe("0.84.4");
     expect(piFamilyVersionCompatibilityError("pi", piVersion)).toBeUndefined();
+    expect(piFamilyVersionCompatibilityError("pi", "0.84.99")).toBeUndefined();
+    expect(piFamilyVersionCompatibilityError("pi", "0.85.0")).toContain("unsupported");
 
-    const omp = yield* probe("omp 17.3.7+audited.1");
+    const omp = yield* probe("omp 18.0.10+audited.1");
     const ompVersion = parsePiFamilyCliVersion(`${omp.stdout}\n${omp.stderr}`);
-    expect(ompVersion).toBe("17.3.7");
+    expect(ompVersion).toBe("18.0.10");
     expect(piFamilyVersionCompatibilityError("omp", ompVersion)).toBeUndefined();
+    expect(piFamilyVersionCompatibilityError("omp", "18.99.0")).toBeUndefined();
+    expect(piFamilyVersionCompatibilityError("omp", "19.0.0")).toContain("unsupported");
 
-    const unsupported = yield* probe("omp 18.0.0");
-    const unsupportedVersion = parsePiFamilyCliVersion(
-      `${unsupported.stdout}\n${unsupported.stderr}`,
-    );
-    expect(piFamilyVersionCompatibilityError("omp", unsupportedVersion)).toContain(
-      "get_capabilities",
-    );
+    const prerelease = yield* probe("omp 18.1.0-beta.1");
+    const prereleaseVersion = parsePiFamilyCliVersion(`${prerelease.stdout}\n${prerelease.stderr}`);
+    expect(prereleaseVersion).toBe("18.1.0-beta.1");
+    expect(piFamilyVersionCompatibilityError("omp", prereleaseVersion)).toContain("unsupported");
 
     const malformed = yield* probe("");
     const malformedVersion = parsePiFamilyCliVersion(`${malformed.stdout}\n${malformed.stderr}`);

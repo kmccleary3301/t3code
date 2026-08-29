@@ -141,14 +141,17 @@ projects the resulting events.
 
 ### Pi and OMP support
 
-The private `pi-omp` release has a deliberately narrow native-runtime lane:
+T3 admits stable releases in compatibility bands, then validates the native RPC contract before
+marking the provider ready:
 
-- Pi `0.84.2`, using the audited binary and Pi-owned authentication.
-- OMP `17.3.7`, using the clean revalidated integration binary and OMP-owned authentication.
+- Pi `>=0.84.2 <0.85.0`; `0.84.4` is the latest validated release.
+- OMP `>=17.3.7 <19.0.0`; `18.0.10` is the latest validated stock release.
 
-The default OMP `18.0.0` binary is **unsupported** by this integration because it does not
-implement the T3 capability-discovery contract. Set the provider's explicit binary path to the
-audited OMP binary; do not infer support from the provider label or a version string alone.
+The version band is only a coarse safety boundary. Pi must complete stock RPC v1 model and state
+discovery. OMP must emit its `ready` frame, negotiate RPC v2, and complete model and state
+discovery. `get_capabilities` is an optional refinement: builds that implement it retain their
+advertised checkpoint and advanced task features, while stock OMP `18.x` uses the conservative
+features guaranteed by RPC v2. Prereleases and releases outside these bands fail closed.
 
 For an isolated OMP profile, use OMP's native authentication broker rather than copying its
 SQLite state:
