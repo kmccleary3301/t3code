@@ -1577,6 +1577,38 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverRenameNativeSession]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRenameNativeSession,
+            nativeSessionCoordinator.rename(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverForkNativeSession]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverForkNativeSession,
+            nativeSessionCoordinator.fork(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverStopNativeSession]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverStopNativeSession,
+            nativeSessionCoordinator.stop(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverArchiveNativeSession]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverArchiveNativeSession,
+            nativeSessionCoordinator.archive(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetTraceDiagnostics,

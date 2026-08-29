@@ -141,6 +141,23 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     cursor?: string,
   ) => Effect.Effect<ProviderNativeHistoryPage, TError | ProviderNativeSessionError>;
+  /**
+   * Rename the durable native session currently attached to a thread.
+   */
+  readonly renameNativeSession?: (
+    threadId: ThreadId,
+    name: string,
+  ) => Effect.Effect<void, TError | ProviderNativeSessionError>;
+
+  /**
+   * Fork the durable native session currently attached to a thread.
+   *
+   * Native runtimes rebind the process to the fork. Callers must stop the
+   * source thread before attaching the returned session id elsewhere.
+   */
+  readonly forkNativeSession?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<{ readonly sessionId: string }, TError | ProviderNativeSessionError>;
 
   /**
    * Roll back a provider thread by N turns.

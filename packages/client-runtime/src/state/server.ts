@@ -700,6 +700,42 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    renameNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:rename-native-session",
+      tag: WS_METHODS.serverRenameNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    forkNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:fork-native-session",
+      tag: WS_METHODS.serverForkNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    stopNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:stop-native-session",
+      tag: WS_METHODS.serverStopNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    archiveNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:archive-native-session",
+      tag: WS_METHODS.serverArchiveNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,

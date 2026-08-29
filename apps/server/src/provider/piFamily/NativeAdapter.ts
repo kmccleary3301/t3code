@@ -73,7 +73,10 @@ import {
   type RuntimeCapabilities,
 } from "./protocol.ts";
 import { piFamilyThinkingLevels, resolvePiFamilyLaunchArguments } from "./ModelDiscovery.ts";
-import { listOmpNativeSessions, readOmpNativeHistoryMessages } from "./NativeSessionCatalog.ts";
+import {
+  listPiFamilyNativeSessions,
+  readPiFamilyNativeHistoryMessages,
+} from "./NativeSessionCatalog.ts";
 import type { NativeTraceSink, NativeTraceSinkFactory } from "./NativeTrace.ts";
 export interface PiFamilyNativeConfig {
   readonly provider: ProviderDriverKind;
@@ -367,11 +370,16 @@ function readNativeSessionResumeCursor(
   value: unknown,
 ): ProviderNativeSessionResumeCursor | undefined {
   const record = asRecord(value);
+  const runtime = asString(record?.runtime);
   const sessionId = asString(record?.sessionId);
-  if (record?.kind !== "native-session" || record.runtime !== "omp" || sessionId === undefined) {
+  if (
+    record?.kind !== "native-session" ||
+    (runtime !== "pi" && runtime !== "omp") ||
+    sessionId === undefined
+  ) {
     return undefined;
   }
-  return { kind: "native-session", runtime: "omp", sessionId };
+  return { kind: "native-session", runtime, sessionId };
 }
 
 function withoutSessionSelectionArguments(arguments_: readonly string[]): string[] {
@@ -379,11 +387,25 @@ function withoutSessionSelectionArguments(arguments_: readonly string[]): string
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
     if (argument === undefined) continue;
-    if (argument === "--resume" || argument === "-r") {
+    if (
+      argument === "--resume" ||
+      argument === "-r" ||
+      argument === "--session" ||
+      argument === "--session-id" ||
+      argument === "--fork"
+    ) {
       index += 1;
       continue;
     }
-    if (argument.startsWith("--resume=") || argument.startsWith("-r=")) continue;
+    if (
+      argument.startsWith("--resume=") ||
+      argument.startsWith("-r=") ||
+      argument.startsWith("--session=") ||
+      argument.startsWith("--session-id=") ||
+      argument.startsWith("--fork=")
+    ) {
+      continue;
+    }
     if (argument === "--continue" || argument === "-c") continue;
     filtered.push(argument);
   }
@@ -1541,6 +1563,24 @@ export const makePiFamilyAdapter = (
             issue: `Expected provider instance ${config.instanceId}.`,
           });
         }
+        const cwd = input.cwd ?? config.cwd;
+        const cwdIsDirectory = yield* Effect.try({
+          try: () => NodeFS.statSync(cwd).isDirectory(),
+          catch: (cause) =>
+            processError(
+              config.provider,
+              input.threadId,
+              `Native working directory '${cwd}' is unavailable.`,
+              cause,
+            ),
+        });
+        if (!cwdIsDirectory) {
+          return yield* processError(
+            config.provider,
+            input.threadId,
+            `Native working directory '${cwd}' is not a directory.`,
+          );
+        }
         if (sessions.has(input.threadId)) yield* stopSession(input.threadId);
         const traceSinkFactory = config.traceSinkFactory;
         const traceSink =
@@ -1568,11 +1608,11 @@ export const makePiFamilyAdapter = (
           ...(config.agentDirectory ? { PI_CODING_AGENT_DIR: config.agentDirectory } : {}),
         };
         const nativeResumeCursor = readNativeSessionResumeCursor(input.resumeCursor);
-        if (nativeResumeCursor !== undefined && config.runtime !== "omp") {
+        if (nativeResumeCursor !== undefined && nativeResumeCursor.runtime !== config.runtime) {
           return yield* new ProviderAdapterValidationError({
             provider: config.provider,
             operation: "startSession",
-            issue: "OMP native session cursor cannot be resumed by this runtime.",
+            issue: `${nativeResumeCursor.runtime} native session cursor cannot be resumed by ${config.runtime}.`,
           });
         }
         const baseLaunchArguments = resolvePiFamilyLaunchArguments(
@@ -1584,7 +1624,7 @@ export const makePiFamilyAdapter = (
             ? baseLaunchArguments
             : [
                 ...withoutSessionSelectionArguments(baseLaunchArguments),
-                "--resume",
+                config.runtime === "pi" ? "--session" : "--resume",
                 nativeResumeCursor.sessionId,
               ];
         const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, launchArguments, {
@@ -1594,9 +1634,8 @@ export const makePiFamilyAdapter = (
         const child = yield* spawner
           .spawn(
             ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-              cwd: input.cwd ?? config.cwd,
               env: environment,
-              extendEnv: true,
+              cwd,
               shell: spawnCommand.shell,
               stdin: { stream: "pipe", endOnDone: false },
               stdout: "pipe",
@@ -1649,7 +1688,7 @@ export const makePiFamilyAdapter = (
             providerInstanceId: input.providerInstanceId ?? config.instanceId,
             status: "ready",
             runtimeMode: input.runtimeMode,
-            cwd: input.cwd ?? config.cwd,
+            cwd,
             threadId: input.threadId,
             ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
             ...(input.resumeCursor === undefined ? {} : { resumeCursor: input.resumeCursor }),
@@ -1925,7 +1964,7 @@ export const makePiFamilyAdapter = (
             });
           }
         }
-        if (config.runtime === "omp") {
+        if (config.runtime === "omp" || nativeResumeCursor !== undefined) {
           const stateResponse = yield* request(session, { type: "get_state" }, "get_state");
           const state = asRecord(stateResponse.data);
           const nativeSessionId = asString(state?.sessionId);
@@ -1933,7 +1972,7 @@ export const makePiFamilyAdapter = (
             return yield* new ProviderAdapterRequestError({
               provider: config.provider,
               method: "get_state",
-              detail: "OMP returned state without a session id.",
+              detail: `${config.runtime.toUpperCase()} returned state without a session id.`,
               reason: "protocol",
             });
           }
@@ -1944,7 +1983,7 @@ export const makePiFamilyAdapter = (
             return yield* new ProviderAdapterRequestError({
               provider: config.provider,
               method: "get_state",
-              detail: `OMP resumed '${nativeSessionId}' instead of '${nativeResumeCursor.sessionId}'.`,
+              detail: `${config.runtime.toUpperCase()} resumed '${nativeSessionId}' instead of '${nativeResumeCursor.sessionId}'.`,
               reason: "protocol",
             });
           }
@@ -1955,7 +1994,7 @@ export const makePiFamilyAdapter = (
             ...(modelId === undefined ? {} : { model: modelId }),
             resumeCursor: {
               kind: "native-session",
-              runtime: "omp",
+              runtime: config.runtime,
               sessionId: nativeSessionId,
             },
             updatedAt: nowIso(),
@@ -2205,7 +2244,7 @@ export const makePiFamilyAdapter = (
           }),
         );
       }
-      return listOmpNativeSessions(config, config.instanceId, input.cwd);
+      return listPiFamilyNativeSessions(config, config.instanceId, input.cwd);
     };
 
     const readNativeHistory = (
@@ -2216,18 +2255,12 @@ export const makePiFamilyAdapter = (
       ProviderAdapterError | ProviderNativeSessionError
     > =>
       Effect.gen(function* () {
-        if (config.runtime !== "omp") {
-          return yield* new ProviderNativeSessionError({
-            code: "unsupported",
-            message: "Native history requires OMP.",
-          });
-        }
         const session = yield* requireSession(threadId);
         const sessionId = session.nativeSessionId;
         if (sessionId === undefined) {
           return yield* new ProviderNativeSessionError({
             code: "invalid",
-            message: "OMP did not report a native session id.",
+            message: `${config.runtime.toUpperCase()} did not report a native session id.`,
           });
         }
         const offset = cursor === undefined ? 0 : Number(cursor);
@@ -2239,7 +2272,7 @@ export const makePiFamilyAdapter = (
         }
         const messages =
           session.nativeHistoryMessages ??
-          (yield* readOmpNativeHistoryMessages(
+          (yield* readPiFamilyNativeHistoryMessages(
             config,
             sessionId,
             session.session.cwd ?? config.cwd,
@@ -2252,6 +2285,101 @@ export const makePiFamilyAdapter = (
           ...(nextOffset < messages.length ? { nextCursor: String(nextOffset) } : {}),
           totalMessages: messages.length,
         };
+      });
+    const renameNativeSession = (
+      threadId: ThreadId,
+      name: string,
+    ): Effect.Effect<void, ProviderAdapterError | ProviderNativeSessionError> =>
+      Effect.gen(function* () {
+        const session = yield* requireSession(threadId);
+        if (!isQuiescent(session)) {
+          return yield* new ProviderNativeSessionError({
+            code: "invalid",
+            message: "Native session cannot be renamed while work is active.",
+          });
+        }
+        yield* request(session, { type: "set_session_name", name }, "set_session_name");
+        session.session = {
+          ...session.session,
+          updatedAt: nowIso(),
+        };
+      });
+
+    const forkNativeSession = (
+      threadId: ThreadId,
+    ): Effect.Effect<
+      { readonly sessionId: string },
+      ProviderAdapterError | ProviderNativeSessionError
+    > =>
+      Effect.gen(function* () {
+        const session = yield* requireSession(threadId);
+        if (!isQuiescent(session)) {
+          return yield* new ProviderNativeSessionError({
+            code: "invalid",
+            message: "Native session cannot be forked while work is active.",
+          });
+        }
+        if (!session.capabilities.sessions.fork) {
+          return yield* new ProviderNativeSessionError({
+            code: "unsupported",
+            message: `Native ${config.runtime} does not support session forks.`,
+          });
+        }
+        const oldSessionId = session.nativeSessionId;
+        if (config.runtime === "pi") {
+          const response = yield* request(session, { type: "clone" }, "clone");
+          if (asRecord(response.data)?.cancelled === true) {
+            return yield* new ProviderNativeSessionError({
+              code: "native",
+              message: "Pi cancelled the session fork.",
+            });
+          }
+        } else {
+          const candidatesResponse = yield* request(
+            session,
+            { type: "get_branch_messages" },
+            "get_branch_messages",
+          );
+          const messages = asRecord(candidatesResponse.data)?.messages;
+          const latest =
+            Array.isArray(messages) && messages.length > 0
+              ? asRecord(messages[messages.length - 1])
+              : undefined;
+          const entryId = asString(latest?.entryId);
+          if (entryId === undefined) {
+            return yield* new ProviderNativeSessionError({
+              code: "invalid",
+              message: "OMP cannot fork a session without a branchable user message.",
+            });
+          }
+          const response = yield* request(session, { type: "branch", entryId }, "branch");
+          if (asRecord(response.data)?.cancelled === true) {
+            return yield* new ProviderNativeSessionError({
+              code: "native",
+              message: "OMP cancelled the session fork.",
+            });
+          }
+        }
+        const stateResponse = yield* request(session, { type: "get_state" }, "get_state");
+        const sessionId = asString(asRecord(stateResponse.data)?.sessionId);
+        if (sessionId === undefined || sessionId === oldSessionId) {
+          return yield* new ProviderNativeSessionError({
+            code: "native",
+            message: `Native ${config.runtime} did not create a distinct forked session.`,
+          });
+        }
+        session.nativeSessionId = sessionId;
+        delete session.nativeHistoryMessages;
+        session.session = {
+          ...session.session,
+          resumeCursor: {
+            kind: "native-session",
+            runtime: config.runtime,
+            sessionId,
+          },
+          updatedAt: nowIso(),
+        };
+        return { sessionId };
       });
 
     const rollbackThread = (
@@ -2410,6 +2538,8 @@ export const makePiFamilyAdapter = (
       readThread,
       listNativeSessions,
       readNativeHistory,
+      renameNativeSession,
+      forkNativeSession,
       rollbackThread,
       captureNativeCheckpoint,
       restoreNativeCheckpoint,

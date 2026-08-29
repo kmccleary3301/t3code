@@ -8,19 +8,22 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
-  listOmpNativeSessions,
-  readOmpNativeHistoryMessages,
-  resolveOmpSessionDirectory,
+  listPiFamilyNativeSessions,
+  readPiFamilyNativeHistoryMessages,
+  resolvePiFamilySessionDirectory,
 } from "./NativeSessionCatalog.ts";
 import type { PiFamilyNativeConfig } from "./NativeAdapter.ts";
 
 const temporaryDirectories: string[] = [];
 
-function config(agentDirectory: string): PiFamilyNativeConfig {
+function config(
+  agentDirectory: string,
+  runtime: PiFamilyNativeConfig["runtime"] = "omp",
+): PiFamilyNativeConfig {
   return {
-    provider: ProviderDriverKind.make("omp"),
-    runtime: "omp",
-    binaryPath: "omp",
+    provider: ProviderDriverKind.make(runtime),
+    runtime,
+    binaryPath: runtime,
     cwd: "/workspace",
     agentDirectory,
     requestTimeoutMs: 1_000,
@@ -28,7 +31,7 @@ function config(agentDirectory: string): PiFamilyNativeConfig {
     maxLineBytes: 1024,
     maxMessageBytes: 4096,
     stderrLimitBytes: 1024,
-    instanceId: ProviderInstanceId.make("omp"),
+    instanceId: ProviderInstanceId.make(runtime),
   };
 }
 
@@ -41,12 +44,18 @@ afterEach(async () => {
 });
 
 describe("NativeSessionCatalog", () => {
-  it("resolves explicit session directories before agent directories", () => {
-    const nativeConfig = {
+  it("resolves explicit and environment session directories first", () => {
+    const explicitConfig = {
       ...config("/agent"),
       launchArguments: ["--session-dir", "/sessions"],
     };
-    expect(resolveOmpSessionDirectory(nativeConfig)).toBe("/sessions");
+    expect(resolvePiFamilySessionDirectory(explicitConfig)).toBe("/sessions");
+
+    const environmentConfig = {
+      ...config("/agent", "pi"),
+      environment: { PI_CODING_AGENT_SESSION_DIR: "/pi-sessions" },
+    };
+    expect(resolvePiFamilySessionDirectory(environmentConfig)).toBe("/pi-sessions");
   });
 
   it.effect("lists only top-level OMP sessions for the requested cwd", () =>
@@ -112,7 +121,7 @@ describe("NativeSessionCatalog", () => {
         ),
       );
 
-      const sessions = yield* listOmpNativeSessions(
+      const sessions = yield* listPiFamilyNativeSessions(
         config(temporaryDirectory),
         ProviderInstanceId.make("omp"),
         "/workspace",
@@ -120,6 +129,7 @@ describe("NativeSessionCatalog", () => {
 
       expect(sessions).toHaveLength(1);
       expect(sessions[0]).toMatchObject({
+        runtime: "omp",
         sessionId: "session-1",
         title: "Existing OMP work",
         model: "gpt-5.6",
@@ -127,13 +137,66 @@ describe("NativeSessionCatalog", () => {
         status: "complete",
       });
 
-      const allSessions = yield* listOmpNativeSessions(
+      const allSessions = yield* listPiFamilyNativeSessions(
         config(temporaryDirectory),
         ProviderInstanceId.make("omp"),
       );
       expect(allSessions.map((session) => session.sessionId).sort()).toEqual([
         "other",
         "session-1",
+      ]);
+    }),
+  );
+
+  it.effect("lists Pi sessions and projects renamed native metadata", () =>
+    Effect.gen(function* () {
+      const temporaryDirectory = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-pi-catalog-")),
+      );
+      temporaryDirectories.push(temporaryDirectory);
+      const sessionsDirectory = NodePath.join(temporaryDirectory, "sessions", "project");
+      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDirectory, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(sessionsDirectory, "pi-session.jsonl"),
+          [
+            {
+              type: "session",
+              id: "pi-session-1",
+              cwd: "/workspace",
+              timestamp: "2026-08-01T12:00:00.000Z",
+            },
+            {
+              type: "message",
+              id: "user-1",
+              timestamp: "2026-08-01T12:00:01.000Z",
+              message: { role: "user", content: "Pi prompt" },
+            },
+            { type: "session_info", name: "Renamed Pi work" },
+          ]
+            .map((line) => JSON.stringify(line))
+            .join("\n") + "\n",
+        ),
+      );
+      const nativeConfig = config(temporaryDirectory, "pi");
+      const sessions = yield* listPiFamilyNativeSessions(
+        nativeConfig,
+        ProviderInstanceId.make("pi"),
+      );
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({
+        runtime: "pi",
+        sessionId: "pi-session-1",
+        title: "Renamed Pi work",
+      });
+      expect(
+        yield* readPiFamilyNativeHistoryMessages(nativeConfig, "pi-session-1", "/workspace"),
+      ).toEqual([
+        {
+          role: "user",
+          text: "Pi prompt",
+          timestamp: "2026-08-01T12:00:01.000Z",
+        },
       ]);
     }),
   );
@@ -208,13 +271,13 @@ describe("NativeSessionCatalog", () => {
         launchArguments: ["--session-dir", temporaryDirectory],
       };
 
-      const sessions = yield* listOmpNativeSessions(
+      const sessions = yield* listPiFamilyNativeSessions(
         nativeConfig,
         ProviderInstanceId.make("omp"),
         "/workspace",
       );
       expect(sessions).toHaveLength(1);
-      const messages = yield* readOmpNativeHistoryMessages(
+      const messages = yield* readPiFamilyNativeHistoryMessages(
         nativeConfig,
         "session-history",
         "/workspace",

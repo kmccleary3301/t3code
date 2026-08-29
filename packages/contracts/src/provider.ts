@@ -75,9 +75,12 @@ export const ProviderNativeSessionStatus = Schema.Literals([
   "unknown",
 ]);
 export type ProviderNativeSessionStatus = typeof ProviderNativeSessionStatus.Type;
+export const ProviderNativeSessionRuntime = Schema.Literals(["pi", "omp"]);
+export type ProviderNativeSessionRuntime = typeof ProviderNativeSessionRuntime.Type;
 
 export const ProviderNativeSessionSummary = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
+  runtime: ProviderNativeSessionRuntime,
   sessionId: TrimmedNonEmptyString,
   cwd: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
@@ -88,7 +91,6 @@ export const ProviderNativeSessionSummary = Schema.Struct({
 });
 export type ProviderNativeSessionSummary = typeof ProviderNativeSessionSummary.Type;
 export const ProviderNativeSessionListRequest = Schema.Struct({
-  projectId: Schema.optional(ProjectId),
   providerInstanceId: ProviderInstanceId,
 });
 export type ProviderNativeSessionListRequest = typeof ProviderNativeSessionListRequest.Type;
@@ -105,20 +107,68 @@ export const ProviderNativeSessionListResult = Schema.Struct({
 export type ProviderNativeSessionListResult = typeof ProviderNativeSessionListResult.Type;
 
 export const ProviderNativeSessionOpenInput = Schema.Struct({
-  projectId: ProjectId,
   providerInstanceId: ProviderInstanceId,
   sessionId: TrimmedNonEmptyString,
 });
 export type ProviderNativeSessionOpenInput = typeof ProviderNativeSessionOpenInput.Type;
 
 export const ProviderNativeSessionOpenResult = Schema.Struct({
+  projectId: ProjectId,
   threadId: ThreadId,
 });
 export type ProviderNativeSessionOpenResult = typeof ProviderNativeSessionOpenResult.Type;
 
+export const ProviderNativeSessionRenameInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  sessionId: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+});
+export type ProviderNativeSessionRenameInput = typeof ProviderNativeSessionRenameInput.Type;
+
+export const ProviderNativeSessionRenameResult = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+});
+export type ProviderNativeSessionRenameResult = typeof ProviderNativeSessionRenameResult.Type;
+
+export const ProviderNativeSessionForkInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  sessionId: TrimmedNonEmptyString,
+});
+export type ProviderNativeSessionForkInput = typeof ProviderNativeSessionForkInput.Type;
+
+export const ProviderNativeSessionForkResult = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  projectId: ProjectId,
+  threadId: ThreadId,
+});
+export type ProviderNativeSessionForkResult = typeof ProviderNativeSessionForkResult.Type;
+
+export const ProviderNativeSessionStopInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  sessionId: TrimmedNonEmptyString,
+});
+export type ProviderNativeSessionStopInput = typeof ProviderNativeSessionStopInput.Type;
+
+export const ProviderNativeSessionStopResult = Schema.Struct({
+  threadId: Schema.optional(ThreadId),
+});
+export type ProviderNativeSessionStopResult = typeof ProviderNativeSessionStopResult.Type;
+
+export const ProviderNativeSessionArchiveInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  sessionId: TrimmedNonEmptyString,
+});
+export type ProviderNativeSessionArchiveInput = typeof ProviderNativeSessionArchiveInput.Type;
+
+export const ProviderNativeSessionArchiveResult = Schema.Struct({
+  threadId: ThreadId,
+});
+export type ProviderNativeSessionArchiveResult = typeof ProviderNativeSessionArchiveResult.Type;
+
 export const ProviderNativeSessionResumeCursor = Schema.Struct({
   kind: Schema.Literal("native-session"),
-  runtime: Schema.Literal("omp"),
+  runtime: ProviderNativeSessionRuntime,
   sessionId: TrimmedNonEmptyString,
 });
 export type ProviderNativeSessionResumeCursor = typeof ProviderNativeSessionResumeCursor.Type;

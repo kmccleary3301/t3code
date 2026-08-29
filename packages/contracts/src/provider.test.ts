@@ -3,8 +3,14 @@ import * as Schema from "effect/Schema";
 
 import {
   ProviderEvent,
+  ProviderNativeSessionArchiveInput,
+  ProviderNativeSessionForkInput,
   ProviderNativeSessionListInput,
   ProviderNativeSessionListRequest,
+  ProviderNativeSessionOpenInput,
+  ProviderNativeSessionRenameInput,
+  ProviderNativeSessionStopInput,
+  ProviderNativeSessionSummary,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
@@ -19,6 +25,22 @@ const decodeProviderNativeSessionListRequest = Schema.decodeUnknownSync(
 );
 const decodeProviderNativeSessionListInput = Schema.decodeUnknownSync(
   ProviderNativeSessionListInput,
+);
+const decodeProviderNativeSessionSummary = Schema.decodeUnknownSync(ProviderNativeSessionSummary);
+const decodeProviderNativeSessionOpenInput = Schema.decodeUnknownSync(
+  ProviderNativeSessionOpenInput,
+);
+const decodeProviderNativeSessionRenameInput = Schema.decodeUnknownSync(
+  ProviderNativeSessionRenameInput,
+);
+const decodeProviderNativeSessionForkInput = Schema.decodeUnknownSync(
+  ProviderNativeSessionForkInput,
+);
+const decodeProviderNativeSessionStopInput = Schema.decodeUnknownSync(
+  ProviderNativeSessionStopInput,
+);
+const decodeProviderNativeSessionArchiveInput = Schema.decodeUnknownSync(
+  ProviderNativeSessionArchiveInput,
 );
 
 function getOptionValue(
@@ -36,6 +58,54 @@ describe("ProviderNativeSessionListRequest", () => {
     expect(decodeProviderNativeSessionListInput({ providerInstanceId: "omp" })).toEqual({
       providerInstanceId: "omp",
     });
+  });
+});
+
+describe("Provider native session management", () => {
+  it("decodes Pi summaries and project-free lifecycle inputs", () => {
+    expect(
+      decodeProviderNativeSessionSummary({
+        providerInstanceId: "pi",
+        runtime: "pi",
+        sessionId: "session-1",
+        cwd: "/workspace",
+        title: "Pi work",
+        createdAt: "2026-08-01T12:00:00.000Z",
+        updatedAt: "2026-08-01T12:01:00.000Z",
+        status: "complete",
+      }).runtime,
+    ).toBe("pi");
+    expect(
+      decodeProviderNativeSessionOpenInput({
+        providerInstanceId: "pi",
+        sessionId: "session-1",
+      }),
+    ).toEqual({ providerInstanceId: "pi", sessionId: "session-1" });
+    expect(
+      decodeProviderNativeSessionRenameInput({
+        providerInstanceId: "pi",
+        sessionId: "session-1",
+        name: "Renamed",
+      }).name,
+    ).toBe("Renamed");
+    expect(
+      decodeProviderNativeSessionForkInput({
+        providerInstanceId: "pi",
+        sessionId: "session-1",
+      }).sessionId,
+    ).toBe("session-1");
+    expect(
+      decodeProviderNativeSessionStopInput({
+        providerInstanceId: "pi",
+        sessionId: "session-1",
+      }).sessionId,
+    ).toBe("session-1");
+    expect(
+      decodeProviderNativeSessionArchiveInput({
+        providerInstanceId: "pi",
+        sessionId: "session-1",
+      }).sessionId,
+    ).toBe("session-1");
   });
 });
 

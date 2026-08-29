@@ -50,10 +50,15 @@ function resolveFromCwd(cwd: string, directory: string): string {
   return NodePath.isAbsolute(directory) ? directory : NodePath.resolve(cwd, directory);
 }
 
-export function resolveOmpSessionDirectory(config: PiFamilyNativeConfig): string {
+export function resolvePiFamilySessionDirectory(config: PiFamilyNativeConfig): string {
   const explicitSessionDirectory = argumentValue(config.launchArguments, "--session-dir");
   if (explicitSessionDirectory !== undefined) {
     return resolveFromCwd(config.cwd, explicitSessionDirectory);
+  }
+
+  const environmentSessionDirectory = config.environment?.PI_CODING_AGENT_SESSION_DIR;
+  if (environmentSessionDirectory !== undefined) {
+    return resolveFromCwd(config.cwd, environmentSessionDirectory);
   }
 
   const agentDirectory = config.agentDirectory ?? config.environment?.PI_CODING_AGENT_DIR;
@@ -61,12 +66,19 @@ export function resolveOmpSessionDirectory(config: PiFamilyNativeConfig): string
     return NodePath.join(resolveFromCwd(config.cwd, agentDirectory), "sessions");
   }
 
-  const profile =
-    argumentValue(config.launchArguments, "--profile") ?? config.environment?.OMP_PROFILE;
-  if (profile !== undefined) {
-    return NodePath.join(NodeOS.homedir(), ".omp", "profiles", profile, "agent", "sessions");
+  if (config.runtime === "omp") {
+    const profile =
+      argumentValue(config.launchArguments, "--profile") ?? config.environment?.OMP_PROFILE;
+    if (profile !== undefined) {
+      return NodePath.join(NodeOS.homedir(), ".omp", "profiles", profile, "agent", "sessions");
+    }
   }
-  return NodePath.join(NodeOS.homedir(), ".omp", "agent", "sessions");
+  return NodePath.join(
+    NodeOS.homedir(),
+    config.runtime === "omp" ? ".omp" : ".pi",
+    "agent",
+    "sessions",
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -198,6 +210,24 @@ function modelSlug(provider: unknown, id: unknown): string | undefined {
     : id;
 }
 
+function sessionTitle(suffix: string): string | undefined {
+  let title: string | undefined;
+  for (const rawLine of suffix.split(/\r?\n/u)) {
+    const record = parseRecord(rawLine.trim());
+    if (record === undefined) continue;
+    const candidate =
+      record.type === "session_info"
+        ? record.name
+        : record.type === "title" || record.type === "title_change"
+          ? record.title
+          : undefined;
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      title = candidate.trim();
+    }
+  }
+  return title;
+}
+
 function sessionModel(suffix: string): string | undefined {
   const lines = suffix.split(/\r?\n/u);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -281,20 +311,12 @@ async function mapConcurrent<A, B>(
   return results;
 }
 
-export function listOmpNativeSessions(
+export function listPiFamilyNativeSessions(
   config: PiFamilyNativeConfig,
   providerInstanceId: ProviderInstanceId,
   cwd?: string,
 ): Effect.Effect<ReadonlyArray<ProviderNativeSessionSummary>, ProviderNativeSessionError> {
-  if (config.runtime !== "omp") {
-    return Effect.fail(
-      new ProviderNativeSessionError({
-        code: "unsupported",
-        message: "Native sessions require OMP",
-      }),
-    );
-  }
-  const root = resolveOmpSessionDirectory(config);
+  const root = resolvePiFamilySessionDirectory(config);
   return Effect.tryPromise({
     try: async () => {
       let paths: readonly string[];
@@ -329,9 +351,14 @@ export function listOmpNativeSessions(
             const model = sessionModel(window.suffix);
             return {
               providerInstanceId,
+              runtime: config.runtime,
               sessionId: header.id,
               cwd: header.cwd,
-              title: header.title ?? fallbackTitle(window.prefix) ?? "Untitled session",
+              title:
+                sessionTitle(window.suffix) ??
+                header.title ??
+                fallbackTitle(window.prefix) ??
+                "Untitled session",
               ...(model !== undefined ? { model } : {}),
               createdAt,
               updatedAt,
@@ -355,7 +382,7 @@ export function listOmpNativeSessions(
     catch: (cause) =>
       new ProviderNativeSessionError({
         code: "native",
-        message: cause instanceof Error ? cause.message : "Failed to list OMP sessions",
+        message: cause instanceof Error ? cause.message : "Failed to list native sessions",
       }),
   });
 }
@@ -410,27 +437,19 @@ async function findSessionFile(
   return matches.find((path): path is string => path !== undefined);
 }
 
-export function readOmpNativeHistoryMessages(
+export function readPiFamilyNativeHistoryMessages(
   config: PiFamilyNativeConfig,
   sessionId: string,
   cwd: string,
 ): Effect.Effect<ReadonlyArray<ProviderNativeHistoryMessage>, ProviderNativeSessionError> {
-  if (config.runtime !== "omp") {
-    return Effect.fail(
-      new ProviderNativeSessionError({
-        code: "unsupported",
-        message: "Native history requires OMP",
-      }),
-    );
-  }
-  const root = resolveOmpSessionDirectory(config);
+  const root = resolvePiFamilySessionDirectory(config);
   return Effect.tryPromise({
     try: async () => {
       const filePath = await findSessionFile(root, sessionId, cwd);
       if (filePath === undefined) {
         throw new ProviderNativeSessionError({
           code: "not_found",
-          message: `OMP session '${sessionId}' was not found in this project.`,
+          message: `${config.runtime.toUpperCase()} session '${sessionId}' was not found in this project.`,
         });
       }
       const nodes = new Map<string, NativeHistoryNode>();

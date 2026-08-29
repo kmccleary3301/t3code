@@ -94,6 +94,8 @@ const makeNativeScript = (
     'const readline = require("node:readline");',
     'const out = value => process.stdout.write(JSON.stringify(value) + "\\n");',
     'let thinkingLevel = "off";',
+    'const sessionFlag = process.argv.includes("--resume") ? "--resume" : process.argv.includes("--session") ? "--session" : undefined;',
+    'let sessionId = sessionFlag ? process.argv[process.argv.indexOf(sessionFlag) + 1] : "test-session";',
   ];
   if (runtime === "omp") {
     lines.push(
@@ -120,7 +122,7 @@ const makeNativeScript = (
               '  if (command.type === "get_capabilities") out({ id: 42, type: "response", command: "get_capabilities", success: true, data: {} });',
             ]
           : []),
-    '  if (command.type === "get_state") out({ id: command.id, type: "response", command: "get_state", success: true, data: { sessionId: process.argv.includes("--resume") ? process.argv[process.argv.indexOf("--resume") + 1] : "test-session", model: ' +
+    '  if (command.type === "get_state") out({ id: command.id, type: "response", command: "get_state", success: true, data: { sessionId, model: ' +
       JSON.stringify(
         runtime === "omp"
           ? {
@@ -139,14 +141,18 @@ const makeNativeScript = (
       " } });",
     '  if (command.type === "set_subagent_subscription") out({ id: command.id, type: "response", command: "set_subagent_subscription", success: true });',
     '  if (command.type === "set_thinking_level") { thinkingLevel = command.level; out({ id: command.id, type: "response", command: "set_thinking_level", success: true }); }',
+    '  if (command.type === "set_session_name") out({ id: command.id, type: "response", command: "set_session_name", success: true });',
     ...(runtime === "omp"
       ? [
-          '  if (command.type === "checkpoint") out({ id: command.id, type: "response", command: "checkpoint", success: true, data: { sessionId: "test-session", checkpointId: "checkpoint-1" } });',
+          '  if (command.type === "checkpoint") out({ id: command.id, type: "response", command: "checkpoint", success: true, data: { sessionId, checkpointId: "checkpoint-1" } });',
           '  if (command.type === "rewind") out({ id: command.id, type: "response", command: "rewind", success: true, data: { checkpointId: command.checkpointId, rewound: true } });',
+          '  if (command.type === "get_branch_messages") out({ id: command.id, type: "response", command: "get_branch_messages", success: true, data: { messages: [{ entryId: "message-1", text: "prompt" }] } });',
+          '  if (command.type === "branch") { sessionId = "forked-session"; out({ id: command.id, type: "response", command: "branch", success: true, data: { text: "prompt", cancelled: false } }); }',
         ]
       : [
-          '  if (command.type === "capture_checkpoint") out({ id: command.id, type: "response", command: "capture_checkpoint", success: true, data: { runtime: "pi", sessionId: "test-session", leafEntryId: "leaf-1" } });',
+          '  if (command.type === "capture_checkpoint") out({ id: command.id, type: "response", command: "capture_checkpoint", success: true, data: { runtime: "pi", sessionId, leafEntryId: "leaf-1" } });',
           '  if (command.type === "restore_checkpoint") out({ id: command.id, type: "response", command: "restore_checkpoint", success: true });',
+          '  if (command.type === "clone") { sessionId = "forked-session"; out({ id: command.id, type: "response", command: "clone", success: true, data: { cancelled: false } }); }',
         ]),
     '  if (command.type === "extension_ui_response" && command.id === "approval-1" && command.confirmed === true) out({ type: "message_update", delta: { text: "confirmed" } });',
     '  if (command.type === "extension_ui_response" && command.id.startsWith("ui-")) out({ type: "message_update", delta: { text: command.id + ":" + String(command.confirmed ?? command.value) } });',
@@ -618,6 +624,40 @@ describe("Pi-family native adapter", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("fails before spawn when the working directory is unavailable", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("pi");
+      const threadId = ThreadId.make("pi-missing-workspace-thread");
+      const instanceId = ProviderInstanceId.make("pi-missing-workspace-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "pi",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+      const error = yield* Effect.flip(
+        adapter.startSession({
+          threadId,
+          provider,
+          providerInstanceId: instanceId,
+          cwd: "/definitely/missing/t3-native-workspace",
+          runtimeMode: "full-access",
+        }),
+      );
+      assert.equal(error._tag, "ProviderAdapterProcessError");
+      if (error._tag === "ProviderAdapterProcessError") {
+        assert.include(error.detail, "working directory");
+      }
+      assert.isFalse(yield* adapter.hasSession(threadId));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("invalidates a partial OMP trace when startup negotiation fails", () =>
     Effect.gen(function* () {
       const provider = ProviderDriverKind.make("omp");
@@ -874,6 +914,15 @@ describe("Pi-family native adapter", () => {
         const checkpoint = yield* captureCheckpoint(threadId);
         assert.notEqual(checkpoint, undefined);
         yield* restoreCheckpoint(threadId, checkpoint);
+        const renameNativeSession = adapter.renameNativeSession;
+        const forkNativeSession = adapter.forkNativeSession;
+        assert.isDefined(renameNativeSession);
+        assert.isDefined(forkNativeSession);
+        if (!renameNativeSession || !forkNativeSession) return;
+        yield* renameNativeSession(threadId, "Renamed native session");
+        assert.deepEqual(yield* forkNativeSession(threadId), {
+          sessionId: "forked-session",
+        });
 
         yield* adapter.stopSession(threadId);
         assert.equal(yield* adapter.hasSession(threadId), false);
@@ -928,6 +977,57 @@ describe("Pi-family native adapter", () => {
       assert.deepEqual(session.resumeCursor, {
         kind: "native-session",
         runtime: "omp",
+        sessionId: "existing-session",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.effect("resumes the exact Pi native session id", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("pi");
+      const instanceId = ProviderInstanceId.make("pi-native-resume-instance");
+      const threadId = ThreadId.make("pi-native-resume-thread");
+      const script = [
+        'if (process.argv.filter((argument) => argument === "--session").length !== 1 || !process.argv.includes("existing-session") || process.argv.includes("stale-session") || process.argv.includes("--session-id") || process.argv.includes("--fork")) process.exit(71);',
+        makeNativeScript("pi"),
+      ].join("\n");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "pi",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: [
+          "-e",
+          script,
+          "--",
+          "--session",
+          "stale-session",
+          "--session-id",
+          "stale-session",
+          "--fork",
+          "stale-session",
+        ],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        resumeCursor: {
+          kind: "native-session",
+          runtime: "pi",
+          sessionId: "existing-session",
+        },
+        runtimeMode: "full-access",
+      });
+      assert.deepEqual(session.resumeCursor, {
+        kind: "native-session",
+        runtime: "pi",
         sessionId: "existing-session",
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

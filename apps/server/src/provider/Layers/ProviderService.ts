@@ -1116,6 +1116,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     }
     return yield* routed.adapter.readNativeHistory(routed.threadId, input.cursor);
   });
+  const renameNativeSession: ProviderServiceMethod<"renameNativeSession"> = Effect.fn(
+    "renameNativeSession",
+  )(function* (input) {
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.renameNativeSession",
+      allowRecovery: false,
+    });
+    if (routed.adapter.renameNativeSession === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "unsupported",
+        message: `Provider '${routed.adapter.provider}' cannot rename native sessions.`,
+      });
+    }
+    yield* routed.adapter.renameNativeSession(routed.threadId, input.name);
+  });
+
+  const forkNativeSession: ProviderServiceMethod<"forkNativeSession"> = Effect.fn(
+    "forkNativeSession",
+  )(function* (input) {
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.forkNativeSession",
+      allowRecovery: false,
+    });
+    if (routed.adapter.forkNativeSession === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "unsupported",
+        message: `Provider '${routed.adapter.provider}' cannot fork native sessions.`,
+      });
+    }
+    return yield* routed.adapter.forkNativeSession(routed.threadId);
+  });
 
   const rollbackConversation: ProviderServiceMethod<"rollbackConversation"> = Effect.fn(
     "rollbackConversation",
@@ -1276,6 +1309,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getInstanceInfo,
     listNativeSessions,
     readNativeHistory,
+    renameNativeSession,
+    forkNativeSession,
     rollbackConversation,
     captureNativeCheckpoint,
     restoreNativeCheckpoint,

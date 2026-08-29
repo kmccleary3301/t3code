@@ -1,6 +1,9 @@
+import * as NodeCrypto from "node:crypto";
+
 import {
   CommandId,
   MessageId,
+  ProjectId,
   ProviderNativeSessionError,
   ProviderNativeSessionResumeCursor,
   ThreadId,
@@ -9,10 +12,15 @@ import {
   type OrchestrationLatestTurn,
   type OrchestrationMessage,
   type OrchestrationThread,
+  type ProviderNativeSessionArchiveInput,
+  type ProviderNativeSessionForkInput,
   type ProviderNativeSessionListRequest,
   type ProviderNativeSessionOpenInput,
+  type ProviderNativeSessionRenameInput,
+  type ProviderNativeSessionStopInput,
   type ProviderNativeSessionSummary,
 } from "@t3tools/contracts";
+import * as Path from "effect/Path";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -45,12 +53,26 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> | undefined
     : undefined;
 }
 
-function historyWasImported(runtimePayload: unknown): boolean {
-  return asRecord(runtimePayload)?.nativeHistoryImported === true;
+function nativeProjectBaseId(workspaceRoot: string): ProjectId {
+  const digest = NodeCrypto.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 24);
+  return ProjectId.make(`native-project:${digest}`);
 }
 
 function nativeThreadBaseId(providerInstanceId: string, sessionId: string): string {
   return `native:${providerInstanceId}:${sessionId}`;
+}
+
+export function nativeThreadHasActiveTurn(
+  thread:
+    | {
+        readonly session: {
+          readonly status: string;
+          readonly activeTurnId: unknown;
+        } | null;
+      }
+    | undefined,
+): boolean {
+  return thread?.session?.status === "running" && thread.session.activeTurnId != null;
 }
 
 function chooseModelSelection(
@@ -169,39 +191,26 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const path = yield* Path.Path;
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const openSemaphore = yield* Semaphore.make(1);
 
   const listInternal = Effect.fn("NativeSessionCoordinator.listInternal")(function* (
     input: ProviderNativeSessionListRequest,
   ) {
-    const readModel = yield* snapshots.getCommandReadModel();
-    let cwd: string | undefined;
-    if (input.projectId !== undefined) {
-      const project = readModel.projects.find(
-        (candidate) => candidate.id === input.projectId && candidate.deletedAt === null,
-      );
-      if (project === undefined) {
-        return yield* new ProviderNativeSessionError({
-          code: "not_found",
-          message: `Project '${input.projectId}' was not found.`,
-        });
-      }
-      cwd = project.workspaceRoot;
-    }
     const providers = yield* providerRegistry.getProviders;
     const provider = providers.find(
       (candidate) => candidate.instanceId === input.providerInstanceId,
     );
     if (
       provider === undefined ||
-      provider.driver !== "omp" ||
+      (provider.driver !== "pi" && provider.driver !== "omp") ||
       !provider.enabled ||
       !provider.installed
     ) {
       return yield* new ProviderNativeSessionError({
         code: "unsupported",
-        message: `Provider '${input.providerInstanceId}' is not an available OMP instance.`,
+        message: `Provider '${input.providerInstanceId}' is not an available Pi-family instance.`,
       });
     }
     const listNativeSessions = providerService.listNativeSessions;
@@ -211,11 +220,9 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
         message: "This server has no native session catalog.",
       });
     }
-    const sessions =
-      cwd === undefined
-        ? yield* listNativeSessions({ providerInstanceId: input.providerInstanceId })
-        : yield* listNativeSessions({ providerInstanceId: input.providerInstanceId, cwd });
-    return { sessions };
+    return {
+      sessions: yield* listNativeSessions({ providerInstanceId: input.providerInstanceId }),
+    };
   });
 
   const importHistory = Effect.fn("NativeSessionCoordinator.importHistory")(function* (
@@ -227,6 +234,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     let messageOffset = 0;
     let turnOffset = 0;
     let currentTurn: ImportedTurn | null = null;
+    let totalMessages = 0;
     do {
       const readNativeHistory = providerService.readNativeHistory;
       if (readNativeHistory === undefined) {
@@ -239,6 +247,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
         threadId,
         ...(cursor === undefined ? {} : { cursor }),
       });
+      totalMessages = page.totalMessages;
       const imported = appendNativeHistoryPage({
         sessionId,
         messages: page.messages,
@@ -261,38 +270,89 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       cursor = page.nextCursor;
       pageIndex += 1;
     } while (cursor !== undefined);
+    return totalMessages;
   });
 
   const openInternal = Effect.fn("NativeSessionCoordinator.openInternal")(function* (
     input: ProviderNativeSessionOpenInput,
   ) {
-    const listed = yield* listInternal({
-      projectId: input.projectId,
-      providerInstanceId: input.providerInstanceId,
-    });
+    const listed = yield* listInternal({ providerInstanceId: input.providerInstanceId });
     const summary = listed.sessions.find((session) => session.sessionId === input.sessionId);
     if (summary === undefined) {
       return yield* new ProviderNativeSessionError({
         code: "not_found",
-        message: `OMP session '${input.sessionId}' was not found in this project.`,
+        message: `Native session '${input.sessionId}' was not found.`,
       });
     }
 
-    const readModel = yield* snapshots.getCommandReadModel();
-    const project = readModel.projects.find(
-      (candidate) => candidate.id === input.projectId && candidate.deletedAt === null,
+    const workspaceRoot = path.resolve(summary.cwd);
+    let readModel = yield* snapshots.getCommandReadModel();
+    const providers = yield* providerRegistry.getProviders;
+    const provider = providers.find(
+      (candidate) => candidate.instanceId === input.providerInstanceId,
     );
-    if (project === undefined) {
+    const existingProject = Option.getOrUndefined(
+      yield* snapshots.getActiveProjectByWorkspaceRoot(workspaceRoot),
+    );
+    const provisionalModelSelection = chooseModelSelection(
+      summary,
+      existingProject?.defaultModelSelection ?? null,
+      provider?.models ?? [],
+    );
+    if (provisionalModelSelection === undefined) {
       return yield* new ProviderNativeSessionError({
-        code: "not_found",
-        message: `Project '${input.projectId}' was not found.`,
+        code: "invalid",
+        message: `Native session '${input.sessionId}' has no recoverable model.`,
       });
     }
+
+    let project = existingProject;
+    if (project === undefined) {
+      const baseProjectId = nativeProjectBaseId(workspaceRoot);
+      const collided = readModel.projects.some((candidate) => candidate.id === baseProjectId);
+      const projectId = collided
+        ? ProjectId.make(`${baseProjectId}:${DateTime.toEpochMillis(yield* DateTime.now)}`)
+        : baseProjectId;
+      const createdAt = DateTime.formatIso(yield* DateTime.now);
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make(`native-project-create:${projectId}`),
+        projectId,
+        title: path.basename(workspaceRoot) || "project",
+        workspaceRoot,
+        defaultModelSelection: provisionalModelSelection,
+        createdAt,
+      });
+      readModel = yield* snapshots.getCommandReadModel();
+      project = readModel.projects.find(
+        (candidate) => candidate.id === projectId && candidate.deletedAt === null,
+      );
+      if (project === undefined) {
+        return yield* new ProviderNativeSessionError({
+          code: "native",
+          message: `Native session project '${projectId}' was not created.`,
+        });
+      }
+    }
+
+    const modelSelection = chooseModelSelection(
+      summary,
+      project.defaultModelSelection,
+      provider?.models ?? [],
+    );
+    if (modelSelection === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "invalid",
+        message: `Native session '${input.sessionId}' has no recoverable model.`,
+      });
+    }
+
     const bindings = yield* directory.listBindings();
     const existingBinding = bindings.find(
       (binding) =>
         binding.providerInstanceId === input.providerInstanceId &&
         isNativeResumeCursor(binding.resumeCursor) &&
+        binding.resumeCursor.runtime === summary.runtime &&
         binding.resumeCursor.sessionId === input.sessionId,
     );
     const boundThread =
@@ -307,47 +367,34 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     const deterministicThread = readModel.threads.find(
       (thread) => thread.id === baseThreadId && thread.deletedAt === null,
     );
-    let thread: Pick<OrchestrationThread, "id" | "modelSelection"> | undefined =
+    let thread: Pick<OrchestrationThread, "id" | "modelSelection" | "archivedAt"> | undefined =
       boundThread ?? deterministicThread;
-    const providers = yield* providerRegistry.getProviders;
-    const provider = providers.find(
-      (candidate) => candidate.instanceId === input.providerInstanceId,
-    );
-    const modelSelection = chooseModelSelection(
-      summary,
-      project.defaultModelSelection,
-      provider?.models ?? [],
-    );
-    if (modelSelection === undefined) {
-      return yield* new ProviderNativeSessionError({
-        code: "invalid",
-        message: `OMP session '${input.sessionId}' has no recoverable model.`,
-      });
-    }
 
     if (thread === undefined) {
       const collided = readModel.threads.some((candidate) => candidate.id === baseThreadId);
       const threadId = collided
         ? ThreadId.make(`${baseThreadId}:${DateTime.toEpochMillis(yield* DateTime.now)}`)
         : baseThreadId;
-      const createdAt = summary.createdAt;
       yield* engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make(`native-thread-create:${threadId}`),
         threadId,
-        projectId: input.projectId,
+        projectId: project.id,
         title: summary.title,
         modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
         worktreePath: null,
-        createdAt,
+        createdAt: summary.createdAt,
       });
-      thread = {
-        id: threadId,
-        modelSelection,
-      };
+      thread = { id: threadId, modelSelection, archivedAt: null };
+    } else if (thread.archivedAt !== null) {
+      yield* engine.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make(`native-thread-unarchive:${thread.id}`),
+        threadId: thread.id,
+      });
     }
 
     const threadId = thread.id;
@@ -358,6 +405,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       activeSession !== undefined &&
       (activeSession.providerInstanceId !== input.providerInstanceId ||
         !isNativeResumeCursor(activeSession.resumeCursor) ||
+        activeSession.resumeCursor.runtime !== summary.runtime ||
         activeSession.resumeCursor.sessionId !== input.sessionId)
     ) {
       return yield* new ProviderNativeSessionError({
@@ -370,12 +418,12 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       (yield* providerService.startSession(threadId, {
         threadId,
         providerInstanceId: input.providerInstanceId,
-        cwd: summary.cwd,
+        cwd: workspaceRoot,
         title: summary.title,
         modelSelection,
         resumeCursor: {
           kind: "native-session",
-          runtime: "omp",
+          runtime: summary.runtime,
           sessionId: input.sessionId,
         },
         runtimeMode: "full-access",
@@ -390,26 +438,122 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       });
     }
 
-    const nativeHistoryImported =
-      existingBinding?.threadId === threadId && historyWasImported(existingBinding.runtimePayload);
-    if (!nativeHistoryImported) {
-      yield* importHistory(threadId, input.sessionId);
-      const currentBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
-      if (currentBinding !== undefined) {
-        const runtimePayload = asRecord(currentBinding.runtimePayload);
-        yield* directory.upsert({
-          ...currentBinding,
-          runtimePayload: { ...runtimePayload, nativeHistoryImported: true },
-        });
-      }
+    const nativeHistoryMessageCount = yield* importHistory(threadId, input.sessionId);
+    const currentBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+    if (currentBinding !== undefined) {
+      const runtimePayload = asRecord(currentBinding.runtimePayload);
+      yield* directory.upsert({
+        ...currentBinding,
+        runtimePayload: { ...runtimePayload, nativeHistoryMessageCount },
+      });
     }
+    return { projectId: project.id, threadId };
+  });
+  const findBoundThread = Effect.fn("NativeSessionCoordinator.findBoundThread")(function* (input: {
+    readonly providerInstanceId: string;
+    readonly sessionId: string;
+  }) {
+    const bindings = yield* directory.listBindings();
+    return bindings.find(
+      (binding) =>
+        binding.providerInstanceId === input.providerInstanceId &&
+        isNativeResumeCursor(binding.resumeCursor) &&
+        binding.resumeCursor.sessionId === input.sessionId,
+    )?.threadId;
+  });
+
+  const renameInternal = Effect.fn("NativeSessionCoordinator.renameInternal")(function* (
+    input: ProviderNativeSessionRenameInput,
+  ) {
+    const renameNativeSession = providerService.renameNativeSession;
+    if (renameNativeSession === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "unsupported",
+        message: "This server cannot rename native sessions.",
+      });
+    }
+    const opened = yield* openInternal(input);
+    yield* renameNativeSession({ threadId: opened.threadId, name: input.name });
+    const nameDigest = NodeCrypto.createHash("sha256")
+      .update(input.name)
+      .digest("hex")
+      .slice(0, 16);
+    yield* engine.dispatch({
+      type: "thread.meta.update",
+      commandId: CommandId.make(`native-thread-rename:${opened.threadId}:${nameDigest}`),
+      threadId: opened.threadId,
+      title: input.name,
+    });
+    return { sessionId: input.sessionId, title: input.name };
+  });
+
+  const forkInternal = Effect.fn("NativeSessionCoordinator.forkInternal")(function* (
+    input: ProviderNativeSessionForkInput,
+  ) {
+    const forkNativeSession = providerService.forkNativeSession;
+    if (forkNativeSession === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "unsupported",
+        message: "This server cannot fork native sessions.",
+      });
+    }
+    const source = yield* openInternal(input);
+    const forked = yield* forkNativeSession({ threadId: source.threadId });
+    yield* providerService.stopSession({ threadId: source.threadId });
+    const opened = yield* openInternal({
+      providerInstanceId: input.providerInstanceId,
+      sessionId: forked.sessionId,
+    });
+    return { sessionId: forked.sessionId, ...opened };
+  });
+
+  const stopInternal = Effect.fn("NativeSessionCoordinator.stopInternal")(function* (
+    input: ProviderNativeSessionStopInput,
+  ) {
+    const threadId = yield* findBoundThread(input);
+    if (threadId === undefined) return {};
+    yield* providerService.stopSession({ threadId });
     return { threadId };
+  });
+
+  const archiveInternal = Effect.fn("NativeSessionCoordinator.archiveInternal")(function* (
+    input: ProviderNativeSessionArchiveInput,
+  ) {
+    const opened = yield* openInternal(input);
+    const currentThread = (yield* snapshots.getCommandReadModel()).threads.find(
+      (thread) => thread.id === opened.threadId && thread.deletedAt === null,
+    );
+    if (nativeThreadHasActiveTurn(currentThread)) {
+      return yield* new ProviderNativeSessionError({
+        code: "invalid",
+        message: "This native session is working. Interrupt it before archiving the thread.",
+      });
+    }
+    yield* providerService.stopSession({ threadId: opened.threadId });
+    yield* engine.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make(`native-thread-archive:${opened.threadId}`),
+      threadId: opened.threadId,
+    });
+    return { threadId: opened.threadId };
   });
 
   return {
     list: (input) => listInternal(input).pipe(Effect.mapError(asNativeSessionError)),
     open: (input) =>
       openSemaphore.withPermits(1)(openInternal(input)).pipe(Effect.mapError(asNativeSessionError)),
+    rename: (input) =>
+      openSemaphore
+        .withPermits(1)(renameInternal(input))
+        .pipe(Effect.mapError(asNativeSessionError)),
+    fork: (input) =>
+      openSemaphore.withPermits(1)(forkInternal(input)).pipe(Effect.mapError(asNativeSessionError)),
+    stop: (input) =>
+      openSemaphore.withPermits(1)(stopInternal(input)).pipe(Effect.mapError(asNativeSessionError)),
+    archive: (input) =>
+      openSemaphore
+        .withPermits(1)(archiveInternal(input))
+        .pipe(Effect.mapError(asNativeSessionError)),
   } satisfies NativeSessionCoordinator.NativeSessionCoordinatorShape;
 });
 

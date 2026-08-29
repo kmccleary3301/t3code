@@ -620,7 +620,7 @@ function OpenCommandPaletteDialog(props: {
     }
     return map;
   }, [environments, primaryEnvironmentId, providers]);
-  const ompSessionTargets = useMemo(() => {
+  const nativeSessionTargets = useMemo(() => {
     const targets: Array<{
       readonly environmentId: EnvironmentId;
       readonly environmentLabel: string;
@@ -632,7 +632,12 @@ function OpenCommandPaletteDialog(props: {
         environment.serverConfig?.providers ??
         (environment.environmentId === primaryEnvironmentId ? providers : []);
       for (const entry of deriveProviderInstanceEntries(environmentProviders)) {
-        if (entry.driverKind !== "omp" || !entry.enabled || !entry.installed) continue;
+        if (
+          (entry.driverKind !== "pi" && entry.driverKind !== "omp") ||
+          !entry.enabled ||
+          !entry.installed
+        )
+          continue;
         targets.push({
           environmentId: environment.environmentId,
           environmentLabel: environment.label,
@@ -1207,7 +1212,7 @@ function OpenCommandPaletteDialog(props: {
 
   const openNativeSessionPicker = useCallback(async () => {
     const results = await Promise.all(
-      ompSessionTargets.map(async (target) => ({
+      nativeSessionTargets.map(async (target) => ({
         target,
         result: await loadNativeSessions({
           environmentId: target.environmentId,
@@ -1253,7 +1258,7 @@ function OpenCommandPaletteDialog(props: {
               kind: "action",
               value: "native-session:none",
               searchTerms: [],
-              title: "No OMP sessions found",
+              title: "No Pi or OMP sessions found",
               icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
               disabled: true,
               run: async () => {},
@@ -1286,46 +1291,9 @@ function OpenCommandPaletteDialog(props: {
               icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
               keepOpen: true,
               run: async () => {
-                const existingProject = findProjectByPath(
-                  projects.filter((project) => project.environmentId === environmentId),
-                  session.cwd,
-                );
-                let projectId = existingProject?.id;
-                if (projectId === undefined) {
-                  projectId = newProjectId();
-                  const targetEnvironmentProviders =
-                    environments.find((environment) => environment.environmentId === environmentId)
-                      ?.serverConfig?.providers ??
-                    (environmentId === primaryEnvironmentId ? providers : []);
-                  const createResult = await createProject({
-                    environmentId,
-                    input: {
-                      projectId,
-                      title: workspaceTitle,
-                      workspaceRoot: session.cwd,
-                      defaultModelSelection: resolveDefaultProviderModelSelection(
-                        targetEnvironmentProviders,
-                        null,
-                      ),
-                    },
-                  });
-                  if (createResult._tag === "Failure") {
-                    if (!isAtomCommandInterrupted(createResult)) {
-                      toastManager.add(
-                        stackedThreadToast({
-                          type: "error",
-                          title: `Could not add ${workspaceTitle}`,
-                          description: errorMessage(squashAtomCommandFailure(createResult)),
-                        }),
-                      );
-                    }
-                    return;
-                  }
-                }
                 const result = await openNativeSession({
                   environmentId,
                   input: {
-                    projectId,
                     providerInstanceId: entry.instanceId,
                     sessionId: session.sessionId,
                   },
@@ -1335,7 +1303,7 @@ function OpenCommandPaletteDialog(props: {
                     toastManager.add(
                       stackedThreadToast({
                         type: "error",
-                        title: "Could not open OMP session",
+                        title: "Could not open native session",
                         description: errorMessage(squashAtomCommandFailure(result)),
                       }),
                     );
@@ -1354,18 +1322,13 @@ function OpenCommandPaletteDialog(props: {
           });
     pushPaletteView({
       addonIcon: <HistoryIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "native-sessions", label: "OMP sessions", items }],
+      groups: [{ value: "native-sessions", label: "Native sessions", items }],
     });
   }, [
-    createProject,
-    environments,
     loadNativeSessions,
     navigate,
-    ompSessionTargets,
+    nativeSessionTargets,
     openNativeSession,
-    primaryEnvironmentId,
-    projects,
-    providers,
     pushPaletteView,
     setOpen,
   ]);
@@ -1727,12 +1690,12 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (ompSessionTargets.length > 0) {
+  if (nativeSessionTargets.length > 0) {
     actionItems.push({
       kind: "action",
-      value: "action:open-omp-session",
-      searchTerms: ["open", "resume", "omp", "oh my pi", "native", "session", "history"],
-      title: "Open OMP session",
+      value: "action:open-native-session",
+      searchTerms: ["open", "resume", "pi", "omp", "oh my pi", "native", "session", "history"],
+      title: "Open native session",
       icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: openNativeSessionPicker,

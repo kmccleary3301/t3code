@@ -107,6 +107,15 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly cursor?: string;
   }) => Effect.Effect<ProviderNativeHistoryPage, ProviderServiceError>;
+  readonly renameNativeSession?: (input: {
+    readonly threadId: ThreadId;
+    readonly name: string;
+  }) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly forkNativeSession?: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<{ readonly sessionId: string }, ProviderServiceError>;
+
   /**
    * Roll back provider conversation state by a number of turns.
    */
