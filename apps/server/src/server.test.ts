@@ -10336,6 +10336,9 @@ const runNativeHttpParityScenario = (
         30_000,
       );
     }
+    // Native runtimes may emit trailing frames after terminal turn state.
+    // Let stdout ingestion enqueue them before placing reactor drain markers.
+    yield* Effect.sleep("250 millis");
     yield* harness.drainProviderRuntime;
     yield* harness.drainCheckpointReactor;
     const persistedEvents = yield* harness.engine
