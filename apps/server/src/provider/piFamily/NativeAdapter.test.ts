@@ -930,6 +930,41 @@ describe("Pi-family native adapter", () => {
     );
   }
 
+  it.effect("preserves the parent environment when native overrides are configured", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("pi");
+      const instanceId = ProviderInstanceId.make("pi-environment-instance");
+      const threadId = ThreadId.make("pi-environment-thread");
+      const script = [
+        'if (!process.env.PATH || process.env.T3_NATIVE_ENV_TEST !== "configured") process.exit(71);',
+        makeNativeScript("pi"),
+      ].join("\n");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "pi",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", script, "--"],
+        environment: { T3_NATIVE_ENV_TEST: "configured" },
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      assert.equal(session.status, "ready");
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("resumes the exact OMP native session id", () =>
     Effect.gen(function* () {
       const provider = ProviderDriverKind.make("omp");

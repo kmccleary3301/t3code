@@ -1635,6 +1635,7 @@ export const makePiFamilyAdapter = (
           .spawn(
             ChildProcess.make(spawnCommand.command, spawnCommand.args, {
               env: environment,
+              extendEnv: true,
               cwd,
               shell: spawnCommand.shell,
               stdin: { stream: "pipe", endOnDone: false },

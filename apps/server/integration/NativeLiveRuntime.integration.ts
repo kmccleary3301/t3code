@@ -1259,7 +1259,7 @@ export const writeNativeLiveExtension = (
           "export default function (pi) {",
           '  pi.on("before_agent_start", async (event, ctx) => {',
           '    if (event.prompt.includes("NATIVE-MATRIX-UI")) {',
-          '      const accepted = await ctx.ui.confirm("Native matrix confirmation", "Accept the portable UI branch?", { timeout: 500 });',
+          '      const accepted = await ctx.ui.confirm("Native matrix confirmation", "Accept the portable UI branch?", { timeout: 5000 });',
           '      ctx.ui.notify(accepted ? "NATIVE-MATRIX-UI-OK" : "NATIVE-MATRIX-UI-CANCELLED", "info");',
           "    }",
           '    if (event.prompt.includes("NATIVE-MATRIX-TASK")) {',
