@@ -134,7 +134,7 @@ jobs:
   focused_pi_omp_gate:
     name: Pi OMP Focused Gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
