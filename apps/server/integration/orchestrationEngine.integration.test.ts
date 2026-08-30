@@ -1917,7 +1917,7 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                       compactionThreadId,
                     );
                     // Let OMP project compaction before the harness starts polling SQLite.
-                    yield* Effect.sleep("5 seconds");
+                    yield* Effect.sleep("15 seconds");
                     const compactedThread = yield* harness.waitForThread(
                       compactionThreadId,
                       (entry) =>
