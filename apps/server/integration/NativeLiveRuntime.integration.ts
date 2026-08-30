@@ -309,10 +309,10 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
         const toolArguments = bashToolTurn
           ? '{"command":"printf NATIVE-MATRIX-TOOL-OK"}'
           : parityTaskTurn
-            ? '{"name":"MatrixParityChild","agent":"task","task":"NATIVE-MATRIX-SUBAGENT-PARITY-CHILD"}'
+            ? '{"context":"Native parity task.","tasks":[{"name":"MatrixParityChild","task":"NATIVE-MATRIX-SUBAGENT-PARITY-CHILD"}]}'
             : parentTaskTurn
-              ? '{"name":"MatrixChild","agent":"task","task":"NATIVE-MATRIX-SUBAGENT-CHILD"}'
-              : '{"name":"MatrixGrandchild","agent":"sonic","task":"NATIVE-MATRIX-SUBAGENT-GRANDCHILD-HOLD"}';
+              ? '{"context":"Native nested task.","tasks":[{"name":"MatrixChild","task":"NATIVE-MATRIX-SUBAGENT-CHILD"}]}'
+              : '{"context":"Native nested child task.","tasks":[{"name":"MatrixGrandchild","agent":"sonic","task":"NATIVE-MATRIX-SUBAGENT-GRANDCHILD-HOLD"}]}';
         const marker = hasToolResult
           ? "NATIVE-MATRIX-TOOL-OK"
           : message.includes("RESTORED")
