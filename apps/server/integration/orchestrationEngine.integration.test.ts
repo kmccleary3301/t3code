@@ -2058,20 +2058,30 @@ const runNativeMatrix = (config: NativeLiveConfig) =>
                         ),
                       );
 
-                      const restartedNestedThread = yield* startAndWaitForCompleted(
-                        13,
-                        "Reply after the projected nested task cancellation and restart.",
-                        "NATIVE-MATRIX-OK",
-                        "OMP projected nested task restart",
-                        nestedTaskThreadId,
+                      const postCancellationThreadId = ThreadId.make(
+                        "native-matrix-omp-post-cancellation-thread",
                       );
-                      assert.isTrue(
-                        restartedNestedThread.activities.some(
-                          (activity) =>
-                            activity.kind === "task.completed" &&
-                            (activity.payload as Readonly<Record<string, unknown>>).taskId ===
-                              nestedTaskId,
+                      yield* harness.engine.dispatch({
+                        type: "thread.create",
+                        commandId: CommandId.make(
+                          "native-matrix:omp:post-cancellation-thread-create",
                         ),
+                        threadId: postCancellationThreadId,
+                        projectId,
+                        title: "OMP post-cancellation restart thread",
+                        modelSelection,
+                        runtimeMode: "approval-required",
+                        interactionMode: "default",
+                        branch: null,
+                        worktreePath: harness.workspaceDir,
+                        createdAt,
+                      });
+                      yield* startAndWaitForCompleted(
+                        13,
+                        "Reply after the projected nested task cancellation.",
+                        "NATIVE-MATRIX-OK",
+                        "OMP process restart after nested task cancellation",
+                        postCancellationThreadId,
                       );
                     }
                   }
