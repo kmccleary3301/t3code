@@ -111,6 +111,7 @@ export function nativeReplayLaunchArguments(
     "  const command = JSON.parse(line);",
     '  if (command.type === "negotiate_protocol") { out({ id: command.id, type: "response", command: "negotiate_protocol", success: true, data: { protocolVersion: 2 } }); return; }',
     '  if (command.type === "get_capabilities") { out({ id: command.id, type: "response", command: "get_capabilities", success: true, data: capabilities }); return; }',
+    '  if (command.type === "get_state") { out({ id: command.id, type: "response", command: "get_state", success: true, data: { sessionId: "replay-session", model: { provider: runtime, id: "replay-model" } } }); return; }',
     '  if (command.type === "set_subagent_subscription") { out({ id: command.id, type: "response", command: "set_subagent_subscription", success: true }); return; }',
     '  if (command.type === "set_model") { out({ id: command.id, type: "response", command: "set_model", success: true }); return; }',
     '  if (command.type === "prompt") {',
