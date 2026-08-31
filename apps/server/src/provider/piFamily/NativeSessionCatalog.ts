@@ -18,12 +18,19 @@ import * as Option from "effect/Option";
 import { ProviderNativeSessionError } from "@t3tools/contracts";
 import type { ProviderNativeHistoryMessage } from "../Services/ProviderAdapter.ts";
 
-import type { PiFamilyNativeConfig } from "./NativeAdapter.ts";
+import type { PiFamilyRuntimeKind } from "./protocol.ts";
 
 const SESSION_PREFIX_BYTES = 16 * 1024;
 const SESSION_SUFFIX_BYTES = 32 * 1024;
 const isNativeSessionError = Schema.is(ProviderNativeSessionError);
 const MAX_SESSION_FILES = 2_000;
+export interface PiFamilySessionCatalogConfig {
+  readonly runtime: PiFamilyRuntimeKind;
+  readonly cwd: string;
+  readonly agentDirectory?: string;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly launchArguments?: readonly string[];
+}
 
 type SessionHeader = {
   readonly id: string;
@@ -50,7 +57,7 @@ function resolveFromCwd(cwd: string, directory: string): string {
   return NodePath.isAbsolute(directory) ? directory : NodePath.resolve(cwd, directory);
 }
 
-export function resolvePiFamilySessionDirectory(config: PiFamilyNativeConfig): string {
+export function resolvePiFamilySessionDirectory(config: PiFamilySessionCatalogConfig): string {
   const explicitSessionDirectory = argumentValue(config.launchArguments, "--session-dir");
   if (explicitSessionDirectory !== undefined) {
     return resolveFromCwd(config.cwd, explicitSessionDirectory);
@@ -246,7 +253,9 @@ function sessionModel(suffix: string): string | undefined {
   return undefined;
 }
 
-async function readWindow(filePath: string): Promise<{ prefix: string; suffix: string }> {
+async function readWindow(
+  filePath: string,
+): Promise<{ prefix: string; suffix: string; stat: NodeFS.Stats }> {
   const handle = await NodeFSP.open(filePath, "r");
   try {
     const stat = await handle.stat();
@@ -259,6 +268,7 @@ async function readWindow(filePath: string): Promise<{ prefix: string; suffix: s
     return {
       prefix: prefixBuffer.toString("utf8"),
       suffix: suffixBuffer.toString("utf8"),
+      stat,
     };
   } finally {
     await handle.close();
@@ -310,70 +320,95 @@ async function mapConcurrent<A, B>(
   await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, () => worker()));
   return results;
 }
+interface SessionCatalogEntry {
+  readonly filePath: string;
+  readonly header: SessionHeader;
+  readonly prefix: string;
+  readonly suffix: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+async function readSessionCatalogEntry(filePath: string): Promise<SessionCatalogEntry | undefined> {
+  try {
+    const window = await readWindow(filePath);
+    const header = parseSessionHeader(window.prefix);
+    if (header === undefined) return undefined;
+    const createdAt =
+      isoTimestamp(header.timestamp) ??
+      isoTimestamp(window.stat.birthtimeMs) ??
+      isoTimestamp(window.stat.ctimeMs);
+    const updatedAt = isoTimestamp(window.stat.mtimeMs);
+    if (createdAt === undefined || updatedAt === undefined) return undefined;
+    return {
+      filePath,
+      header,
+      prefix: window.prefix,
+      suffix: window.suffix,
+      createdAt,
+      updatedAt,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function discoverSessionCatalogEntries(root: string): Promise<SessionCatalogEntry[]> {
+  const paths = await discoverSessionFiles(root);
+  const entries = await mapConcurrent(paths, 16, readSessionCatalogEntry);
+  return entries.filter((entry): entry is SessionCatalogEntry => entry !== undefined);
+}
+
+function compareSessionCatalogEntries(
+  left: SessionCatalogEntry,
+  right: SessionCatalogEntry,
+): number {
+  return (
+    right.updatedAt.localeCompare(left.updatedAt) || left.filePath.localeCompare(right.filePath)
+  );
+}
 
 export function listPiFamilyNativeSessions(
-  config: PiFamilyNativeConfig,
+  config: PiFamilySessionCatalogConfig,
   providerInstanceId: ProviderInstanceId,
   cwd?: string,
 ): Effect.Effect<ReadonlyArray<ProviderNativeSessionSummary>, ProviderNativeSessionError> {
   const root = resolvePiFamilySessionDirectory(config);
   return Effect.tryPromise({
     try: async () => {
-      let paths: readonly string[];
+      let entries: SessionCatalogEntry[];
       try {
-        paths = await discoverSessionFiles(root);
+        entries = await discoverSessionCatalogEntries(root);
       } catch (error) {
         if (asRecord(error)?.code === "ENOENT") return [];
         throw error;
       }
-      const summaries = await mapConcurrent(
-        paths,
-        16,
-        async (filePath): Promise<ProviderNativeSessionSummary | undefined> => {
-          try {
-            const [window, stat] = await Promise.all([
-              readWindow(filePath),
-              NodeFSP.stat(filePath),
-            ]);
-            const header = parseSessionHeader(window.prefix);
-            if (
-              header === undefined ||
-              (cwd !== undefined && NodePath.resolve(header.cwd) !== NodePath.resolve(cwd))
-            ) {
-              return undefined;
-            }
-            const createdAt =
-              isoTimestamp(header.timestamp) ??
-              isoTimestamp(stat.birthtimeMs) ??
-              isoTimestamp(stat.ctimeMs);
-            const updatedAt = isoTimestamp(stat.mtimeMs);
-            if (createdAt === undefined || updatedAt === undefined) return undefined;
-            const model = sessionModel(window.suffix);
-            return {
-              providerInstanceId,
-              runtime: config.runtime,
-              sessionId: header.id,
-              cwd: header.cwd,
-              title:
-                sessionTitle(window.suffix) ??
-                header.title ??
-                fallbackTitle(window.prefix) ??
-                "Untitled session",
-              ...(model !== undefined ? { model } : {}),
-              createdAt,
-              updatedAt,
-              status: sessionStatus(window.suffix),
-            };
-          } catch {
-            return undefined;
-          }
-        },
-      );
-      const ordered = summaries
-        .filter((summary): summary is ProviderNativeSessionSummary => summary !== undefined)
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      const summaries = entries
+        .filter(
+          (entry) =>
+            cwd === undefined || NodePath.resolve(entry.header.cwd) === NodePath.resolve(cwd),
+        )
+        .sort(compareSessionCatalogEntries)
+        .map((entry): ProviderNativeSessionSummary => {
+          const model = sessionModel(entry.suffix);
+          return {
+            providerInstanceId,
+            runtime: config.runtime,
+            sessionId: entry.header.id,
+            cwd: entry.header.cwd,
+            title:
+              sessionTitle(entry.suffix) ??
+              entry.header.title ??
+              fallbackTitle(entry.prefix) ??
+              "Untitled session",
+            ...(model !== undefined ? { model } : {}),
+            createdAt: entry.createdAt,
+            updatedAt: entry.updatedAt,
+            status: sessionStatus(entry.suffix),
+          };
+        });
       const seenSessionIds = new Set<string>();
-      return ordered.filter((summary) => {
+      return summaries.filter((summary) => {
         if (seenSessionIds.has(summary.sessionId)) return false;
         seenSessionIds.add(summary.sessionId);
         return true;
@@ -422,23 +457,18 @@ async function findSessionFile(
   sessionId: string,
   cwd: string,
 ): Promise<string | undefined> {
-  const paths = await discoverSessionFiles(root);
-  const matches = await mapConcurrent(paths, 16, async (filePath) => {
-    try {
-      const { prefix } = await readWindow(filePath);
-      const header = parseSessionHeader(prefix);
-      return header?.id === sessionId && NodePath.resolve(header.cwd) === NodePath.resolve(cwd)
-        ? filePath
-        : undefined;
-    } catch {
-      return undefined;
-    }
-  });
-  return matches.find((path): path is string => path !== undefined);
+  const entries = await discoverSessionCatalogEntries(root);
+  return entries
+    .filter(
+      (entry) =>
+        entry.header.id === sessionId &&
+        NodePath.resolve(entry.header.cwd) === NodePath.resolve(cwd),
+    )
+    .sort(compareSessionCatalogEntries)[0]?.filePath;
 }
 
 export function readPiFamilyNativeHistoryMessages(
-  config: PiFamilyNativeConfig,
+  config: PiFamilySessionCatalogConfig,
   sessionId: string,
   cwd: string,
 ): Effect.Effect<ReadonlyArray<ProviderNativeHistoryMessage>, ProviderNativeSessionError> {

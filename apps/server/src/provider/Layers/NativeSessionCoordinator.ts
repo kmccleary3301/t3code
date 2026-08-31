@@ -2,15 +2,11 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   CommandId,
-  MessageId,
   ProjectId,
   ProviderNativeSessionError,
   ProviderNativeSessionResumeCursor,
   ThreadId,
-  TurnId,
   type ModelSelection,
-  type OrchestrationLatestTurn,
-  type OrchestrationMessage,
   type OrchestrationThread,
   type ProviderNativeSessionArchiveInput,
   type ProviderNativeSessionForkInput,
@@ -30,11 +26,11 @@ import * as Schema from "effect/Schema";
 
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import type { ProviderNativeHistoryMessage } from "../Services/ProviderAdapter.ts";
 import * as NativeSessionCoordinator from "../Services/NativeSessionCoordinator.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
+import { appendNativeHistoryPage, type ImportedNativeTurn } from "./NativeHistoryImport.ts";
 
 const isNativeSessionError = Schema.is(ProviderNativeSessionError);
 const isNativeResumeCursor = Schema.is(ProviderNativeSessionResumeCursor);
@@ -95,97 +91,6 @@ function chooseModelSelection(
   return model === undefined ? undefined : { instanceId: summary.providerInstanceId, model };
 }
 
-type ImportedTurn = OrchestrationLatestTurn & { readonly assistantMessageId: MessageId | null };
-
-function appendNativeHistoryPage(input: {
-  readonly sessionId: string;
-  readonly messages: ReadonlyArray<ProviderNativeHistoryMessage>;
-  readonly messageOffset: number;
-  readonly turnOffset: number;
-  readonly currentTurn: ImportedTurn | null;
-}): {
-  readonly messages: ReadonlyArray<OrchestrationMessage>;
-  readonly turns: ReadonlyArray<OrchestrationLatestTurn>;
-  readonly messageOffset: number;
-  readonly turnOffset: number;
-  readonly currentTurn: ImportedTurn | null;
-} {
-  const messages: OrchestrationMessage[] = [];
-  const turns: OrchestrationLatestTurn[] = [];
-  let messageOffset = input.messageOffset;
-  let turnOffset = input.turnOffset;
-  let currentTurn = input.currentTurn;
-  let currentTurnDirty = false;
-
-  const flushCurrentTurn = () => {
-    if (currentTurn !== null && currentTurnDirty) turns.push(currentTurn);
-    currentTurnDirty = false;
-  };
-
-  for (const nativeMessage of input.messages) {
-    messageOffset += 1;
-    const messageId = MessageId.make(`native:${input.sessionId}:message:${messageOffset}`);
-    if (nativeMessage.role === "system") {
-      messages.push({
-        id: messageId,
-        role: "system",
-        text: nativeMessage.text,
-        turnId: null,
-        streaming: false,
-        createdAt: nativeMessage.timestamp,
-        updatedAt: nativeMessage.timestamp,
-      });
-      continue;
-    }
-
-    if (nativeMessage.role === "user") {
-      flushCurrentTurn();
-      turnOffset += 1;
-      currentTurn = {
-        turnId: TurnId.make(`native:${input.sessionId}:turn:${turnOffset}`),
-        state: "interrupted",
-        requestedAt: nativeMessage.timestamp,
-        startedAt: nativeMessage.timestamp,
-        completedAt: null,
-        assistantMessageId: null,
-      };
-      currentTurnDirty = true;
-    } else if (currentTurn === null) {
-      turnOffset += 1;
-      currentTurn = {
-        turnId: TurnId.make(`native:${input.sessionId}:turn:${turnOffset}`),
-        state: "completed",
-        requestedAt: nativeMessage.timestamp,
-        startedAt: nativeMessage.timestamp,
-        completedAt: nativeMessage.timestamp,
-        assistantMessageId: messageId,
-      };
-      currentTurnDirty = true;
-    } else {
-      currentTurn = {
-        ...currentTurn,
-        state: "completed",
-        startedAt: currentTurn.startedAt ?? nativeMessage.timestamp,
-        completedAt: nativeMessage.timestamp,
-        assistantMessageId: messageId,
-      };
-      currentTurnDirty = true;
-    }
-
-    messages.push({
-      id: messageId,
-      role: nativeMessage.role,
-      text: nativeMessage.text,
-      turnId: currentTurn.turnId,
-      streaming: false,
-      createdAt: nativeMessage.timestamp,
-      updatedAt: nativeMessage.timestamp,
-    });
-  }
-  flushCurrentTurn();
-  return { messages, turns, messageOffset, turnOffset, currentTurn };
-}
-
 const makeNativeSessionCoordinator = Effect.gen(function* () {
   const providerService = yield* ProviderService.ProviderService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -221,19 +126,20 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       });
     }
     return {
-      sessions: yield* listNativeSessions({ providerInstanceId: input.providerInstanceId }),
+      sessions: yield* listNativeSessions({
+        providerInstanceId: input.providerInstanceId,
+      }),
     };
   });
 
   const importHistory = Effect.fn("NativeSessionCoordinator.importHistory")(function* (
     threadId: ThreadId,
-    sessionId: string,
   ) {
     let cursor: string | undefined;
     let pageIndex = 0;
     let messageOffset = 0;
     let turnOffset = 0;
-    let currentTurn: ImportedTurn | null = null;
+    let currentTurn: ImportedNativeTurn | null = null;
     let totalMessages = 0;
     do {
       const readNativeHistory = providerService.readNativeHistory;
@@ -249,7 +155,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       });
       totalMessages = page.totalMessages;
       const imported = appendNativeHistoryPage({
-        sessionId,
+        threadId,
         messages: page.messages,
         messageOffset,
         turnOffset,
@@ -261,7 +167,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       const importedAt = DateTime.formatIso(yield* DateTime.now);
       yield* engine.dispatch({
         type: "thread.native-history.import",
-        commandId: CommandId.make(`native-history:${sessionId}:${page.totalMessages}:${pageIndex}`),
+        commandId: CommandId.make(`native-history:${threadId}:${page.totalMessages}:${pageIndex}`),
         threadId,
         messages: imported.messages,
         turns: imported.turns,
@@ -438,7 +344,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       });
     }
 
-    const nativeHistoryMessageCount = yield* importHistory(threadId, input.sessionId);
+    const nativeHistoryMessageCount = yield* importHistory(threadId);
     const currentBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
     if (currentBinding !== undefined) {
       const runtimePayload = asRecord(currentBinding.runtimePayload);

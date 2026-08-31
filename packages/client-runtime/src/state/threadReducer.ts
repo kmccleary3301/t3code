@@ -390,7 +390,13 @@ export function applyThreadDetailEvent(
           messages[existingIndex] = message;
         }
       }
-      const importedLatestTurn = event.payload.turns.at(-1);
+      const importedLatestTurn = event.payload.turns.reduce<
+        (typeof event.payload.turns)[number] | undefined
+      >(
+        (latest, turn) =>
+          latest === undefined || turn.requestedAt >= latest.requestedAt ? turn : latest,
+        undefined,
+      );
       return {
         kind: "updated",
         thread: {

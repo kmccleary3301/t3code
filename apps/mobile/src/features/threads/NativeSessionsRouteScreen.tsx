@@ -4,7 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { StackActions, useNavigation } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,12 +23,12 @@ import { useServerConfigs } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
-import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useWorkspaceState } from "../../state/workspace";
 import {
   collectNativeSessionTargets,
   filterNativeSessionItems,
   nativeSessionCommandTarget,
+  nativeSessionItemKey,
   type NativeSessionItem,
 } from "./nativeSessionList";
 
@@ -42,7 +42,6 @@ export function NativeSessionsRouteScreen() {
   const mutedColor = useThemeColor("--color-foreground-muted");
   const serverConfigs = useServerConfigs();
   const { environments } = useWorkspaceState();
-  const { savedConnectionsById } = useSavedRemoteConnections();
   const loadNativeSessions = useAtomQueryRunner(serverEnvironment.nativeSessions, {
     reportFailure: false,
   });
@@ -64,46 +63,90 @@ export function NativeSessionsRouteScreen() {
   const [items, setItems] = useState<ReadonlyArray<NativeSessionItem>>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const pendingKeysRef = useRef<ReadonlySet<string>>(new Set());
+  const refreshGenerationRef = useRef(0);
   const [renameTarget, setRenameTarget] = useState<NativeSessionItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
   const targets = useMemo(
-    () => collectNativeSessionTargets(environments, serverConfigs, savedConnectionsById),
-    [environments, savedConnectionsById, serverConfigs],
+    () => collectNativeSessionTargets(environments, serverConfigs),
+    [environments, serverConfigs],
   );
 
+  const beginItemOperation = useCallback((item: NativeSessionItem): string | undefined => {
+    const key = nativeSessionItemKey(item);
+    if (pendingKeysRef.current.has(key)) return undefined;
+    const next = new Set(pendingKeysRef.current);
+    next.add(key);
+    pendingKeysRef.current = next;
+    setPendingKeys(next);
+    return key;
+  }, []);
+
+  const finishItemOperation = useCallback((key: string): void => {
+    if (!pendingKeysRef.current.has(key)) return;
+    const next = new Set(pendingKeysRef.current);
+    next.delete(key);
+    pendingKeysRef.current = next;
+    setPendingKeys(next);
+  }, []);
+
   const refresh = useCallback(async () => {
+    const generation = ++refreshGenerationRef.current;
     setLoading(true);
-    const results = await Promise.all(
-      targets.map(async (target) => ({
-        target,
-        result: await loadNativeSessions({
-          environmentId: target.environmentId,
-          input: { providerInstanceId: target.providerInstanceId },
-        }),
-      })),
-    );
-    const nextItems: NativeSessionItem[] = [];
-    let firstError: unknown;
-    for (const { target, result } of results) {
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result) && firstError === undefined) {
-          firstError = squashAtomCommandFailure(result);
+    try {
+      const results = await Promise.all(
+        targets.map(async (target) => ({
+          target,
+          result: await loadNativeSessions({
+            environmentId: target.environmentId,
+            input: { providerInstanceId: target.providerInstanceId },
+          }),
+        })),
+      );
+      if (generation !== refreshGenerationRef.current) return;
+
+      const nextItems: NativeSessionItem[] = [];
+      let successfulTargets = 0;
+      let firstError: unknown;
+      for (const { target, result } of results) {
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result) && firstError === undefined) {
+            firstError = squashAtomCommandFailure(result);
+          }
+          continue;
         }
-        continue;
+        successfulTargets += 1;
+        for (const session of result.value.sessions) nextItems.push({ ...target, session });
       }
-      for (const session of result.value.sessions) nextItems.push({ ...target, session });
+      nextItems.sort((left, right) =>
+        right.session.updatedAt.localeCompare(left.session.updatedAt),
+      );
+      setItems(nextItems);
+      if (targets.length > 0 && successfulTargets === 0) {
+        setLoadError(
+          firstError === undefined
+            ? "No native session provider responded."
+            : errorMessage(firstError),
+        );
+      } else {
+        setLoadError(null);
+        if (firstError !== undefined) {
+          Alert.alert("Some sessions could not be loaded", errorMessage(firstError));
+        }
+      }
+    } finally {
+      if (generation === refreshGenerationRef.current) setLoading(false);
     }
-    nextItems.sort((left, right) => right.session.updatedAt.localeCompare(left.session.updatedAt));
-    setItems(nextItems);
-    setLoading(false);
-    if (firstError !== undefined)
-      Alert.alert("Some sessions could not be loaded", errorMessage(firstError));
   }, [loadNativeSessions, targets]);
 
   useEffect(() => {
     void refresh();
+    return () => {
+      refreshGenerationRef.current += 1;
+    };
   }, [refresh]);
 
   const filteredItems = useMemo(() => filterNativeSessionItems(items, query), [items, query]);
@@ -122,10 +165,11 @@ export function NativeSessionsRouteScreen() {
 
   const runOpen = useCallback(
     async (item: NativeSessionItem) => {
-      const key = `${item.environmentId}:${item.providerInstanceId}:${item.session.sessionId}`;
-      setBusyKey(key);
-      const result = await openNativeSession(nativeSessionCommandTarget(item));
-      setBusyKey(null);
+      const key = beginItemOperation(item);
+      if (key === undefined) return;
+      const result = await openNativeSession(nativeSessionCommandTarget(item)).finally(() =>
+        finishItemOperation(key),
+      );
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           Alert.alert("Could not open session", errorMessage(squashAtomCommandFailure(result)));
@@ -134,17 +178,16 @@ export function NativeSessionsRouteScreen() {
       }
       navigateToThread(item.environmentId, result.value.threadId);
     },
-    [navigateToThread, openNativeSession],
+    [beginItemOperation, finishItemOperation, navigateToThread, openNativeSession],
   );
 
   const runLifecycle = useCallback(
     async (item: NativeSessionItem, operation: "fork" | "stop" | "archive") => {
-      const key = `${item.environmentId}:${item.providerInstanceId}:${item.session.sessionId}`;
-      setBusyKey(key);
+      const key = beginItemOperation(item);
+      if (key === undefined) return;
       const target = nativeSessionCommandTarget(item);
       if (operation === "fork") {
-        const result = await forkNativeSession(target);
-        setBusyKey(null);
+        const result = await forkNativeSession(target).finally(() => finishItemOperation(key));
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             Alert.alert("Could not fork session", errorMessage(squashAtomCommandFailure(result)));
@@ -154,9 +197,9 @@ export function NativeSessionsRouteScreen() {
         navigateToThread(item.environmentId, result.value.threadId);
         return;
       }
-      const result =
-        operation === "stop" ? await stopNativeSession(target) : await archiveNativeSession(target);
-      setBusyKey(null);
+      const result = await (
+        operation === "stop" ? stopNativeSession(target) : archiveNativeSession(target)
+      ).finally(() => finishItemOperation(key));
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           Alert.alert(
@@ -168,30 +211,44 @@ export function NativeSessionsRouteScreen() {
       }
       await refresh();
     },
-    [archiveNativeSession, forkNativeSession, navigateToThread, refresh, stopNativeSession],
+    [
+      archiveNativeSession,
+      beginItemOperation,
+      finishItemOperation,
+      forkNativeSession,
+      navigateToThread,
+      refresh,
+      stopNativeSession,
+    ],
   );
 
   const submitRename = useCallback(async () => {
     const item = renameTarget;
     const name = renameValue.trim();
     if (!item || name.length === 0) return;
-    setRenameTarget(null);
-    const key = `${item.environmentId}:${item.providerInstanceId}:${item.session.sessionId}`;
-    setBusyKey(key);
+    const key = beginItemOperation(item);
+    if (key === undefined) return;
     const target = nativeSessionCommandTarget(item);
     const result = await renameNativeSession({
       ...target,
       input: { ...target.input, name },
-    });
-    setBusyKey(null);
+    }).finally(() => finishItemOperation(key));
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         Alert.alert("Could not rename session", errorMessage(squashAtomCommandFailure(result)));
       }
       return;
     }
+    setRenameTarget(null);
     await refresh();
-  }, [refresh, renameNativeSession, renameTarget, renameValue]);
+  }, [
+    beginItemOperation,
+    finishItemOperation,
+    refresh,
+    renameNativeSession,
+    renameTarget,
+    renameValue,
+  ]);
 
   return (
     <View className="flex-1 bg-screen">
@@ -218,6 +275,19 @@ export function NativeSessionsRouteScreen() {
           <View className="items-center py-12">
             <ActivityIndicator />
           </View>
+        ) : loadError !== null && items.length === 0 ? (
+          <View className="items-center gap-3 py-12">
+            <SymbolView
+              name="exclamationmark.triangle"
+              size={28}
+              tintColor={mutedColor}
+              type="monochrome"
+            />
+            <Text className="text-center text-base font-t3-medium text-foreground-muted">
+              {loadError}
+            </Text>
+            <LifecycleButton label="Retry" onPress={() => void refresh()} />
+          </View>
         ) : filteredItems.length === 0 ? (
           <View className="items-center gap-2 py-12">
             <SymbolView
@@ -234,8 +304,8 @@ export function NativeSessionsRouteScreen() {
           </View>
         ) : (
           filteredItems.map((item) => {
-            const key = `${item.environmentId}:${item.providerInstanceId}:${item.session.sessionId}`;
-            const busy = busyKey === key;
+            const key = nativeSessionItemKey(item);
+            const busy = pendingKeys.has(key);
             return (
               <View key={key} className="gap-3 rounded-2xl border border-border bg-card p-4">
                 <Pressable disabled={busy} onPress={() => void runOpen(item)}>
@@ -299,7 +369,11 @@ export function NativeSessionsRouteScreen() {
       </ScrollView>
       <Modal
         animationType="fade"
-        onRequestClose={() => setRenameTarget(null)}
+        onRequestClose={() => {
+          if (renameTarget === null || !pendingKeys.has(nativeSessionItemKey(renameTarget))) {
+            setRenameTarget(null);
+          }
+        }}
         transparent
         visible={renameTarget !== null}
       >
@@ -315,11 +389,20 @@ export function NativeSessionsRouteScreen() {
               value={renameValue}
             />
             <View className="flex-row justify-end gap-2">
-              <LifecycleButton label="Cancel" onPress={() => setRenameTarget(null)} />
+              <LifecycleButton
+                label="Cancel"
+                onPress={() => setRenameTarget(null)}
+                disabled={
+                  renameTarget !== null && pendingKeys.has(nativeSessionItemKey(renameTarget))
+                }
+              />
               <LifecycleButton
                 label="Rename"
                 onPress={() => void submitRename()}
-                disabled={renameValue.trim().length === 0}
+                disabled={
+                  renameValue.trim().length === 0 ||
+                  (renameTarget !== null && pendingKeys.has(nativeSessionItemKey(renameTarget)))
+                }
               />
             </View>
           </View>

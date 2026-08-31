@@ -15,7 +15,7 @@ import {
   type ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderNativeSessionListInput,
-  type ProviderNativeSessionResumeCursor,
+  ProviderNativeSessionResumeCursor,
   type ProviderNativeSessionSummary,
   type ProviderRuntimeEventBase,
   type ProviderSendTurnInput,
@@ -167,6 +167,26 @@ const randomId = (): string =>
   `${DateTime.nowUnsafe().epochMilliseconds.toString(36)}-${(idCounter++).toString(36)}`;
 
 const nowIso = (): string => DateTime.formatIso(DateTime.nowUnsafe());
+function bindNativeSessionIdentity(
+  session: NativeSession,
+  runtime: PiFamilyRuntimeKind,
+  sessionId: string,
+  model: string | undefined,
+  resetHistory: boolean,
+): void {
+  session.nativeSessionId = sessionId;
+  if (resetHistory) delete session.nativeHistoryMessages;
+  session.session = {
+    ...session.session,
+    ...(model === undefined ? {} : { model }),
+    resumeCursor: {
+      kind: "native-session",
+      runtime,
+      sessionId,
+    },
+    updatedAt: nowIso(),
+  };
+}
 const NATIVE_INPUT_QUEUE_CAPACITY = 256;
 const NATIVE_EVENT_QUEUE_CAPACITY = 4096;
 const EVENT_OCCURRENCE_BUCKET_COUNT = 4_096;
@@ -206,6 +226,7 @@ const processError = (
     ...(cause === undefined ? {} : { cause }),
   });
 const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
+const isNativeSessionResumeCursor = Schema.is(ProviderNativeSessionResumeCursor);
 
 function exitSignalFromCause(cause: unknown): string | null {
   const pending: unknown[] = [cause];
@@ -369,17 +390,7 @@ function readCheckpointDescriptor(value: unknown): NativeCheckpoint | undefined 
 function readNativeSessionResumeCursor(
   value: unknown,
 ): ProviderNativeSessionResumeCursor | undefined {
-  const record = asRecord(value);
-  const runtime = asString(record?.runtime);
-  const sessionId = asString(record?.sessionId);
-  if (
-    record?.kind !== "native-session" ||
-    (runtime !== "pi" && runtime !== "omp") ||
-    sessionId === undefined
-  ) {
-    return undefined;
-  }
-  return { kind: "native-session", runtime, sessionId };
+  return isNativeSessionResumeCursor(value) ? value : undefined;
 }
 
 function withoutSessionSelectionArguments(arguments_: readonly string[]): string[] {
@@ -1989,17 +2000,7 @@ export const makePiFamilyAdapter = (
             });
           }
           const modelId = nativeModelSlug(state?.model);
-          session.nativeSessionId = nativeSessionId;
-          session.session = {
-            ...session.session,
-            ...(modelId === undefined ? {} : { model: modelId }),
-            resumeCursor: {
-              kind: "native-session",
-              runtime: config.runtime,
-              sessionId: nativeSessionId,
-            },
-            updatedAt: nowIso(),
-          };
+          bindNativeSessionIdentity(session, config.runtime, nativeSessionId, modelId, false);
         }
         session.startupComplete = true;
         yield* offer({
@@ -2369,17 +2370,7 @@ export const makePiFamilyAdapter = (
             message: `Native ${config.runtime} did not create a distinct forked session.`,
           });
         }
-        session.nativeSessionId = sessionId;
-        delete session.nativeHistoryMessages;
-        session.session = {
-          ...session.session,
-          resumeCursor: {
-            kind: "native-session",
-            runtime: config.runtime,
-            sessionId,
-          },
-          updatedAt: nowIso(),
-        };
+        bindNativeSessionIdentity(session, config.runtime, sessionId, undefined, true);
         return { sessionId };
       });
 

@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
   ProviderInstanceId,
   type ProviderNativeSessionSummary,
 } from "@t3tools/contracts";
@@ -9,6 +10,7 @@ import {
   collectNativeSessionTargets,
   filterNativeSessionItems,
   nativeSessionCommandTarget,
+  nativeSessionItemKey,
   type NativeSessionItem,
 } from "./nativeSessionList";
 
@@ -68,8 +70,16 @@ describe("native session remote routing", () => {
     const offlineLinux = EnvironmentId.make("offline-linux");
     const targets = collectNativeSessionTargets(
       [
-        { environmentId: remoteMac, connectionState: "connected" },
-        { environmentId: offlineLinux, connectionState: "disconnected" },
+        {
+          environmentId: remoteMac,
+          environmentLabel: "Mac Studio",
+          connectionState: "connected",
+        },
+        {
+          environmentId: offlineLinux,
+          environmentLabel: "Offline Linux",
+          connectionState: "offline",
+        },
       ],
       new Map([
         [
@@ -78,20 +88,20 @@ describe("native session remote routing", () => {
             providers: [
               {
                 instanceId: ProviderInstanceId.make("pi-personal"),
-                driver: "pi",
+                driver: ProviderDriverKind.make("pi"),
                 enabled: true,
                 installed: true,
                 displayName: "Pi Personal",
               },
               {
                 instanceId: ProviderInstanceId.make("omp-work"),
-                driver: "omp",
+                driver: ProviderDriverKind.make("omp"),
                 enabled: false,
                 installed: true,
               },
               {
                 instanceId: ProviderInstanceId.make("codex"),
-                driver: "codex",
+                driver: ProviderDriverKind.make("codex"),
                 enabled: true,
                 installed: true,
               },
@@ -104,7 +114,7 @@ describe("native session remote routing", () => {
             providers: [
               {
                 instanceId: ProviderInstanceId.make("omp"),
-                driver: "omp",
+                driver: ProviderDriverKind.make("omp"),
                 enabled: true,
                 installed: true,
               },
@@ -112,7 +122,6 @@ describe("native session remote routing", () => {
           },
         ],
       ]),
-      { [remoteMac]: { environmentLabel: "Mac Studio" } },
     );
 
     expect(targets).toEqual([
@@ -133,5 +142,9 @@ describe("native session remote routing", () => {
         sessionId: "omp-session",
       },
     });
+  });
+
+  it("uses one stable key for card busy state and duplicate-operation guards", () => {
+    expect(nativeSessionItemKey(items[1]!)).toBe("remote-linux:omp:omp-session");
   });
 });

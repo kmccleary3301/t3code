@@ -27,7 +27,6 @@ import {
   type ProjectId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
-  type ProviderNativeSessionSummary,
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
@@ -39,7 +38,6 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
-  HistoryIcon,
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
@@ -98,7 +96,6 @@ import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
-import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
   applyWslEnvironmentConfiguration,
   parseWslUncPath,
@@ -141,11 +138,7 @@ import {
   ThreadCommandSubtitle,
 } from "./ThreadCommandSubtitle";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import {
-  primaryServerKeybindingsAtom,
-  primaryServerProvidersAtom,
-  serverEnvironment,
-} from "../state/server";
+import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import {
   deriveProviderInstanceEntries,
   resolveDefaultProviderModelSelection,
@@ -158,6 +151,7 @@ import { Kbd, KbdGroup } from "./ui/kbd";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
+import { useNativeSessionPaletteAction } from "./NativeSessionPaletteAction";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -591,12 +585,6 @@ function OpenCommandPaletteDialog(props: {
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
-  const loadNativeSessions = useAtomQueryRunner(serverEnvironment.nativeSessions, {
-    reportFailure: false,
-  });
-  const openNativeSession = useAtomCommand(serverEnvironment.openNativeSession, {
-    reportFailure: false,
-  });
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -619,33 +607,6 @@ function OpenCommandPaletteDialog(props: {
       }
     }
     return map;
-  }, [environments, primaryEnvironmentId, providers]);
-  const nativeSessionTargets = useMemo(() => {
-    const targets: Array<{
-      readonly environmentId: EnvironmentId;
-      readonly environmentLabel: string;
-      readonly entry: ProviderInstanceEntry;
-    }> = [];
-    for (const environment of environments) {
-      if (environment.connection.phase !== "connected") continue;
-      const environmentProviders =
-        environment.serverConfig?.providers ??
-        (environment.environmentId === primaryEnvironmentId ? providers : []);
-      for (const entry of deriveProviderInstanceEntries(environmentProviders)) {
-        if (
-          (entry.driverKind !== "pi" && entry.driverKind !== "omp") ||
-          !entry.enabled ||
-          !entry.installed
-        )
-          continue;
-        targets.push({
-          environmentId: environment.environmentId,
-          environmentLabel: environment.label,
-          entry,
-        });
-      }
-    }
-    return targets;
   }, [environments, primaryEnvironmentId, providers]);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
@@ -1210,128 +1171,11 @@ function OpenCommandPaletteDialog(props: {
     [browseNavigation],
   );
 
-  const openNativeSessionPicker = useCallback(async () => {
-    const results = await Promise.all(
-      nativeSessionTargets.map(async (target) => ({
-        target,
-        result: await loadNativeSessions({
-          environmentId: target.environmentId,
-          input: {
-            providerInstanceId: target.entry.instanceId,
-          },
-        }),
-      })),
-    );
-    const sessions: Array<{
-      readonly environmentId: EnvironmentId;
-      readonly environmentLabel: string;
-      readonly entry: ProviderInstanceEntry;
-      readonly session: ProviderNativeSessionSummary;
-    }> = [];
-    for (const { target, result } of results) {
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: `Could not load ${target.entry.displayName} sessions`,
-              description: errorMessage(squashAtomCommandFailure(result)),
-            }),
-          );
-        }
-        continue;
-      }
-      for (const session of result.value.sessions) {
-        sessions.push({
-          environmentId: target.environmentId,
-          environmentLabel: target.environmentLabel,
-          entry: target.entry,
-          session,
-        });
-      }
-    }
-    sessions.sort((left, right) => right.session.updatedAt.localeCompare(left.session.updatedAt));
-    const items: CommandPaletteActionItem[] =
-      sessions.length === 0
-        ? [
-            {
-              kind: "action",
-              value: "native-session:none",
-              searchTerms: [],
-              title: "No Pi or OMP sessions found",
-              icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
-              disabled: true,
-              run: async () => {},
-            },
-          ]
-        : sessions.map(({ environmentId, environmentLabel, entry, session }) => {
-            const workspaceTitle = inferProjectTitleFromPath(session.cwd);
-            return {
-              kind: "action",
-              value: `native-session:${environmentId}:${entry.instanceId}:${session.sessionId}`,
-              searchTerms: [
-                session.title,
-                session.cwd,
-                workspaceTitle,
-                environmentLabel,
-                session.model ?? "",
-                session.status,
-                entry.displayName,
-              ],
-              title: session.title,
-              description: [
-                workspaceTitle,
-                environmentLabel,
-                entry.displayName,
-                session.model,
-                formatRelativeTimeLabel(session.updatedAt),
-              ]
-                .filter((part): part is string => part !== undefined)
-                .join(" · "),
-              icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
-              keepOpen: true,
-              run: async () => {
-                const result = await openNativeSession({
-                  environmentId,
-                  input: {
-                    providerInstanceId: entry.instanceId,
-                    sessionId: session.sessionId,
-                  },
-                });
-                if (result._tag === "Failure") {
-                  if (!isAtomCommandInterrupted(result)) {
-                    toastManager.add(
-                      stackedThreadToast({
-                        type: "error",
-                        title: "Could not open native session",
-                        description: errorMessage(squashAtomCommandFailure(result)),
-                      }),
-                    );
-                  }
-                  return;
-                }
-                setOpen(false);
-                await navigate({
-                  to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(
-                    scopeThreadRef(environmentId, result.value.threadId),
-                  ),
-                });
-              },
-            };
-          });
-    pushPaletteView({
-      addonIcon: <HistoryIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "native-sessions", label: "Native sessions", items }],
-    });
-  }, [
-    loadNativeSessions,
-    navigate,
-    nativeSessionTargets,
-    openNativeSession,
-    pushPaletteView,
-    setOpen,
-  ]);
+  const closePalette = useCallback(() => setOpen(false), [setOpen]);
+  const nativeSessionAction = useNativeSessionPaletteAction({
+    pushView: pushPaletteView,
+    closePalette,
+  });
 
   function pushView(item: CommandPaletteSubmenuItem): void {
     pushPaletteView({
@@ -1690,17 +1534,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (nativeSessionTargets.length > 0) {
-    actionItems.push({
-      kind: "action",
-      value: "action:open-native-session",
-      searchTerms: ["open", "resume", "pi", "omp", "oh my pi", "native", "session", "history"],
-      title: "Open native session",
-      icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
-      keepOpen: true,
-      run: openNativeSessionPicker,
-    });
-  }
+  if (nativeSessionAction !== null) actionItems.push(nativeSessionAction);
 
   actionItems.push({
     kind: "action",

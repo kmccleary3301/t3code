@@ -2,7 +2,10 @@ import type {
   EnvironmentId,
   ProviderInstanceId,
   ProviderNativeSessionSummary,
+  ServerProvider,
 } from "@t3tools/contracts";
+
+import type { WorkspaceEnvironment } from "../../state/workspaceModel";
 
 export type NativeSessionTarget = {
   readonly environmentId: EnvironmentId;
@@ -15,32 +18,26 @@ export type NativeSessionItem = NativeSessionTarget & {
   readonly session: ProviderNativeSessionSummary;
 };
 
-export type NativeSessionDiscoveryEnvironment = {
-  readonly environmentId: EnvironmentId;
-  readonly connectionState: string;
-};
+export type NativeSessionDiscoveryEnvironment = Pick<
+  WorkspaceEnvironment,
+  "environmentId" | "environmentLabel" | "connectionState"
+>;
 
 export type NativeSessionDiscoveryConfig = {
-  readonly providers: ReadonlyArray<{
-    readonly instanceId: ProviderInstanceId;
-    readonly driver: string;
-    readonly enabled: boolean;
-    readonly installed: boolean;
-    readonly displayName?: string;
-  }>;
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "driver" | "enabled" | "installed" | "displayName">
+  >;
 };
 
 export function collectNativeSessionTargets(
   environments: ReadonlyArray<NativeSessionDiscoveryEnvironment>,
   serverConfigs: ReadonlyMap<EnvironmentId, NativeSessionDiscoveryConfig>,
-  savedConnectionsById: Readonly<Record<string, { readonly environmentLabel: string } | undefined>>,
 ): ReadonlyArray<NativeSessionTarget> {
   const targets: NativeSessionTarget[] = [];
   for (const environment of environments) {
     if (environment.connectionState !== "connected") continue;
     const config = serverConfigs.get(environment.environmentId);
     if (!config) continue;
-    const saved = savedConnectionsById[environment.environmentId];
     for (const provider of config.providers) {
       if (
         (provider.driver !== "pi" && provider.driver !== "omp") ||
@@ -50,13 +47,16 @@ export function collectNativeSessionTargets(
         continue;
       targets.push({
         environmentId: environment.environmentId,
-        environmentLabel: saved?.environmentLabel ?? environment.environmentId,
+        environmentLabel: environment.environmentLabel,
         providerInstanceId: provider.instanceId,
         providerLabel: provider.displayName ?? provider.driver.toUpperCase(),
       });
     }
   }
   return targets;
+}
+export function nativeSessionItemKey(item: NativeSessionItem): string {
+  return `${item.environmentId}:${item.providerInstanceId}:${item.session.sessionId}`;
 }
 
 export function nativeSessionCommandTarget(item: NativeSessionItem) {

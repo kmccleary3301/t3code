@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -11,27 +11,19 @@ import {
   listPiFamilyNativeSessions,
   readPiFamilyNativeHistoryMessages,
   resolvePiFamilySessionDirectory,
+  type PiFamilySessionCatalogConfig,
 } from "./NativeSessionCatalog.ts";
-import type { PiFamilyNativeConfig } from "./NativeAdapter.ts";
 
 const temporaryDirectories: string[] = [];
 
 function config(
   agentDirectory: string,
-  runtime: PiFamilyNativeConfig["runtime"] = "omp",
-): PiFamilyNativeConfig {
+  runtime: PiFamilySessionCatalogConfig["runtime"] = "omp",
+): PiFamilySessionCatalogConfig {
   return {
-    provider: ProviderDriverKind.make(runtime),
     runtime,
-    binaryPath: runtime,
     cwd: "/workspace",
     agentDirectory,
-    requestTimeoutMs: 1_000,
-    startupTimeoutMs: 1_000,
-    maxLineBytes: 1024,
-    maxMessageBytes: 4096,
-    stderrLimitBytes: 1024,
-    instanceId: ProviderInstanceId.make(runtime),
   };
 }
 
@@ -76,9 +68,18 @@ describe("NativeSessionCatalog", () => {
           timestamp: "2026-08-01T12:00:00.000Z",
         },
         { type: "model_change", modelId: "gpt-5.6" },
-        { type: "message", message: { role: "user", content: "continue this" } },
         {
           type: "message",
+          id: "current-user",
+          parentId: "session-1",
+          timestamp: "2026-08-01T12:00:01.000Z",
+          message: { role: "user", content: "continue this" },
+        },
+        {
+          type: "message",
+          id: "current-assistant",
+          parentId: "current-user",
+          timestamp: "2026-08-01T12:00:02.000Z",
           message: {
             role: "assistant",
             content: [{ type: "text", text: "done" }],
@@ -94,7 +95,18 @@ describe("NativeSessionCatalog", () => {
       yield* Effect.promise(() =>
         NodeFSP.writeFile(
           duplicatePath,
-          '{"type":"session","id":"session-1","cwd":"/workspace","title":"Old duplicate"}\n',
+          `${[
+            { type: "session", id: "session-1", cwd: "/workspace", title: "Old duplicate" },
+            {
+              type: "message",
+              id: "stale-user",
+              parentId: "session-1",
+              timestamp: "2025-01-01T00:00:00.000Z",
+              message: { role: "user", content: "stale history" },
+            },
+          ]
+            .map((line) => JSON.stringify(line))
+            .join("\n")}\n`,
         ),
       );
       yield* Effect.promise(() => NodeFSP.utimes(duplicatePath, 0, 0));
@@ -136,6 +148,12 @@ describe("NativeSessionCatalog", () => {
         cwd: "/workspace",
         status: "complete",
       });
+      const history = yield* readPiFamilyNativeHistoryMessages(
+        config(temporaryDirectory),
+        "session-1",
+        "/workspace",
+      );
+      expect(history.map(({ text }) => text)).toEqual(["continue this", "done"]);
 
       const allSessions = yield* listPiFamilyNativeSessions(
         config(temporaryDirectory),

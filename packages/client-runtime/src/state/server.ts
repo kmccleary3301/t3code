@@ -689,7 +689,7 @@ export function createServerEnvironmentAtoms<R, E>(
     nativeSessions: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:native-sessions",
       tag: WS_METHODS.serverListNativeSessions,
-      staleTimeMs: 5_000,
+      staleTimeMs: 0,
     }),
     openNativeSession: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:open-native-session",
