@@ -10319,21 +10319,27 @@ const runNativeHttpParityScenario = (
                 message.role === "assistant" &&
                 !message.streaming &&
                 message.text.includes("NATIVE-MATRIX-OK"),
+            ) &&
+            thread.checkpoints.some(
+              (checkpoint) =>
+                checkpoint.status === "ready" && checkpoint.nativeCheckpoint?.runtime === "pi",
             )
           : thread.activities.some((activity) => activity.kind.startsWith("task.")),
       30_000,
     );
-    yield* harness.engine.dispatch({
-      type: "thread.session.stop",
-      commandId: CommandId.make(`native-parity:${runtime}:stop-before-drain`),
-      threadId,
-      createdAt,
-    });
-    yield* harness.waitForThread(
-      threadId,
-      (thread) => thread.session?.status === "stopped",
-      30_000,
-    );
+    if (runtime === "omp") {
+      yield* harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make(`native-parity:${runtime}:stop-before-drain`),
+        threadId,
+        createdAt,
+      });
+      yield* harness.waitForThread(
+        threadId,
+        (thread) => thread.session?.status === "stopped",
+        30_000,
+      );
+    }
     yield* harness.drainProviderRuntime;
     yield* harness.drainCheckpointReactor;
     const persistedEvents = yield* harness.engine
@@ -10363,6 +10369,19 @@ const runNativeHttpParityScenario = (
     );
     const finalSnapshot = yield* readSnapshot();
     const capturedTrace = captured?.slice() ?? [];
+    if (finalSnapshot.thread.session?.status !== "stopped") {
+      yield* harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make(`native-parity:${runtime}:stop`),
+        threadId,
+        createdAt,
+      });
+      yield* harness.waitForThread(
+        threadId,
+        (thread) => thread.session?.status === "stopped",
+        30_000,
+      );
+    }
     const exitDeadline = (yield* Clock.currentTimeMillis) + 30_000;
     while (true) {
       const sessions = yield* harness.providerService.listSessions();
