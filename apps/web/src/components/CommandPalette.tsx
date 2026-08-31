@@ -151,6 +151,7 @@ import { Kbd, KbdGroup } from "./ui/kbd";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
+import { useNativeSessionPaletteAction } from "./NativeSessionPaletteAction";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -1170,6 +1171,12 @@ function OpenCommandPaletteDialog(props: {
     [browseNavigation],
   );
 
+  const closePalette = useCallback(() => setOpen(false), [setOpen]);
+  const nativeSessionAction = useNativeSessionPaletteAction({
+    pushView: pushPaletteView,
+    closePalette,
+  });
+
   function pushView(item: CommandPaletteSubmenuItem): void {
     pushPaletteView({
       addonIcon: item.addonIcon,
@@ -1526,6 +1533,8 @@ function OpenCommandPaletteDialog(props: {
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
   }
+
+  if (nativeSessionAction !== null) actionItems.push(nativeSessionAction);
 
   actionItems.push({
     kind: "action",

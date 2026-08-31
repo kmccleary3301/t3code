@@ -465,6 +465,7 @@ export function createServerEnvironmentAtoms<R, E>(
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
+  const nativeSessionScheduler = createAtomCommandScheduler();
   // Updates stay serial end-to-end, but only their handoff phase occupies the config lane.
   const updateScheduler = createAtomCommandScheduler();
   const configConcurrency = {
@@ -685,6 +686,56 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    nativeSessions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:native-sessions",
+      tag: WS_METHODS.serverListNativeSessions,
+      staleTimeMs: 0,
+    }),
+    openNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:open-native-session",
+      tag: WS_METHODS.serverOpenNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    renameNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:rename-native-session",
+      tag: WS_METHODS.serverRenameNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    forkNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:fork-native-session",
+      tag: WS_METHODS.serverForkNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    stopNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:stop-native-session",
+      tag: WS_METHODS.serverStopNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    archiveNativeSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:archive-native-session",
+      tag: WS_METHODS.serverArchiveNativeSession,
+      scheduler: nativeSessionScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,

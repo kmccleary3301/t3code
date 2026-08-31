@@ -378,6 +378,36 @@ export function applyThreadDetailEvent(
       };
     }
 
+    case "thread.native-history-imported": {
+      const messages = [...thread.messages];
+      const messageIndexes = new Map(messages.map((message, index) => [message.id, index]));
+      for (const message of event.payload.messages) {
+        const existingIndex = messageIndexes.get(message.id);
+        if (existingIndex === undefined) {
+          messageIndexes.set(message.id, messages.length);
+          messages.push(message);
+        } else {
+          messages[existingIndex] = message;
+        }
+      }
+      const importedLatestTurn = event.payload.turns.reduce<
+        (typeof event.payload.turns)[number] | undefined
+      >(
+        (latest, turn) =>
+          latest === undefined || turn.requestedAt >= latest.requestedAt ? turn : latest,
+        undefined,
+      );
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          messages,
+          latestTurn: importedLatestTurn ?? thread.latestTurn,
+          updatedAt: event.payload.importedAt,
+        },
+      };
+    }
+
     // ── Session ─────────────────────────────────────────────────────
     case "thread.session-set": {
       // Leaving the "running" session status is the turn-end signal: settle a

@@ -198,8 +198,9 @@ jobs:
             apps/server/src/server.test.ts \
             apps/server/integration/orchestrationEngine.integration.test.ts \
             -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket|runs configured (pi|omp) through the native T3 lifecycle matrix" \
+            --reporter=default \
             --reporter=json \
-            --outputFile="$T3_NATIVE_CURRENT_REPORT"
+            --outputFile.json="$T3_NATIVE_CURRENT_REPORT"
 
       - name: Run pinned extended native matrix
         if: steps.classify.outputs.replay_gate == 'true'
@@ -221,13 +222,15 @@ jobs:
           vp test run \
             apps/server/src/server.test.ts \
             -t "projects configured (pi|omp) native process through T3 HTTP and WebSocket|matches configured (pi|omp) live and exact replay through T3 HTTP and WebSocket" \
+            --reporter=default \
             --reporter=json \
-            --outputFile="$T3_NATIVE_ROOT_REPORT"
+            --outputFile.json="$T3_NATIVE_ROOT_REPORT"
           vp test run \
             apps/server/integration/orchestrationEngine.integration.test.ts \
             -t "runs configured (pi|omp) through the native T3 lifecycle matrix|recovers configured (pi|omp) after an isolated stock native process crash" \
+            --reporter=default \
             --reporter=json \
-            --outputFile="$T3_NATIVE_MATRIX_REPORT"
+            --outputFile.json="$T3_NATIVE_MATRIX_REPORT"
 
       - name: Sanitize native test evidence
         if: always() && steps.classify.outputs.replay_gate == 'true'

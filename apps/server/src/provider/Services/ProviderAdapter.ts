@@ -12,6 +12,9 @@ import type {
   ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderUserInputAnswers,
+  ProviderNativeSessionError,
+  ProviderNativeSessionListInput,
+  ProviderNativeSessionSummary,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
@@ -40,6 +43,19 @@ export interface ProviderThreadTurnSnapshot {
 export interface ProviderThreadSnapshot {
   readonly threadId: ThreadId;
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
+}
+
+export interface ProviderNativeHistoryMessage {
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
+  readonly timestamp: string;
+  readonly model?: string;
+}
+
+export interface ProviderNativeHistoryPage {
+  readonly messages: ReadonlyArray<ProviderNativeHistoryMessage>;
+  readonly nextCursor?: string;
+  readonly totalMessages: number;
 }
 
 export interface ProviderAdapterShape<TError> {
@@ -105,6 +121,43 @@ export interface ProviderAdapterShape<TError> {
    * Read a provider thread snapshot.
    */
   readonly readThread: (threadId: ThreadId) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /**
+   * List durable sessions owned by the native runtime.
+   *
+   * Adapters omit this method when their runtime has no stable native session catalog.
+   */
+  readonly listNativeSessions?: (
+    input: ProviderNativeSessionListInput,
+  ) => Effect.Effect<
+    ReadonlyArray<ProviderNativeSessionSummary>,
+    TError | ProviderNativeSessionError
+  >;
+
+  /**
+   * Read one bounded page from the native history of an active session.
+   */
+  readonly readNativeHistory?: (
+    threadId: ThreadId,
+    cursor?: string,
+  ) => Effect.Effect<ProviderNativeHistoryPage, TError | ProviderNativeSessionError>;
+  /**
+   * Rename the durable native session currently attached to a thread.
+   */
+  readonly renameNativeSession?: (
+    threadId: ThreadId,
+    name: string,
+  ) => Effect.Effect<void, TError | ProviderNativeSessionError>;
+
+  /**
+   * Fork the durable native session currently attached to a thread.
+   *
+   * Native runtimes rebind the process to the fork. Callers must stop the
+   * source thread before attaching the returned session id elsewhere.
+   */
+  readonly forkNativeSession?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<{ readonly sessionId: string }, TError | ProviderNativeSessionError>;
 
   /**
    * Roll back a provider thread by N turns.

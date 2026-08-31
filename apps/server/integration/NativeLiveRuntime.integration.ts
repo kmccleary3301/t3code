@@ -309,10 +309,10 @@ export const makeNativeLiveModelServer = Effect.tryPromise<NativeLiveModelServer
         const toolArguments = bashToolTurn
           ? '{"command":"printf NATIVE-MATRIX-TOOL-OK"}'
           : parityTaskTurn
-            ? '{"name":"MatrixParityChild","agent":"task","task":"NATIVE-MATRIX-SUBAGENT-PARITY-CHILD"}'
+            ? '{"context":"Native parity task.","tasks":[{"name":"MatrixParityChild","task":"NATIVE-MATRIX-SUBAGENT-PARITY-CHILD"}]}'
             : parentTaskTurn
-              ? '{"name":"MatrixChild","agent":"task","task":"NATIVE-MATRIX-SUBAGENT-CHILD"}'
-              : '{"name":"MatrixGrandchild","agent":"sonic","task":"NATIVE-MATRIX-SUBAGENT-GRANDCHILD-HOLD"}';
+              ? '{"context":"Native nested task.","tasks":[{"name":"MatrixChild","task":"NATIVE-MATRIX-SUBAGENT-CHILD"}]}'
+              : '{"context":"Native nested child task.","tasks":[{"name":"MatrixGrandchild","agent":"sonic","task":"NATIVE-MATRIX-SUBAGENT-GRANDCHILD-HOLD"}]}';
         const marker = hasToolResult
           ? "NATIVE-MATRIX-TOOL-OK"
           : message.includes("RESTORED")
@@ -1259,7 +1259,7 @@ export const writeNativeLiveExtension = (
           "export default function (pi) {",
           '  pi.on("before_agent_start", async (event, ctx) => {',
           '    if (event.prompt.includes("NATIVE-MATRIX-UI")) {',
-          '      const accepted = await ctx.ui.confirm("Native matrix confirmation", "Accept the portable UI branch?", { timeout: 500 });',
+          '      const accepted = await ctx.ui.confirm("Native matrix confirmation", "Accept the portable UI branch?", { timeout: 5000 });',
           '      ctx.ui.notify(accepted ? "NATIVE-MATRIX-UI-OK" : "NATIVE-MATRIX-UI-CANCELLED", "info");',
           "    }",
           '    if (event.prompt.includes("NATIVE-MATRIX-TASK")) {',

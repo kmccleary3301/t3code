@@ -1403,6 +1403,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return [unsettledEvent, activityAppendedEvent];
     }
 
+    case "thread.native-history.import": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.importedAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.native-history-imported",
+        payload: {
+          threadId: command.threadId,
+          messages: command.messages,
+          turns: command.turns,
+          importedAt: command.importedAt,
+        },
+      };
+    }
+
     default: {
       command satisfies never;
       const fallback = command as never as { type: string };

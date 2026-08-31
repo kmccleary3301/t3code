@@ -14,6 +14,8 @@
 import type {
   ProviderInterruptTurnInput,
   ProviderInstanceId,
+  ProviderNativeSessionListInput,
+  ProviderNativeSessionSummary,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderRuntimeEvent,
@@ -29,7 +31,7 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type { ProviderAdapterCapabilities, ProviderNativeHistoryPage } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -96,6 +98,23 @@ export interface ProviderServiceShape {
   readonly getInstanceInfo: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderInstanceRoutingInfo, ProviderServiceError>;
+
+  readonly listNativeSessions?: (
+    input: ProviderNativeSessionListInput,
+  ) => Effect.Effect<ReadonlyArray<ProviderNativeSessionSummary>, ProviderServiceError>;
+
+  readonly readNativeHistory?: (input: {
+    readonly threadId: ThreadId;
+    readonly cursor?: string;
+  }) => Effect.Effect<ProviderNativeHistoryPage, ProviderServiceError>;
+  readonly renameNativeSession?: (input: {
+    readonly threadId: ThreadId;
+    readonly name: string;
+  }) => Effect.Effect<void, ProviderServiceError>;
+
+  readonly forkNativeSession?: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<{ readonly sessionId: string }, ProviderServiceError>;
 
   /**
    * Roll back provider conversation state by a number of turns.

@@ -4,6 +4,7 @@ import {
   ApprovalRequestId,
   CanonicalItemType,
   EventId,
+  ProviderNativeSessionError,
   ProviderDriverKind,
   RuntimeItemId,
   RuntimeRequestId,
@@ -13,6 +14,9 @@ import {
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type ProviderRuntimeEvent,
+  type ProviderNativeSessionListInput,
+  ProviderNativeSessionResumeCursor,
+  type ProviderNativeSessionSummary,
   type ProviderRuntimeEventBase,
   type ProviderSendTurnInput,
   type ProviderSession,
@@ -34,6 +38,8 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type {
   ProviderAdapterShape,
+  ProviderNativeHistoryMessage,
+  ProviderNativeHistoryPage,
   ProviderThreadSnapshot,
   ProviderThreadTurnSnapshot,
 } from "../Services/ProviderAdapter.ts";
@@ -67,6 +73,10 @@ import {
   type RuntimeCapabilities,
 } from "./protocol.ts";
 import { piFamilyThinkingLevels, resolvePiFamilyLaunchArguments } from "./ModelDiscovery.ts";
+import {
+  listPiFamilyNativeSessions,
+  readPiFamilyNativeHistoryMessages,
+} from "./NativeSessionCatalog.ts";
 import type { NativeTraceSink, NativeTraceSinkFactory } from "./NativeTrace.ts";
 export interface PiFamilyNativeConfig {
   readonly provider: ProviderDriverKind;
@@ -101,7 +111,7 @@ interface NativeSession {
   readonly activeTasks: Set<string>;
   readonly turns: ProviderThreadTurnSnapshot[];
   readonly startedAt: string;
-  readonly session: ProviderSession;
+  session: ProviderSession;
   readonly ready?: Deferred.Deferred<void, ProviderAdapterError>;
   readonly stopComplete: Deferred.Deferred<void, never>;
   readonly traceSink?: NativeTraceSink;
@@ -113,6 +123,7 @@ interface NativeSession {
   startupComplete: boolean;
   stopped: boolean;
   nativeSessionId?: string;
+  nativeHistoryMessages?: ReadonlyArray<ProviderNativeHistoryMessage>;
   capabilities: RuntimeCapabilities;
   stderrBytes: Uint8Array;
   readonly eventOccurrenceBuckets: Float64Array;
@@ -156,6 +167,26 @@ const randomId = (): string =>
   `${DateTime.nowUnsafe().epochMilliseconds.toString(36)}-${(idCounter++).toString(36)}`;
 
 const nowIso = (): string => DateTime.formatIso(DateTime.nowUnsafe());
+function bindNativeSessionIdentity(
+  session: NativeSession,
+  runtime: PiFamilyRuntimeKind,
+  sessionId: string,
+  model: string | undefined,
+  resetHistory: boolean,
+): void {
+  session.nativeSessionId = sessionId;
+  if (resetHistory) delete session.nativeHistoryMessages;
+  session.session = {
+    ...session.session,
+    ...(model === undefined ? {} : { model }),
+    resumeCursor: {
+      kind: "native-session",
+      runtime,
+      sessionId,
+    },
+    updatedAt: nowIso(),
+  };
+}
 const NATIVE_INPUT_QUEUE_CAPACITY = 256;
 const NATIVE_EVENT_QUEUE_CAPACITY = 4096;
 const EVENT_OCCURRENCE_BUCKET_COUNT = 4_096;
@@ -195,6 +226,7 @@ const processError = (
     ...(cause === undefined ? {} : { cause }),
   });
 const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
+const isNativeSessionResumeCursor = Schema.is(ProviderNativeSessionResumeCursor);
 
 function exitSignalFromCause(cause: unknown): string | null {
   const pending: unknown[] = [cause];
@@ -355,6 +387,50 @@ function readCheckpointDescriptor(value: unknown): NativeCheckpoint | undefined 
     opaque: record?.opaque,
   };
 }
+function readNativeSessionResumeCursor(
+  value: unknown,
+): ProviderNativeSessionResumeCursor | undefined {
+  return isNativeSessionResumeCursor(value) ? value : undefined;
+}
+
+function withoutSessionSelectionArguments(arguments_: readonly string[]): string[] {
+  const filtered: string[] = [];
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (argument === undefined) continue;
+    if (
+      argument === "--resume" ||
+      argument === "-r" ||
+      argument === "--session" ||
+      argument === "--session-id" ||
+      argument === "--fork"
+    ) {
+      index += 1;
+      continue;
+    }
+    if (
+      argument.startsWith("--resume=") ||
+      argument.startsWith("-r=") ||
+      argument.startsWith("--session=") ||
+      argument.startsWith("--session-id=") ||
+      argument.startsWith("--fork=")
+    ) {
+      continue;
+    }
+    if (argument === "--continue" || argument === "-c") continue;
+    filtered.push(argument);
+  }
+  return filtered;
+}
+
+function nativeModelSlug(value: unknown): string | undefined {
+  const model = asRecord(value);
+  const id = asString(model?.id);
+  if (id === undefined) return undefined;
+  const provider = asString(model?.provider);
+  return provider === undefined || id.includes("/") ? id : `${provider}/${id}`;
+}
+
 function canonicalTaskRunHandles(
   handles: Readonly<Record<string, unknown>> | undefined,
 ): JsonRecord | undefined {
@@ -1498,6 +1574,24 @@ export const makePiFamilyAdapter = (
             issue: `Expected provider instance ${config.instanceId}.`,
           });
         }
+        const cwd = input.cwd ?? config.cwd;
+        const cwdIsDirectory = yield* Effect.try({
+          try: () => NodeFS.statSync(cwd).isDirectory(),
+          catch: (cause) =>
+            processError(
+              config.provider,
+              input.threadId,
+              `Native working directory '${cwd}' is unavailable.`,
+              cause,
+            ),
+        });
+        if (!cwdIsDirectory) {
+          return yield* processError(
+            config.provider,
+            input.threadId,
+            `Native working directory '${cwd}' is not a directory.`,
+          );
+        }
         if (sessions.has(input.threadId)) yield* stopSession(input.threadId);
         const traceSinkFactory = config.traceSinkFactory;
         const traceSink =
@@ -1524,10 +1618,26 @@ export const makePiFamilyAdapter = (
           ...config.environment,
           ...(config.agentDirectory ? { PI_CODING_AGENT_DIR: config.agentDirectory } : {}),
         };
-        const launchArguments = resolvePiFamilyLaunchArguments(
+        const nativeResumeCursor = readNativeSessionResumeCursor(input.resumeCursor);
+        if (nativeResumeCursor !== undefined && nativeResumeCursor.runtime !== config.runtime) {
+          return yield* new ProviderAdapterValidationError({
+            provider: config.provider,
+            operation: "startSession",
+            issue: `${nativeResumeCursor.runtime} native session cursor cannot be resumed by ${config.runtime}.`,
+          });
+        }
+        const baseLaunchArguments = resolvePiFamilyLaunchArguments(
           config.launchArguments,
           config.trustMode,
         );
+        const launchArguments =
+          nativeResumeCursor === undefined
+            ? baseLaunchArguments
+            : [
+                ...withoutSessionSelectionArguments(baseLaunchArguments),
+                config.runtime === "pi" ? "--session" : "--resume",
+                nativeResumeCursor.sessionId,
+              ];
         const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, launchArguments, {
           env: environment,
           extendEnv: true,
@@ -1535,9 +1645,9 @@ export const makePiFamilyAdapter = (
         const child = yield* spawner
           .spawn(
             ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-              cwd: input.cwd ?? config.cwd,
               env: environment,
               extendEnv: true,
+              cwd,
               shell: spawnCommand.shell,
               stdin: { stream: "pipe", endOnDone: false },
               stdout: "pipe",
@@ -1590,7 +1700,7 @@ export const makePiFamilyAdapter = (
             providerInstanceId: input.providerInstanceId ?? config.instanceId,
             status: "ready",
             runtimeMode: input.runtimeMode,
-            cwd: input.cwd ?? config.cwd,
+            cwd,
             threadId: input.threadId,
             ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
             ...(input.resumeCursor === undefined ? {} : { resumeCursor: input.resumeCursor }),
@@ -1827,7 +1937,9 @@ export const makePiFamilyAdapter = (
           );
         }
 
-        if (input.resumeCursor !== undefined) {
+        if (nativeResumeCursor !== undefined) {
+          session.nativeSessionId = nativeResumeCursor.sessionId;
+        } else if (input.resumeCursor !== undefined) {
           if (session.capabilities.sessions.nativeCheckpoint) {
             const descriptor = readCheckpointDescriptor(input.resumeCursor);
             if (!descriptor || descriptor.runtime !== config.runtime) {
@@ -1863,6 +1975,32 @@ export const makePiFamilyAdapter = (
               detail: `Native ${config.runtime} does not advertise checkpoint or resume support.`,
             });
           }
+        }
+        if (config.runtime === "omp" || nativeResumeCursor !== undefined) {
+          const stateResponse = yield* request(session, { type: "get_state" }, "get_state");
+          const state = asRecord(stateResponse.data);
+          const nativeSessionId = asString(state?.sessionId);
+          if (nativeSessionId === undefined) {
+            return yield* new ProviderAdapterRequestError({
+              provider: config.provider,
+              method: "get_state",
+              detail: `${config.runtime.toUpperCase()} returned state without a session id.`,
+              reason: "protocol",
+            });
+          }
+          if (
+            nativeResumeCursor !== undefined &&
+            nativeSessionId !== nativeResumeCursor.sessionId
+          ) {
+            return yield* new ProviderAdapterRequestError({
+              provider: config.provider,
+              method: "get_state",
+              detail: `${config.runtime.toUpperCase()} resumed '${nativeSessionId}' instead of '${nativeResumeCursor.sessionId}'.`,
+              reason: "protocol",
+            });
+          }
+          const modelId = nativeModelSlug(state?.model);
+          bindNativeSessionIdentity(session, config.runtime, nativeSessionId, modelId, false);
         }
         session.startupComplete = true;
         yield* offer({
@@ -2017,6 +2155,7 @@ export const makePiFamilyAdapter = (
                 }
               }
             });
+
             yield* request(
               session,
               {
@@ -2096,6 +2235,144 @@ export const makePiFamilyAdapter = (
           turns: session.turns.map((turn) => ({ id: turn.id, items: [...turn.items] })),
         })),
       );
+    const listNativeSessions = (
+      input: ProviderNativeSessionListInput,
+    ): Effect.Effect<ReadonlyArray<ProviderNativeSessionSummary>, ProviderNativeSessionError> => {
+      if (input.providerInstanceId !== config.instanceId) {
+        return Effect.fail(
+          new ProviderNativeSessionError({
+            code: "invalid",
+            message: `Expected provider instance ${config.instanceId}.`,
+          }),
+        );
+      }
+      return listPiFamilyNativeSessions(config, config.instanceId, input.cwd);
+    };
+
+    const readNativeHistory = (
+      threadId: ThreadId,
+      cursor?: string,
+    ): Effect.Effect<
+      ProviderNativeHistoryPage,
+      ProviderAdapterError | ProviderNativeSessionError
+    > =>
+      Effect.gen(function* () {
+        const session = yield* requireSession(threadId);
+        const sessionId = session.nativeSessionId;
+        if (sessionId === undefined) {
+          return yield* new ProviderNativeSessionError({
+            code: "invalid",
+            message: `${config.runtime.toUpperCase()} did not report a native session id.`,
+          });
+        }
+        const offset = cursor === undefined ? 0 : Number(cursor);
+        if (!Number.isSafeInteger(offset) || offset < 0) {
+          return yield* new ProviderNativeSessionError({
+            code: "invalid",
+            message: "Native history cursor is invalid.",
+          });
+        }
+        const messages =
+          session.nativeHistoryMessages ??
+          (yield* readPiFamilyNativeHistoryMessages(
+            config,
+            sessionId,
+            session.session.cwd ?? config.cwd,
+          ));
+        session.nativeHistoryMessages = messages;
+        const pageMessages = messages.slice(offset, offset + 64);
+        const nextOffset = offset + pageMessages.length;
+        return {
+          messages: pageMessages,
+          ...(nextOffset < messages.length ? { nextCursor: String(nextOffset) } : {}),
+          totalMessages: messages.length,
+        };
+      });
+    const renameNativeSession = (
+      threadId: ThreadId,
+      name: string,
+    ): Effect.Effect<void, ProviderAdapterError | ProviderNativeSessionError> =>
+      Effect.gen(function* () {
+        const session = yield* requireSession(threadId);
+        if (!isQuiescent(session)) {
+          return yield* new ProviderNativeSessionError({
+            code: "invalid",
+            message: "Native session cannot be renamed while work is active.",
+          });
+        }
+        yield* request(session, { type: "set_session_name", name }, "set_session_name");
+        session.session = {
+          ...session.session,
+          updatedAt: nowIso(),
+        };
+      });
+
+    const forkNativeSession = (
+      threadId: ThreadId,
+    ): Effect.Effect<
+      { readonly sessionId: string },
+      ProviderAdapterError | ProviderNativeSessionError
+    > =>
+      Effect.gen(function* () {
+        const session = yield* requireSession(threadId);
+        if (!isQuiescent(session)) {
+          return yield* new ProviderNativeSessionError({
+            code: "invalid",
+            message: "Native session cannot be forked while work is active.",
+          });
+        }
+        if (!session.capabilities.sessions.fork) {
+          return yield* new ProviderNativeSessionError({
+            code: "unsupported",
+            message: `Native ${config.runtime} does not support session forks.`,
+          });
+        }
+        const oldSessionId = session.nativeSessionId;
+        if (config.runtime === "pi") {
+          const response = yield* request(session, { type: "clone" }, "clone");
+          if (asRecord(response.data)?.cancelled === true) {
+            return yield* new ProviderNativeSessionError({
+              code: "native",
+              message: "Pi cancelled the session fork.",
+            });
+          }
+        } else {
+          const candidatesResponse = yield* request(
+            session,
+            { type: "get_branch_messages" },
+            "get_branch_messages",
+          );
+          const messages = asRecord(candidatesResponse.data)?.messages;
+          const latest =
+            Array.isArray(messages) && messages.length > 0
+              ? asRecord(messages[messages.length - 1])
+              : undefined;
+          const entryId = asString(latest?.entryId);
+          if (entryId === undefined) {
+            return yield* new ProviderNativeSessionError({
+              code: "invalid",
+              message: "OMP cannot fork a session without a branchable user message.",
+            });
+          }
+          const response = yield* request(session, { type: "branch", entryId }, "branch");
+          if (asRecord(response.data)?.cancelled === true) {
+            return yield* new ProviderNativeSessionError({
+              code: "native",
+              message: "OMP cancelled the session fork.",
+            });
+          }
+        }
+        const stateResponse = yield* request(session, { type: "get_state" }, "get_state");
+        const sessionId = asString(asRecord(stateResponse.data)?.sessionId);
+        if (sessionId === undefined || sessionId === oldSessionId) {
+          return yield* new ProviderNativeSessionError({
+            code: "native",
+            message: `Native ${config.runtime} did not create a distinct forked session.`,
+          });
+        }
+        bindNativeSessionIdentity(session, config.runtime, sessionId, undefined, true);
+        return { sessionId };
+      });
 
     const rollbackThread = (
       threadId: ThreadId,
@@ -2251,6 +2528,10 @@ export const makePiFamilyAdapter = (
       hasSession: (threadId) =>
         Effect.succeed(Boolean(sessions.get(threadId) && !sessions.get(threadId)?.stopped)),
       readThread,
+      listNativeSessions,
+      readNativeHistory,
+      renameNativeSession,
+      forkNativeSession,
       rollbackThread,
       captureNativeCheckpoint,
       restoreNativeCheckpoint,

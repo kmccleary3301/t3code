@@ -39,6 +39,7 @@ import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectRepositoryRoute } from "./features/projects/AddProjectRepositoryRoute";
 import { AddProjectSourceRoute } from "./features/projects/AddProjectSourceRoute";
 import { NewTaskDraftRouteScreen } from "./features/threads/NewTaskDraftRouteScreen";
+import { NativeSessionsRouteScreen } from "./features/threads/NativeSessionsRouteScreen";
 import {
   NewTaskBranchPickerRouteScreen,
   NewTaskEnvironmentPickerRouteScreen,
@@ -328,6 +329,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitCommit",
   "GitConfirm",
   "GitOverview",
+  "NativeSessions",
   "NewTaskSheet",
   "SettingsLegal",
   "SettingsSheet",
@@ -458,6 +460,17 @@ export const RootStack = createNativeStackNavigator({
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
+      },
+    }),
+    NativeSessions: createNativeStackScreen({
+      screen: NativeSessionsRouteScreen,
+      linking: "native-sessions",
+      options: {
+        ...SHEET_GLASS_HEADER_OPTIONS,
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        title: "Native Sessions",
+        sheetAllowedDetents: [0.72, 1],
+        sheetGrabberVisible: true,
       },
     }),
     Thread: createNativeStackScreen({

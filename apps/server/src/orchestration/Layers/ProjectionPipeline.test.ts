@@ -2790,3 +2790,155 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+it.layer(
+  Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-native-history-projection-test-")),
+)("OrchestrationProjectionPipeline", (it) => {
+  it.effect("projects imported native messages and completed turns", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-native-history");
+      const turnId = TurnId.make("turn-native-history");
+      const userMessageId = MessageId.make("message-native-user");
+      const assistantMessageId = MessageId.make("message-native-assistant");
+      const requestedAt = "2026-01-01T00:00:00.000Z";
+      const completedAt = "2026-01-01T00:00:01.000Z";
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-native-thread"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: requestedAt,
+        commandId: CommandId.make("cmd-native-thread"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-native-thread"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-native-history"),
+          title: "Native history",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("omp"),
+            model: "openai-codex/gpt-5.6",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: requestedAt,
+          updatedAt: requestedAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.native-history-imported",
+        eventId: EventId.make("evt-native-history"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: completedAt,
+        commandId: CommandId.make("cmd-native-history"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-native-history"),
+        metadata: {},
+        payload: {
+          threadId,
+          messages: [
+            {
+              id: userMessageId,
+              role: "user",
+              text: "native prompt",
+              turnId,
+              streaming: false,
+              createdAt: requestedAt,
+              updatedAt: requestedAt,
+            },
+            {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "native answer",
+              turnId,
+              streaming: false,
+              createdAt: completedAt,
+              updatedAt: completedAt,
+            },
+          ],
+          turns: [
+            {
+              turnId,
+              state: "completed",
+              requestedAt,
+              startedAt: requestedAt,
+              completedAt,
+              assistantMessageId,
+            },
+          ],
+          importedAt: completedAt,
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const messageRows = yield* sql<{
+        readonly messageId: string;
+        readonly role: string;
+        readonly text: string;
+        readonly turnId: string | null;
+      }>`
+        SELECT
+          message_id AS "messageId",
+          role,
+          text,
+          turn_id AS "turnId"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+        ORDER BY created_at
+      `;
+      assert.deepEqual(messageRows, [
+        {
+          messageId: "message-native-user",
+          role: "user",
+          text: "native prompt",
+          turnId: "turn-native-history",
+        },
+        {
+          messageId: "message-native-assistant",
+          role: "assistant",
+          text: "native answer",
+          turnId: "turn-native-history",
+        },
+      ]);
+
+      const turnRows = yield* sql<{
+        readonly turnId: string;
+        readonly state: string;
+        readonly assistantMessageId: string | null;
+        readonly completedAt: string | null;
+      }>`
+        SELECT
+          turn_id AS "turnId",
+          state,
+          assistant_message_id AS "assistantMessageId",
+          completed_at AS "completedAt"
+        FROM projection_turns
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(turnRows, [
+        {
+          turnId: "turn-native-history",
+          state: "completed",
+          assistantMessageId: "message-native-assistant",
+          completedAt,
+        },
+      ]);
+
+      const threadRows = yield* sql<{ readonly latestTurnId: string | null }>`
+        SELECT latest_turn_id AS "latestTurnId"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(threadRows, [{ latestTurnId: "turn-native-history" }]);
+    }),
+  );
+});

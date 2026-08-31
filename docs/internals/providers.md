@@ -46,6 +46,42 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Managing existing Pi-family sessions
+
+The web command palette and mobile **Native Sessions** sheet discover durable Pi and OMP sessions
+from every connected environment with an enabled, installed Pi-family provider instance.
+[`NativeSessionCatalog`][native-catalog] reads each instance's primary session files across their
+recorded working directories; nested subagent transcripts stay out of the catalog. Session directory
+resolution honors `--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, the configured agent directory or
+`PI_CODING_AGENT_DIR`, OMP profiles, then the runtime default under `~/.pi/agent/sessions` or
+`~/.omp/agent/sessions`.
+
+Attachment is one atomic server operation. [`NativeSessionCoordinator`][native-coordinator] resolves
+or registers the project for the session's normalized working directory, claims a deterministic T3
+thread for the provider-instance/session pair, starts one native process, reconciles JSONL history,
+and returns both IDs. A server semaphore serializes competing lifecycle requests; the persisted
+provider binding and deterministic thread ID preserve ownership across reconnects and host restarts.
+Pi resumes the exact ID with `--session`; OMP uses `--resume`.
+An unavailable recorded working directory fails before process spawn instead of leaving an attachment
+request pending.
+
+History reconciliation follows the active JSONL parent chain and projects user, system, and assistant
+text through `thread.native-history-imported`. Message and turn IDs are deterministic and projection
+writes are upserts, so reopening imports newly appended history without duplicating prior transcript
+records. Native tool records remain owned by the native runtime; later live events use the normal
+canonical thread pipeline.
+
+Rename and fork use each runtime's RPC lifecycle commands. Forking rebinds the native process, so the
+coordinator stops the source attachment before opening the returned session ID as its own T3 thread.
+Stop terminates only the T3-owned live process. **Archive thread** rejects an active turn, then stops
+the T3-owned process and archives the canonical thread. Neither Pi nor OMP exposes a safe native
+archive/delete RPC, so T3 never rewrites, moves, or deletes session JSONL files.
+
+All six RPCs—list, open, rename, fork, stop, and archive—live in the shared client runtime. Once
+attached, a native session is an ordinary canonical thread: mobile can send turns, interrupt work,
+answer approvals and user-input requests, change supported runtime/model settings, and receive the
+existing thread push notifications without a provider-specific notification path.
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method
@@ -99,3 +135,5 @@ when a request opens (approval) or user input is requested, via
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+[native-catalog]: ../../apps/server/src/provider/piFamily/NativeSessionCatalog.ts
+[native-coordinator]: ../../apps/server/src/provider/Layers/NativeSessionCoordinator.ts

@@ -68,6 +68,21 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProviderNativeSessionArchiveInput,
+  ProviderNativeSessionArchiveResult,
+  ProviderNativeSessionError,
+  ProviderNativeSessionForkInput,
+  ProviderNativeSessionForkResult,
+  ProviderNativeSessionListRequest,
+  ProviderNativeSessionListResult,
+  ProviderNativeSessionOpenInput,
+  ProviderNativeSessionOpenResult,
+  ProviderNativeSessionRenameInput,
+  ProviderNativeSessionRenameResult,
+  ProviderNativeSessionStopInput,
+  ProviderNativeSessionStopResult,
+} from "./provider.ts";
+import {
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestCommentInput,
@@ -263,6 +278,12 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverListNativeSessions: "server.listNativeSessions",
+  serverOpenNativeSession: "server.openNativeSession",
+  serverRenameNativeSession: "server.renameNativeSession",
+  serverForkNativeSession: "server.forkNativeSession",
+  serverStopNativeSession: "server.stopNativeSession",
+  serverArchiveNativeSession: "server.archiveNativeSession",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
@@ -391,6 +412,42 @@ export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscov
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsServerListNativeSessionsRpc = Rpc.make(WS_METHODS.serverListNativeSessions, {
+  payload: ProviderNativeSessionListRequest,
+  success: ProviderNativeSessionListResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerOpenNativeSessionRpc = Rpc.make(WS_METHODS.serverOpenNativeSession, {
+  payload: ProviderNativeSessionOpenInput,
+  success: ProviderNativeSessionOpenResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerRenameNativeSessionRpc = Rpc.make(WS_METHODS.serverRenameNativeSession, {
+  payload: ProviderNativeSessionRenameInput,
+  success: ProviderNativeSessionRenameResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerForkNativeSessionRpc = Rpc.make(WS_METHODS.serverForkNativeSession, {
+  payload: ProviderNativeSessionForkInput,
+  success: ProviderNativeSessionForkResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerStopNativeSessionRpc = Rpc.make(WS_METHODS.serverStopNativeSession, {
+  payload: ProviderNativeSessionStopInput,
+  success: ProviderNativeSessionStopResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerArchiveNativeSessionRpc = Rpc.make(WS_METHODS.serverArchiveNativeSession, {
+  payload: ProviderNativeSessionArchiveInput,
+  success: ProviderNativeSessionArchiveResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -994,6 +1051,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerListNativeSessionsRpc,
+  WsServerOpenNativeSessionRpc,
+  WsServerRenameNativeSessionRpc,
+  WsServerForkNativeSessionRpc,
+  WsServerStopNativeSessionRpc,
+  WsServerArchiveNativeSessionRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
