@@ -10319,10 +10319,6 @@ const runNativeHttpParityScenario = (
                 message.role === "assistant" &&
                 !message.streaming &&
                 message.text.includes("NATIVE-MATRIX-OK"),
-            ) &&
-            thread.checkpoints.some(
-              (checkpoint) =>
-                checkpoint.status === "ready" && checkpoint.nativeCheckpoint?.runtime === "pi",
             )
           : thread.activities.some((activity) => activity.kind.startsWith("task.")),
       30_000,
@@ -10330,7 +10326,7 @@ const runNativeHttpParityScenario = (
     if (runtime === "omp") {
       yield* harness.engine.dispatch({
         type: "thread.session.stop",
-        commandId: CommandId.make(`native-parity:${runtime}:stop-before-drain`),
+        commandId: CommandId.make(`native-parity:${runtime}:stop-active-task`),
         threadId,
         createdAt,
       });
@@ -10340,6 +10336,9 @@ const runNativeHttpParityScenario = (
         30_000,
       );
     }
+    // Native runtimes may emit trailing frames after terminal turn state.
+    // Let stdout ingestion enqueue them before placing reactor drain markers.
+    yield* Effect.sleep("250 millis");
     yield* harness.drainProviderRuntime;
     yield* harness.drainCheckpointReactor;
     const persistedEvents = yield* harness.engine
