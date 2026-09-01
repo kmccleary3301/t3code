@@ -97,6 +97,7 @@ function searchSlashCommandItems(
 export function buildMobileSlashCommandItems(input: {
   readonly commands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly query: string;
+  readonly includeInteractionModeCommands?: boolean;
 }): SlashCommandItem[] {
   const argumentCompletions = buildProviderSlashArgumentCompletions(input);
   if (argumentCompletions) {
@@ -114,7 +115,11 @@ export function buildMobileSlashCommandItems(input: {
     return searchSlashCommandItems(items, argumentCompletions.searchQuery);
   }
 
-  const commandNames = new Set<string>(BUILT_IN_COMMANDS.map((item) => item.command));
+  const builtInCommands =
+    input.includeInteractionModeCommands === false
+      ? BUILT_IN_COMMANDS.filter((item) => item.command === "model")
+      : BUILT_IN_COMMANDS;
+  const commandNames = new Set<string>(builtInCommands.map((item) => item.command));
   const providerItems: SlashCommandItem[] = [];
   for (const command of input.commands) {
     if (commandNames.has(command.name)) continue;
@@ -127,5 +132,5 @@ export function buildMobileSlashCommandItems(input: {
       description: commandDescription(command),
     });
   }
-  return searchSlashCommandItems([...BUILT_IN_COMMANDS, ...providerItems], input.query);
+  return searchSlashCommandItems([...builtInCommands, ...providerItems], input.query);
 }

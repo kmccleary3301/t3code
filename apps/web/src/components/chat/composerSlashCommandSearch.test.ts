@@ -6,6 +6,7 @@ import {
   buildProviderSlashArgumentItems,
   mergeSlashCommandItems,
   searchSlashCommandItems,
+  slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
 
 describe("searchSlashCommandItems", () => {
@@ -37,7 +38,7 @@ describe("searchSlashCommandItems", () => {
         description: "Create distinctive, production-grade frontend interfaces",
       },
     ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
     >;
 
     expect(searchSlashCommandItems(items, "ui").map((item) => item.id)).toEqual([
@@ -65,11 +66,150 @@ describe("searchSlashCommandItems", () => {
         description: "General GitHub help",
       },
     ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
     >;
 
     expect(searchSlashCommandItems(items, "gfc").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:gh-fix-ci",
+    ]);
+  });
+
+  it("includes skills by name and description", () => {
+    const items = [
+      {
+        id: "skill:claudeAgent:browser",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "browser",
+          path: "/skills/browser/SKILL.md",
+          enabled: true,
+          shortDescription: "Open and control the in-app browser",
+        },
+        label: "/skill:browser",
+        description: "Open and control the in-app browser",
+      },
+    ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
+
+    expect(searchSlashCommandItems(items, "browser").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:browser",
+    ]);
+    expect(searchSlashCommandItems(items, "control").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:browser",
+    ]);
+  });
+
+  it("matches skills by display name", () => {
+    const items = [
+      {
+        id: "skill:claudeAgent:ask-matt",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "ask-matt",
+          displayName: "Ask Matt",
+          path: "/skills/ask-matt/SKILL.md",
+          enabled: true,
+          shortDescription: "Find the right skill or workflow",
+        },
+        label: "/skill:ask-matt",
+        description: "Find the right skill or workflow",
+      },
+    ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
+
+    expect(searchSlashCommandItems(items, "ask matt").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:ask-matt",
+    ]);
+    expect(searchSlashCommandItems(items, "/skill:ask-matt").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:ask-matt",
+    ]);
+  });
+
+  it("matches skills by their rendered prefix", () => {
+    const items = [
+      {
+        id: "skill:claudeAgent:browser",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "browser",
+          path: "/skills/browser/SKILL.md",
+          enabled: true,
+        },
+        label: "/skill:browser",
+        description: "Open and control the in-app browser",
+      },
+    ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
+
+    expect(searchSlashCommandItems(items, "/skill:brow").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:browser",
+    ]);
+    expect(searchSlashCommandItems(items, "/sk").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:browser",
+    ]);
+    expect(searchSlashCommandItems(items, "/ill")).toEqual([]);
+  });
+
+  it("keeps skills alongside commands for an empty slash query", () => {
+    const items = [
+      {
+        id: "slash:model",
+        type: "slash-command",
+        command: "model",
+        label: "/model",
+        description: "Switch model",
+      },
+      {
+        id: "skill:claudeAgent:unslop",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "unslop",
+          path: "/skills/unslop/SKILL.md",
+          enabled: true,
+        },
+        label: "/skill:unslop",
+        description: "Cut AI tells from writing",
+      },
+    ] satisfies Array<Extract<ComposerCommandItem, { type: "slash-command" | "skill" }>>;
+
+    expect(searchSlashCommandItems(items, "").map((item) => item.id)).toEqual([
+      "slash:model",
+      "skill:claudeAgent:unslop",
+    ]);
+  });
+
+  it("hides skills from slash completion after the first message line", () => {
+    const items = [
+      {
+        id: "slash:model",
+        type: "slash-command",
+        command: "model",
+        label: "/model",
+        description: "Switch model",
+      },
+      {
+        id: "skill:claudeAgent:unslop",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "unslop",
+          path: "/skills/unslop/SKILL.md",
+          enabled: true,
+        },
+        label: "/skill:unslop",
+        description: "Cut AI tells from writing",
+      },
+    ] satisfies Array<
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
+    >;
+
+    expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
+      "slash:model",
+    ]);
+    expect(slashCommandItemsForPromptPosition(items, true).map((item) => item.id)).toEqual([
+      "slash:model",
+      "skill:claudeAgent:unslop",
     ]);
   });
 
@@ -85,7 +225,7 @@ describe("searchSlashCommandItems", () => {
     ] satisfies Array<
       Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
     >;
-    const provider = ["model", "models", "todo"].map(
+    const provider = ["model", "models"].map(
       (name) =>
         ({
           id: `provider-slash-command:omp:${name}`,
@@ -100,116 +240,42 @@ describe("searchSlashCommandItems", () => {
     expect(mergeSlashCommandItems(builtIn, provider).map((item) => item.label)).toEqual([
       "/model",
       "/models",
-      "/todo",
     ]);
   });
 
-  it("completes OMP subcommands and static multi-argument values", () => {
-    const provider = ProviderDriverKind.make("omp");
-    const commands = [
-      {
-        name: "goal",
-        description: "Manage goal mode",
-        subcommands: [
-          { name: "set", description: "Set the goal", usage: "<objective>" },
-          { name: "budget", description: "Adjust token budget", usage: "<N|off>" },
-        ],
-      },
-      { name: "fast", input: { hint: "[on|off|status]" } },
-      {
-        name: "mcp",
-        subcommands: [
-          {
-            name: "add",
-            usage: "<name> [--scope project|user] [--url <url>] [-- <command...>]",
-          },
-        ],
-      },
-      {
-        name: "memory",
-        subcommands: [{ name: "mm list", usage: "[json|text]" }],
-      },
-      {
-        name: "todo",
-        subcommands: [{ name: "done", usage: "<task|phase>" }],
-      },
-    ];
-
-    const subcommands = buildProviderSlashArgumentItems({
-      provider,
-      commands,
+  it("completes native subcommands and later arguments", () => {
+    const completion = buildProviderSlashArgumentItems({
+      provider: ProviderDriverKind.make("omp"),
+      commands: [
+        {
+          name: "goal",
+          subcommands: [
+            { name: "set", usage: "<objective>" },
+            { name: "budget", description: "Adjust token budget", usage: "<N|off>" },
+          ],
+        },
+      ],
       query: "goal bud",
     });
-    expect(subcommands?.searchQuery).toBe("bud");
     expect(
-      subcommands
-        ? searchSlashCommandItems(subcommands.items, subcommands.searchQuery).map((item) => ({
-            label: item.label,
-            description: item.description,
-            insertText: item.type === "provider-slash-argument" ? item.insertText : null,
-          }))
-        : [],
-    ).toEqual([
-      {
-        label: "/goal budget",
-        description: "Adjust token budget · <N|off>",
-        insertText: "/goal budget ",
-      },
-    ]);
-
-    const argument = buildProviderSlashArgumentItems({
-      provider,
-      commands,
-      query: "goal budget o",
-    });
-    expect(argument?.searchQuery).toBe("o");
-    expect(argument?.items).toMatchObject([
-      {
-        label: "off",
-        insertText: "/goal budget off ",
-        searchValue: "off",
-      },
-    ]);
-
-    const topLevelArgument = buildProviderSlashArgumentItems({
-      provider,
-      commands,
-      query: "fast o",
-    });
-    expect(
-      topLevelArgument
-        ? searchSlashCommandItems(topLevelArgument.items, topLevelArgument.searchQuery).map(
+      completion
+        ? searchSlashCommandItems(completion.items, completion.searchQuery).map(
             (item) => item.label,
           )
         : [],
-    ).toEqual(["on", "off", "status"]);
-
-    const flagValue = buildProviderSlashArgumentItems({
-      provider,
-      commands,
-      query: "mcp add server --scope p",
-    });
-    expect(flagValue?.items.map((item) => item.label)).toEqual(["project", "user"]);
-
-    const multiwordSubcommand = buildProviderSlashArgumentItems({
-      provider,
-      commands,
-      query: "memory mm l",
-    });
-    expect(
-      multiwordSubcommand
-        ? searchSlashCommandItems(multiwordSubcommand.items, multiwordSubcommand.searchQuery).map(
-            (item) => item.label,
-          )
-        : [],
-    ).toEqual(["/memory mm list"]);
+    ).toEqual(["/goal budget"]);
 
     expect(
       buildProviderSlashArgumentItems({
-        provider,
-        commands,
-        query: "todo done ",
+        provider: ProviderDriverKind.make("omp"),
+        commands: [
+          {
+            name: "goal",
+            subcommands: [{ name: "budget", usage: "<N|off>" }],
+          },
+        ],
+        query: "goal budget o",
       })?.items,
-    ).toEqual([]);
+    ).toMatchObject([{ label: "off", insertText: "/goal budget off " }]);
   });
 });

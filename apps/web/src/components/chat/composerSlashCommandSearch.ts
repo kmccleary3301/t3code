@@ -7,13 +7,36 @@ import {
 import { buildProviderSlashArgumentCompletions } from "@t3tools/shared/providerSlashCommandCompletion";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
+import { scoreProviderSkill } from "../../providerSkillSearch";
 
-type SearchableSlashCommandItem = Extract<
+type SlashSearchItem = Extract<
   ComposerCommandItem,
-  { type: "slash-command" | "provider-slash-command" | "provider-slash-argument" }
+  { type: "slash-command" | "provider-slash-command" | "provider-slash-argument" | "skill" }
 >;
 
-function scoreSlashCommandItem(item: SearchableSlashCommandItem, query: string): number | null {
+export function slashCommandItemsForPromptPosition(
+  items: ReadonlyArray<SlashSearchItem>,
+  isAtPromptStart: boolean,
+): SlashSearchItem[] {
+  if (isAtPromptStart) {
+    return [...items];
+  }
+  return items.filter((item) => item.type !== "skill");
+}
+
+function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | null {
+  if (item.type === "skill") {
+    if (query === "skill") {
+      return 0;
+    }
+    const skillQuery = query.startsWith("skill:") ? query.slice("skill:".length) : query;
+    const skillScore = skillQuery ? scoreProviderSkill(item.skill, skillQuery) : 0;
+    if (skillScore !== null) {
+      return skillScore;
+    }
+    return "skill".startsWith(query) ? Number.MAX_SAFE_INTEGER : null;
+  }
+
   const primaryValue =
     item.type === "slash-command"
       ? item.command.toLowerCase()
@@ -74,7 +97,7 @@ export function buildProviderSlashArgumentItems(input: {
   readonly provider: ProviderDriverKind;
   readonly commands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly query: string;
-}): { readonly items: SearchableSlashCommandItem[]; readonly searchQuery: string } | null {
+}): { readonly items: SlashSearchItem[]; readonly searchQuery: string } | null {
   const completions = buildProviderSlashArgumentCompletions({
     commands: input.commands,
     query: input.query,
@@ -83,7 +106,7 @@ export function buildProviderSlashArgumentItems(input: {
 
   return {
     items: completions.items.map(
-      (completion): SearchableSlashCommandItem => ({
+      (completion): SlashSearchItem => ({
         id: `provider-slash-argument:${input.provider}:${completion.key}`,
         type: "provider-slash-argument",
         provider: input.provider,
@@ -99,16 +122,16 @@ export function buildProviderSlashArgumentItems(input: {
 }
 
 export function searchSlashCommandItems(
-  items: ReadonlyArray<SearchableSlashCommandItem>,
+  items: ReadonlyArray<SlashSearchItem>,
   query: string,
-): SearchableSlashCommandItem[] {
+): SlashSearchItem[] {
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\/+/ });
   if (!normalizedQuery) {
     return [...items];
   }
 
   const ranked: Array<{
-    item: SearchableSlashCommandItem;
+    item: SlashSearchItem;
     score: number;
     tieBreaker: string;
   }> = [];
@@ -129,7 +152,9 @@ export function searchSlashCommandItems(
             ? `0\u0000${item.command}`
             : item.type === "provider-slash-command"
               ? `1\u0000${item.command.name}\u0000${item.provider}`
-              : `2\u0000${item.searchValue}\u0000${item.provider}`,
+              : item.type === "provider-slash-argument"
+                ? `2\u0000${item.searchValue}\u0000${item.provider}`
+                : `3\u0000${item.skill.name}\u0000${item.provider}`,
       },
       Number.POSITIVE_INFINITY,
     );

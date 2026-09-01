@@ -1,4 +1,5 @@
 import { isElectron } from "~/env";
+import { isWindowsPlatform } from "~/lib/utils";
 
 export type SettingsPath =
   | "/settings/general"
@@ -18,6 +19,9 @@ export interface SettingsSearchItem {
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
+  // Its row only renders on Windows desktop, so other desktop platforms must
+  // not expose a result that points to a missing anchor.
+  readonly windowsOnly?: boolean;
 }
 
 /**
@@ -56,6 +60,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     // Theme cards live directly under the scheme tiles; the section is the
     // stable scroll destination for both.
     targetId: "appearance",
+  },
+  {
+    // Prefixed because the slider control already owns the `appearance-contrast` id.
+    id: "setting-appearance-contrast",
+    title: "Contrast",
+    to: "/settings/appearance",
   },
   {
     // Prefixed because the slider control already owns the `glass-opacity` id.
@@ -126,6 +136,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "skills-in-slash-menu",
+    title: "Show skills in slash menu",
+    to: "/settings/general",
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",
@@ -144,6 +159,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "add-project-starts-in",
     title: "Add project starts in",
+    to: "/settings/general",
+  },
+  {
+    id: "unpin-confirmation",
+    title: "Unpin confirmation",
     to: "/settings/general",
   },
   {
@@ -222,6 +242,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "browser",
   },
   {
+    id: "browser-recording-frame-rate",
+    title: "Browser recording frame rate",
+    to: "/settings/integrations",
+    targetId: "browser",
+  },
+  {
     id: "browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/integrations",
@@ -236,6 +262,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",
+  },
+  {
+    id: "wsl-backend",
+    title: "WSL backend",
+    to: "/settings/connections",
+    desktopOnly: true,
+    windowsOnly: true,
   },
   {
     id: "archive",
@@ -282,6 +315,8 @@ export function searchSettings(
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
+      (!item.windowsOnly ||
+        isWindowsPlatform(typeof navigator === "undefined" ? "" : navigator.platform)) &&
       normalizeSearchText(item.title).includes(normalizedQuery),
   );
 }

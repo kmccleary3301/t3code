@@ -20,6 +20,8 @@ import type {
   ProviderSession,
   ProviderSubagentTranscriptReadResult,
   ProviderSessionStartInput,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
@@ -198,6 +200,13 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     checkpoint: unknown,
   ) => Effect.Effect<void, TError>;
+
+  /**
+   * Upload a thread to the provider when the adapter supports feedback.
+   */
+  readonly uploadFeedback?: (
+    input: ProviderUploadFeedbackInput,
+  ) => Effect.Effect<ProviderUploadFeedbackResult, TError>;
 
   /**
    * Stop all sessions owned by this adapter.
