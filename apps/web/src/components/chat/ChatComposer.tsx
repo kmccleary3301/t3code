@@ -103,7 +103,11 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
-import { searchSlashCommandItems } from "./composerSlashCommandSearch";
+import {
+  buildProviderSlashArgumentItems,
+  mergeSlashCommandItems,
+  searchSlashCommandItems,
+} from "./composerSlashCommandSearch";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
@@ -1106,22 +1110,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ] as const)
           : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
-        (command) => ({
-          id: `provider-slash-command:${selectedProvider}:${command.name}`,
-          type: "provider-slash-command" as const,
-          provider: selectedProvider,
-          command,
-          label: `/${command.name}`,
-          description: command.description ?? command.input?.hint ?? "Run provider command",
-        }),
-      );
-      const query = composerTrigger.query.trim().toLowerCase();
-      const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
-      if (!query) {
-        return slashCommandItems;
+      const providerCommands = selectedProviderStatus?.slashCommands ?? [];
+      const argumentItems = buildProviderSlashArgumentItems({
+        provider: selectedProvider,
+        commands: providerCommands,
+        query: composerTrigger.query,
+      });
+      if (argumentItems !== null) {
+        return argumentItems.searchQuery
+          ? searchSlashCommandItems(argumentItems.items, argumentItems.searchQuery)
+          : argumentItems.items;
       }
-      return searchSlashCommandItems(slashCommandItems, query);
+      const providerSlashCommandItems = providerCommands.map((command) => ({
+        id: `provider-slash-command:${selectedProvider}:${command.name}`,
+        type: "provider-slash-command" as const,
+        provider: selectedProvider,
+        command,
+        label: `/${command.name}`,
+        description:
+          command.description && command.input?.hint
+            ? `${command.description} · ${command.input.hint}`
+            : (command.description ?? command.input?.hint ?? "Run provider command"),
+      }));
+      const query = composerTrigger.query.trim().toLowerCase();
+      const slashCommandItems = mergeSlashCommandItems(
+        builtInSlashCommandItems,
+        providerSlashCommandItems,
+      );
+      return query ? searchSlashCommandItems(slashCommandItems, query) : slashCommandItems;
     }
     if (composerTrigger.kind === "skill") {
       return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
@@ -1147,7 +1163,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     workspaceEntries.entries,
   ]);
 
-  const composerMenuOpen = Boolean(composerTrigger);
+  const composerMenuOpen =
+    composerTrigger !== null &&
+    (composerTrigger.kind !== "slash-command" ||
+      !composerTrigger.query.includes(" ") ||
+      composerMenuItems.length > 0);
   const composerMenuSearchKey = composerTrigger
     ? `${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;
@@ -1763,8 +1783,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
-      if (item.type === "provider-slash-command") {
-        const replacement = `/${item.command.name} `;
+      if (item.type === "provider-slash-command" || item.type === "provider-slash-argument") {
+        const replacement =
+          item.type === "provider-slash-command" ? `/${item.command.name} ` : item.insertText;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,

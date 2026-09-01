@@ -691,6 +691,13 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverListNativeSessions,
       staleTimeMs: 0,
     }),
+    subagentTranscript: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:subagent-transcript",
+      tag: WS_METHODS.serverReadSubagentTranscript,
+      staleTimeMs: 0,
+      refreshIntervalMs: 750,
+      idleTtlMs: 30_000,
+    }),
     openNativeSession: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:open-native-session",
       tag: WS_METHODS.serverOpenNativeSession,

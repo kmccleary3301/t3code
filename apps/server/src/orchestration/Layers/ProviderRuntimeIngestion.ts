@@ -426,6 +426,36 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "ui.status.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "ui.status.updated",
+          summary: "Native status updated",
+          payload: event.payload,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "ui.widget.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "ui.widget.updated",
+          summary: "Native widget updated",
+          payload: event.payload,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "runtime.error": {
       return [
         {

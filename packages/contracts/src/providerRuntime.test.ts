@@ -49,6 +49,31 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.plan[1]?.status).toBe("inProgress");
   });
 
+  it("decodes keyed native UI updates", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "ui.widget.updated",
+      eventId: "event-widget-1",
+      provider: "omp",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        key: "subagents",
+        content: "2 running",
+        placement: "above",
+      },
+    });
+
+    expect(parsed.type).toBe("ui.widget.updated");
+    if (parsed.type !== "ui.widget.updated") {
+      throw new Error("expected ui.widget.updated");
+    }
+    expect(parsed.payload).toEqual({
+      key: "subagents",
+      content: "2 running",
+      placement: "above",
+    });
+  });
+
   it("decodes proposed-plan completion events", () => {
     const parsed = decodeRuntimeEvent({
       type: "turn.proposed.completed",

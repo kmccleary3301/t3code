@@ -21,6 +21,7 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderSubagentTranscriptReadResult,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   ThreadId,
@@ -107,6 +108,11 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly cursor?: string;
   }) => Effect.Effect<ProviderNativeHistoryPage, ProviderServiceError>;
+  readonly readSubagentTranscript?: (input: {
+    readonly threadId: ThreadId;
+    readonly subagentId: string;
+    readonly cursor?: string;
+  }) => Effect.Effect<ProviderSubagentTranscriptReadResult, ProviderServiceError>;
   readonly renameNativeSession?: (input: {
     readonly threadId: ThreadId;
     readonly name: string;

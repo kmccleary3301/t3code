@@ -5,7 +5,7 @@ import {
   useNavigation,
   usePreventRemove,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import {
   KeyboardController,
@@ -22,7 +22,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import {
+  ComposerEditor,
+  type ComposerEditorHandle,
+  type ComposerEditorSelection,
+} from "../../components/ComposerEditor";
 import {
   ComposerInlineControl,
   ComposerToolbarButton,
@@ -35,12 +39,19 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ComposerSurface } from "./ThreadComposer";
+import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { buildMobileSlashCommandItems } from "./composerSlashCommandItems";
 import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
+import {
+  detectComposerTrigger,
+  replaceTextRange,
+  type ComposerTrigger,
+} from "@t3tools/shared/composerTrigger";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -130,6 +141,74 @@ export function NewTaskDraftScreen(props: {
     editorRef: promptInputRef,
     isEditorFocused: isComposerFocused,
   });
+  const selectedProviderStatus = useMemo(
+    () =>
+      selectedEnvironmentServerConfig?.providers.find(
+        (provider) => provider.instanceId === flow.selectedModel?.instanceId,
+      ) ?? null,
+    [flow.selectedModel?.instanceId, selectedEnvironmentServerConfig],
+  );
+  const [composerSelection, setComposerSelection] = useState(() => ({
+    start: flow.prompt.length,
+    end: flow.prompt.length,
+  }));
+  const handleSelectionChange = useCallback((selection: ComposerEditorSelection) => {
+    setComposerSelection(selection);
+  }, []);
+  useEffect(() => {
+    const end = flow.prompt.length;
+    setComposerSelection((selection) => {
+      const start = Math.min(selection.start, end);
+      const selectionEnd = Math.min(selection.end, end);
+      return start === selection.start && selectionEnd === selection.end
+        ? selection
+        : { start, end: selectionEnd };
+    });
+  }, [flow.prompt.length]);
+  const composerTrigger = useMemo<ComposerTrigger | null>(() => {
+    if (composerSelection.start !== composerSelection.end) return null;
+    return detectComposerTrigger(flow.prompt, composerSelection.end);
+  }, [composerSelection, flow.prompt]);
+  const composerMenuItems = useMemo(
+    () =>
+      composerTrigger?.kind === "slash-command"
+        ? buildMobileSlashCommandItems({
+            commands: selectedProviderStatus?.slashCommands ?? [],
+            query: composerTrigger.query,
+          })
+        : [],
+    [composerTrigger, selectedProviderStatus?.slashCommands],
+  );
+  const handleCommandSelect = useCallback(
+    (item: ComposerCommandItem) => {
+      if (!composerTrigger) return;
+      let replacement: string;
+      if (item.type === "provider-slash-argument") {
+        replacement = item.insertText;
+      } else if (item.type === "provider-slash-command") {
+        replacement = `/${item.command.name} `;
+      } else if (item.type === "slash-command") {
+        if (item.command === "plan" || item.command === "default") {
+          flow.setInteractionMode(item.command);
+          replacement = "";
+        } else {
+          replacement = `/${item.command} `;
+        }
+      } else {
+        return;
+      }
+
+      const result = replaceTextRange(
+        flow.prompt,
+        composerTrigger.rangeStart,
+        composerTrigger.rangeEnd,
+        replacement,
+      );
+      setComposerSelection({ start: result.cursor, end: result.cursor });
+      flow.setPrompt(result.text);
+    },
+    [composerTrigger, flow],
+  );
   useEffect(() => {
     if (Platform.OS !== "ios") {
       return;
@@ -818,6 +897,7 @@ export function NewTaskDraftScreen(props: {
       value={flow.prompt}
       skills={flow.selectedProviderSkills}
       onChangeText={flow.setPrompt}
+      onSelectionChange={handleSelectionChange}
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
@@ -956,6 +1036,16 @@ export function NewTaskDraftScreen(props: {
 
   const composerDock = (
     <View className="bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
+      {composerTrigger?.kind === "slash-command" && composerMenuItems.length > 0 ? (
+        <View className="absolute inset-x-4 bottom-full z-10 mb-2">
+          <ComposerCommandPopover
+            items={composerMenuItems}
+            triggerKind={composerTrigger.kind}
+            isLoading={false}
+            onSelect={handleCommandSelect}
+          />
+        </View>
+      ) : null}
       <View className="pb-1">{workspaceControls}</View>
 
       <ComposerSurface

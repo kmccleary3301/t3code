@@ -81,6 +81,8 @@ import {
   ProviderNativeSessionRenameResult,
   ProviderNativeSessionStopInput,
   ProviderNativeSessionStopResult,
+  ProviderSubagentTranscriptReadInput,
+  ProviderSubagentTranscriptReadResult,
 } from "./provider.ts";
 import {
   PullRequestActionInput,
@@ -284,6 +286,7 @@ export const WS_METHODS = {
   serverForkNativeSession: "server.forkNativeSession",
   serverStopNativeSession: "server.stopNativeSession",
   serverArchiveNativeSession: "server.archiveNativeSession",
+  serverReadSubagentTranscript: "server.readSubagentTranscript",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
@@ -447,6 +450,12 @@ export const WsServerStopNativeSessionRpc = Rpc.make(WS_METHODS.serverStopNative
 export const WsServerArchiveNativeSessionRpc = Rpc.make(WS_METHODS.serverArchiveNativeSession, {
   payload: ProviderNativeSessionArchiveInput,
   success: ProviderNativeSessionArchiveResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerReadSubagentTranscriptRpc = Rpc.make(WS_METHODS.serverReadSubagentTranscript, {
+  payload: ProviderSubagentTranscriptReadInput,
+  success: ProviderSubagentTranscriptReadResult,
   error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
 });
 
@@ -1057,6 +1066,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerForkNativeSessionRpc,
   WsServerStopNativeSessionRpc,
   WsServerArchiveNativeSessionRpc,
+  WsServerReadSubagentTranscriptRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,

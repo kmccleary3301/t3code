@@ -15,6 +15,7 @@ import {
   type ProviderNativeSessionRenameInput,
   type ProviderNativeSessionStopInput,
   type ProviderNativeSessionSummary,
+  type ProviderSubagentTranscriptReadInput,
 } from "@t3tools/contracts";
 import * as Path from "effect/Path";
 import * as DateTime from "effect/DateTime";
@@ -444,6 +445,23 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     return { threadId: opened.threadId };
   });
 
+  const readSubagentTranscript = Effect.fn("NativeSessionCoordinator.readSubagentTranscript")(
+    function* (input: ProviderSubagentTranscriptReadInput) {
+      const readTranscript = providerService.readSubagentTranscript;
+      if (readTranscript === undefined) {
+        return yield* new ProviderNativeSessionError({
+          code: "unsupported",
+          message: "This server has no subagent transcript reader.",
+        });
+      }
+      return yield* readTranscript({
+        threadId: input.threadId,
+        subagentId: input.subagentId,
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      });
+    },
+  );
+
   return {
     list: (input) => listInternal(input).pipe(Effect.mapError(asNativeSessionError)),
     open: (input) =>
@@ -460,6 +478,8 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       openSemaphore
         .withPermits(1)(archiveInternal(input))
         .pipe(Effect.mapError(asNativeSessionError)),
+    readSubagentTranscript: (input) =>
+      readSubagentTranscript(input).pipe(Effect.mapError(asNativeSessionError)),
   } satisfies NativeSessionCoordinator.NativeSessionCoordinatorShape;
 });
 

@@ -63,11 +63,24 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("does not keep a subcommand trigger active after /model arguments", () => {
-    const text = "/model spark";
-    const trigger = detectComposerTrigger(text, text.length);
+  it("keeps native argument completion active after the command name", () => {
+    const text = "/goal budget o";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: "goal budget o",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
 
-    expect(trigger).toBeNull();
+  it("preserves indentation before a native slash command", () => {
+    const text = "  /goal bud";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: "goal bud",
+      rangeStart: 2,
+      rangeEnd: text.length,
+    });
   });
 
   it("detects non-model slash commands while typing", () => {
@@ -89,6 +102,15 @@ describe("detectComposerTrigger", () => {
     expect(trigger).toEqual({
       kind: "slash-command",
       query: "rev",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+  it("keeps colon-delimited native commands in autocomplete", () => {
+    const text = "/skill:anti-sl";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: "skill:anti-sl",
       rangeStart: 0,
       rangeEnd: text.length,
     });
@@ -370,5 +392,10 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+
+  it("leaves native provider commands for provider dispatch", () => {
+    expect(parseStandaloneComposerSlashCommand("/todo")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/skill:anti-slop arguments")).toBeNull();
   });
 });

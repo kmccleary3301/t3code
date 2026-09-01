@@ -67,6 +67,7 @@ import {
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { buildMobileSlashCommandItems } from "./composerSlashCommandItems";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -392,45 +393,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (!composerTrigger) return [];
 
     if (composerTrigger.kind === "slash-command") {
-      const q = composerTrigger.query.toLowerCase();
-      const allBuiltIn = [
-        {
-          id: "cmd:model",
-          type: "slash-command" as const,
-          command: "model",
-          label: "/model",
-          description: "Switch model",
-        },
-        {
-          id: "cmd:plan",
-          type: "slash-command" as const,
-          command: "plan",
-          label: "/plan",
-          description: "Switch to plan mode",
-        },
-        {
-          id: "cmd:default",
-          type: "slash-command" as const,
-          command: "default",
-          label: "/default",
-          description: "Switch to default mode",
-        },
-      ];
-      const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
-
-      const providerCommands: ComposerCommandItem[] = [];
-      for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
-        if (!cmd.name.toLowerCase().includes(q)) continue;
-        providerCommands.push({
-          id: `pcmd:${cmd.name}`,
-          type: "provider-slash-command" as const,
-          command: cmd,
-          label: `/${cmd.name}`,
-          description: cmd.description ?? "",
-        });
-      }
-
-      return [...builtIn, ...providerCommands];
+      return buildMobileSlashCommandItems({
+        commands: selectedProviderStatus?.slashCommands ?? [],
+        query: composerTrigger.query,
+      });
     }
 
     if (composerTrigger.kind === "skill") {
@@ -590,8 +556,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         replacement = `/${item.command} `;
       } else if (item.type === "provider-slash-command") {
         replacement = `/${item.command.name} `;
+      } else if (item.type === "provider-slash-argument") {
+        replacement = item.insertText;
       }
-
       const result = replaceTextRange(
         draftMessage,
         composerTrigger.rangeStart,

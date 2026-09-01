@@ -2964,6 +2964,20 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     harness.emit({
+      type: "ui.widget.updated",
+      eventId: asEventId("evt-native-widget"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-p1"),
+      payload: {
+        key: "subagents",
+        content: "2 running",
+        placement: "above",
+      },
+    });
+
+    harness.emit({
       type: "turn.diff.updated",
       eventId: asEventId("evt-turn-diff-updated"),
       provider: ProviderDriverKind.make("codex"),
@@ -2989,6 +3003,9 @@ describe("ProviderRuntimeIngestion", () => {
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "runtime.warning",
         ) &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "ui.widget.updated",
+        ) &&
         entry.checkpoints.some(
           (checkpoint: ProviderRuntimeTestCheckpoint) => checkpoint.turnId === "turn-p1",
         ),
@@ -3005,6 +3022,14 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(planActivity?.kind).toBe("turn.plan.updated");
     expect(Array.isArray(planPayload?.plan)).toBe(true);
+    expect(
+      thread.activities.find(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-native-widget",
+      ),
+    ).toMatchObject({
+      kind: "ui.widget.updated",
+      payload: { key: "subagents", content: "2 running", placement: "above" },
+    });
 
     const toolUpdate = thread.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-item-updated",

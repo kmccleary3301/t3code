@@ -46,6 +46,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverForkNativeSession]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverStopNativeSession]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverArchiveNativeSession]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverReadSubagentTranscript]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessResourceHistory]: AuthOrchestrationReadScope,

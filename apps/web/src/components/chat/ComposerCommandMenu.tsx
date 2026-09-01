@@ -50,6 +50,16 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "provider-slash-argument";
+      provider: ProviderDriverKind;
+      command: ServerProviderSlashCommand;
+      insertText: string;
+      searchValue: string;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "skill";
       provider: ProviderDriverKind;
       skill: ServerProviderSkill;

@@ -78,10 +78,18 @@ export const ServerProviderSlashCommandInput = Schema.Struct({
 });
 export type ServerProviderSlashCommandInput = typeof ServerProviderSlashCommandInput.Type;
 
+export const ServerProviderSlashSubcommand = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  description: Schema.optional(TrimmedNonEmptyString),
+  usage: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderSlashSubcommand = typeof ServerProviderSlashSubcommand.Type;
+
 export const ServerProviderSlashCommand = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   input: Schema.optional(ServerProviderSlashCommandInput),
+  subcommands: Schema.optional(Schema.Array(ServerProviderSlashSubcommand)),
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 

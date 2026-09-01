@@ -163,6 +163,7 @@ import { AgentsPanel } from "./AgentsPanel";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
+  foldNativeUiActivities,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
@@ -2252,6 +2253,7 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [agentSessionLive, threadActivities],
   );
+  const nativeUiState = useMemo(() => foldNativeUiActivities(threadActivities), [threadActivities]);
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -6359,6 +6361,7 @@ function ChatViewContent(props: ChatViewProps) {
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
+        nativeUiState={nativeUiState}
       />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&

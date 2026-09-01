@@ -88,11 +88,13 @@ function realProbeScript(
       '  if (request.type === "get_capabilities") data = mode === "omp-missing-capabilities" ? undefined : mode === "omp-malformed-capabilities" ? [] : mode === "omp-empty-capabilities" ? {} : { models: { discover: true } };',
       '  else if (request.type === "get_state") data = { model: { provider: "probe", id: "model" } };',
       '  else if (request.type === "get_available_models") data = { models: mode === "pi-empty" ? [] : [{ provider: "probe", id: "model", name: "Probe Model" }] };',
+      '  else if (request.type === "get_commands") data = { commands: [{ name: "review", description: "Review changes", source: "extension", sourceInfo: {} }, { name: "skill:ship", description: "Ship the change", source: "skill", sourceInfo: {} }] };',
+      '  else if (request.type === "get_available_commands") data = { commands: [{ name: "agents", aliases: ["agent"], description: "Manage agents", input: { hint: "<command>" }, source: "builtin" }, { name: "goal", description: "Manage goal mode", input: { hint: "[objective]" }, subcommands: [{ name: "set", description: "Set the goal", usage: "<objective>" }, { name: "budget", description: "Adjust token budget", usage: "<N|off>" }], source: "builtin" }, { name: "todo", description: "Manage todos", source: "builtin" }] };',
       '  else if (request.type === "negotiate_protocol") data = { protocolVersion: 2 };',
       "  else return;",
       '  const response = { type: "response", command: request.type, success: mode === "omp-missing-capabilities" && request.type === "get_capabilities" ? false : true, ...(data === undefined ? {} : { data }) };',
       '  send(mode === "omp-missing-capabilities" && request.type === "get_capabilities" ? response : { id: mode === "omp-malformed-id" && request.type === "get_capabilities" ? 42 : request.id, ...response });',
-      '  if (request.type === "get_available_models") setTimeout(() => process.exit(0), 50);',
+      '  if (request.type === "get_commands" || request.type === "get_available_commands") setTimeout(() => process.exit(0), 50);',
       "});",
       "setInterval(() => {}, 1000);",
     ].join("\n") + "\n"
@@ -204,6 +206,7 @@ describe("Pi-family model discovery mapping", () => {
       {
         slug: "openai/reasoning-model",
         name: "Reasoning Model",
+        subProvider: "openai/reasoning-model",
         isCustom: false,
         isDefault: true,
         capabilities: {
@@ -226,10 +229,54 @@ describe("Pi-family model discovery mapping", () => {
       {
         slug: "openai/fixed-reasoning",
         name: "fixed-reasoning",
+        subProvider: "openai/fixed-reasoning",
         isCustom: false,
         capabilities: null,
       },
     ]);
+  });
+
+  it("orders OMP models like the native picker and exposes native selectors", () => {
+    const models = mapPiFamilyModels({
+      runtime: "omp",
+      rows: [
+        {
+          provider: "anthropic",
+          id: "claude-3-5-sonnet-20241022",
+          name: "Claude Sonnet 3.5 v2",
+        },
+        {
+          provider: "openrouter",
+          id: "openai/gpt-5.4",
+          name: "GPT-5.4",
+        },
+        {
+          provider: "anthropic",
+          id: "claude-sonnet-4-6",
+          name: "Claude Sonnet 4.6",
+        },
+        {
+          provider: "openai-codex",
+          id: "gpt-5.4",
+          name: "GPT-5.4",
+        },
+        {
+          provider: "openai-codex",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6-Sol",
+        },
+      ],
+      currentModel: { provider: "openai-codex", id: "gpt-5.6-sol" },
+    });
+
+    expect(models.map((model) => model.slug)).toEqual([
+      "openai-codex/gpt-5.6-sol",
+      "anthropic/claude-sonnet-4-6",
+      "anthropic/claude-3-5-sonnet-20241022",
+      "openai-codex/gpt-5.4",
+      "openrouter/openai/gpt-5.4",
+    ]);
+    expect(models.map((model) => model.subProvider)).toEqual(models.map((model) => model.slug));
   });
 
   it("rejects malformed and empty model lists while ignoring malformed rows", () => {
@@ -285,6 +332,13 @@ describe("Pi-family model discovery RPC", () => {
                 success: true,
                 data: { models: [{ provider: "p", id: "m", name: "Model" }] },
               },
+              {
+                id: "get_commands-3",
+                type: "response",
+                command: "get_commands",
+                success: true,
+                data: { commands: [{ name: "review", description: "Review changes" }] },
+              },
             ),
             commands,
             killed,
@@ -293,6 +347,7 @@ describe("Pi-family model discovery RPC", () => {
       );
       expect(result.models[0]?.slug).toBe("p/m");
       expect(result.models[0]?.isDefault).toBe(true);
+      expect(result.slashCommands).toEqual([{ name: "review", description: "Review changes" }]);
       expect(killed.value).toBeGreaterThan(0);
       const command = commands[0] as { readonly args: ReadonlyArray<string> };
       expect(command.args.filter((arg) => arg === "--mode")).toHaveLength(1);
@@ -380,6 +435,22 @@ describe("Pi-family model discovery RPC", () => {
           success: true,
           data: { models: [{ provider: "p", id: "m", name: "Chunked" }] },
         }),
+        {
+          id: "get_available_commands-3",
+          type: "response",
+          command: "get_available_commands",
+          success: true,
+          data: {
+            commands: [
+              {
+                name: "agents",
+                aliases: ["agent"],
+                description: "Manage agents",
+                input: { hint: "<command>" },
+              },
+            ],
+          },
+        },
       ];
       const result = yield* discoverPiFamilyModels(makeConfig("omp")).pipe(
         Effect.provideService(
@@ -396,6 +467,10 @@ describe("Pi-family model discovery RPC", () => {
         ),
       );
       expect(result.models.map((model) => model.slug)).toEqual(["p/m"]);
+      expect(result.slashCommands).toEqual([
+        { name: "agents", description: "Manage agents", input: { hint: "<command>" } },
+        { name: "agent", description: "Manage agents", input: { hint: "<command>" } },
+      ]);
       expect(killed.value).toBeGreaterThan(0);
     }),
   );
@@ -454,8 +529,34 @@ it.layer(NodeServices.layer)("Pi-family executable discovery boundaries", (it) =
 
       const pi = yield* run("pi");
       expect(pi.models.map((model) => model.slug)).toEqual(["probe/model"]);
+      expect(pi).toMatchObject({
+        slashCommands: [
+          { name: "review", description: "Review changes" },
+          { name: "skill:ship", description: "Ship the change" },
+        ],
+      });
       const omp = yield* run("omp");
       expect(omp.models.map((model) => model.slug)).toEqual(["probe/model"]);
+      expect(omp).toMatchObject({
+        slashCommands: [
+          {
+            name: "agents",
+            description: "Manage agents",
+            input: { hint: "<command>" },
+          },
+          { name: "agent", description: "Manage agents", input: { hint: "<command>" } },
+          {
+            name: "goal",
+            description: "Manage goal mode",
+            input: { hint: "[objective]" },
+            subcommands: [
+              { name: "set", description: "Set the goal", usage: "<objective>" },
+              { name: "budget", description: "Adjust token budget", usage: "<N|off>" },
+            ],
+          },
+          { name: "todo", description: "Manage todos" },
+        ],
+      });
 
       const missingCapabilities = yield* run("omp-missing-capabilities");
       expect(missingCapabilities.models.map((model) => model.slug)).toEqual(["probe/model"]);

@@ -30,6 +30,17 @@ function boundedNativeIdentityPart(value: string): string {
   return `${value.slice(0, 32)}~${digest}`;
 }
 
+const MAX_NATIVE_UI_CONTENT_CHARS = 16_384;
+
+function plainNativeUiText(value: string): string {
+  // Native widgets/statuses carry terminal styling. Browser surfaces need the text only.
+  // eslint-disable-next-line no-control-regex
+  const plain = value.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/gu, "").trim();
+  return plain.length <= MAX_NATIVE_UI_CONTENT_CHARS
+    ? plain
+    : `${plain.slice(0, MAX_NATIVE_UI_CONTENT_CHARS)}\n…`;
+}
+
 export interface PiFamilyEventProjectorOptions {
   /**
    * Native events are intentionally open-ended. Keep a bounded diagnostic
@@ -266,7 +277,21 @@ export class PiFamilyEventProjector {
           : event.type === "tool_execution_update"
             ? "tool.progress"
             : "tool.completed";
-      return [{ kind: phase, ...this.toolFields(event), raw: event }];
+      const tool = { kind: phase, ...this.toolFields(event), raw: event } as const;
+      const plan = event.type === "tool_execution_end" ? this.projectTodoPlan(event) : undefined;
+      return plan === undefined
+        ? [tool]
+        : [
+            tool,
+            {
+              kind: "plan.updated",
+              plan,
+              ...(this.activeTurnRequestId === undefined
+                ? {}
+                : { requestId: this.activeTurnRequestId }),
+              raw: event,
+            },
+          ];
     }
     if (event.type === "bash_execution_update") {
       return [{ kind: "tool.progress", ...this.toolFields(event), raw: event }];
@@ -774,16 +799,28 @@ export class PiFamilyEventProjector {
     }
     if (method === "setStatus") {
       const value = asString(source?.statusText);
+      const plainValue = value === undefined ? undefined : plainNativeUiText(value);
       return {
         kind: "status",
         requestId,
         key: asString(source?.statusKey) ?? "native",
-        ...(value === undefined ? {} : { value }),
+        ...(plainValue === undefined || plainValue === "" ? {} : { value: plainValue }),
       };
     }
     if (method === "setWidget") {
       const placement = source?.widgetPlacement === "aboveEditor" ? "above" : "below";
-      return { kind: "widget", requestId, key: asString(source?.widgetKey) ?? "native", placement };
+      const widgetLines = Array.isArray(source?.widgetLines)
+        ? source.widgetLines.filter((line): line is string => typeof line === "string")
+        : undefined;
+      const content =
+        widgetLines === undefined ? undefined : plainNativeUiText(widgetLines.join("\n"));
+      return {
+        kind: "widget",
+        requestId,
+        key: asString(source?.widgetKey) ?? "native",
+        placement,
+        ...(content === undefined || content === "" ? {} : { content }),
+      };
     }
     if (method === "open_url") {
       const url = asString(source?.url);
@@ -798,6 +835,46 @@ export class PiFamilyEventProjector {
       };
     }
     return undefined;
+  }
+
+  private projectTodoPlan(
+    event: RpcEnvelope,
+  ):
+    | readonly { readonly step: string; readonly status: "pending" | "inProgress" | "completed" }[]
+    | undefined {
+    if (asString(event.toolName) !== "todo" || event.isError === true) return undefined;
+    const result = asRecord(event.result);
+    const details = asRecord(result?.details);
+    if (!Array.isArray(details?.phases)) return undefined;
+    const phases = details.phases.flatMap((value) => {
+      const phase = asRecord(value);
+      const name = asString(phase?.name)?.trim();
+      const tasks = Array.isArray(phase?.tasks) ? phase.tasks : [];
+      return name === undefined || name === "" ? [] : [{ name, tasks }];
+    });
+    const prefixPhase = phases.length > 1;
+    return phases.flatMap((phase) =>
+      phase.tasks.flatMap((value) => {
+        const task = asRecord(value);
+        const content = asString(task?.content)?.trim();
+        const nativeStatus = asString(task?.status);
+        if (content === undefined || content === "" || nativeStatus === "abandoned") return [];
+        const blocker = asString(task?.blocker)?.trim();
+        const blockedSuffix =
+          nativeStatus === "blocked" ? (blocker ? ` — blocked: ${blocker}` : " — blocked") : "";
+        return [
+          {
+            step: `${prefixPhase ? `${phase.name} · ` : ""}${content}${blockedSuffix}`,
+            status:
+              nativeStatus === "completed"
+                ? ("completed" as const)
+                : nativeStatus === "in_progress"
+                  ? ("inProgress" as const)
+                  : ("pending" as const),
+          },
+        ];
+      }),
+    );
   }
 
   private toolFields(event: RpcEnvelope): { readonly toolCallId?: string; readonly name?: string } {

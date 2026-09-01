@@ -19,6 +19,8 @@ import {
   type ProviderNativeSessionSummary,
   type ProviderRuntimeEventBase,
   type ProviderSendTurnInput,
+  type ProviderSubagentTranscriptEntry,
+  type ProviderSubagentTranscriptReadResult,
   type ProviderSession,
   type ProviderSessionStartInput,
   type ProviderTurnStartResult,
@@ -57,6 +59,7 @@ import { StrictJsonlDecoder } from "./StrictJsonlDecoder.ts";
 import {
   absentRuntimeCapabilities,
   asRecord,
+  asNumber,
   asString,
   isRpcResponse,
   makeOmpNegotiateProtocolCommand,
@@ -251,6 +254,123 @@ function nativeInputValue(answers: ProviderUserInputAnswers): string {
     return first.filter((value): value is string => typeof value === "string").join(", ");
   if (typeof first === "boolean" || typeof first === "number") return String(first);
   return first === undefined ? "" : JSON.stringify(first);
+}
+
+const MAX_TRANSCRIPT_ENTRY_CHARS = 65_536;
+
+function boundedTranscriptText(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.length <= MAX_TRANSCRIPT_ENTRY_CHARS
+    ? trimmed
+    : `${trimmed.slice(0, MAX_TRANSCRIPT_ENTRY_CHARS)}\n…`;
+}
+
+function transcriptTextParts(content: unknown): string[] {
+  if (typeof content === "string") {
+    const text = boundedTranscriptText(content);
+    return text === "" ? [] : [text];
+  }
+  const parts = Array.isArray(content) ? content : [content];
+  return parts.flatMap((part) => {
+    const record = asRecord(part);
+    const text =
+      asString(record?.text) ??
+      asString(record?.thinking) ??
+      asString(record?.content) ??
+      asString(record?.summary);
+    if (text === undefined) return [];
+    const bounded = boundedTranscriptText(text);
+    return bounded === "" ? [] : [bounded];
+  });
+}
+
+function transcriptEntriesFromResponse(
+  response: RpcResponse,
+): ProviderSubagentTranscriptReadResult | undefined {
+  const data = asRecord(response.data);
+  const nextByte = asNumber(data?.nextByte);
+  if (nextByte === undefined || !Array.isArray(data?.entries)) return undefined;
+
+  const transcriptEntries: ProviderSubagentTranscriptEntry[] = [];
+  for (const [entryIndex, value] of data.entries.entries()) {
+    const entry = asRecord(value);
+    const message = asRecord(entry?.message);
+    if (entry?.type !== "message" || message === undefined) continue;
+    const baseId = asString(entry.id) ?? `message-${entryIndex}`;
+    const candidateTimestamp = asString(entry.timestamp);
+    const timestamp =
+      candidateTimestamp !== undefined && !Number.isNaN(Date.parse(candidateTimestamp))
+        ? candidateTimestamp
+        : nowIso();
+    const role = asString(message.role) ?? "system";
+    const content = message.content;
+    const parts = Array.isArray(content) ? content : [content];
+    let emittedPart = 0;
+
+    for (const part of parts) {
+      const partRecord = asRecord(part);
+      const partType = asString(partRecord?.type);
+      const toolName =
+        asString(partRecord?.name) ?? asString(partRecord?.toolName) ?? asString(message.toolName);
+      if (role === "assistant" && (partType === "toolCall" || partType === "tool_call")) {
+        const argumentsValue = partRecord?.arguments ?? partRecord?.input;
+        const serializedArguments =
+          argumentsValue === undefined ? undefined : JSON.stringify(argumentsValue, null, 2);
+        const argumentsText =
+          serializedArguments === undefined
+            ? ""
+            : `\n${boundedTranscriptText(serializedArguments)}`;
+        transcriptEntries.push({
+          id: `${baseId}:${emittedPart++}`,
+          kind: "tool",
+          text: `Called ${toolName ?? "tool"}${argumentsText}`,
+          timestamp,
+          ...(toolName === undefined ? {} : { toolName }),
+        });
+        continue;
+      }
+      const textParts = transcriptTextParts(part);
+      for (const text of textParts) {
+        const kind =
+          role === "user"
+            ? "user"
+            : role === "assistant" && (partType === "thinking" || partType === "reasoning")
+              ? "reasoning"
+              : role === "assistant"
+                ? "assistant"
+                : role === "toolResult" || role === "tool"
+                  ? "tool"
+                  : "system";
+        transcriptEntries.push({
+          id: `${baseId}:${emittedPart++}`,
+          kind,
+          text,
+          timestamp,
+          ...(toolName === undefined ? {} : { toolName }),
+          ...(kind === "tool" && message.isError === true ? { isError: true } : {}),
+        });
+      }
+    }
+
+    if (emittedPart > 0) continue;
+    const summary =
+      asString(message.summary) ?? asString(message.text) ?? asString(message.message);
+    if (summary === undefined) continue;
+    const text = boundedTranscriptText(summary);
+    if (text === "") continue;
+    transcriptEntries.push({
+      id: `${baseId}:0`,
+      kind: "system",
+      text,
+      timestamp,
+    });
+  }
+
+  return {
+    entries: transcriptEntries,
+    nextCursor: String(Math.max(0, Math.trunc(nextByte))),
+    reset: data?.reset === true,
+  };
 }
 
 function canonicalToolItemType(raw: RpcEnvelope): CanonicalItemType {
@@ -537,7 +657,9 @@ function eventForProjection(
   projected: PiFamilyProjectedEvent,
   interruptedTurnIds: ReadonlySet<string>,
   eventOccurrence: number,
-): ProviderRuntimeEvent {
+): ProviderRuntimeEvent | undefined {
+  if (projected.kind === "runtime.raw") return undefined;
+
   const raw = projectionIdentityEvent(projected);
   const discriminator =
     projected.kind === "task.started" ||
@@ -551,14 +673,7 @@ function eventForProjection(
         : projected.kind === "ui.request"
           ? `ui:${projected.request.requestId ?? "anonymous"}`
           : projected.kind;
-  const base = makeBase(
-    config,
-    threadId,
-    projected.kind === "runtime.raw" ? undefined : raw,
-    discriminator,
-    eventOccurrence,
-    projected.kind !== "runtime.raw",
-  );
+  const base = makeBase(config, threadId, raw, discriminator, eventOccurrence, true);
   switch (projected.kind) {
     case "runtime.ready":
       return {
@@ -584,15 +699,6 @@ function eventForProjection(
           message: projected.error.message || "Native runtime error",
           class: "transport_error",
           ...(projected.raw === undefined ? {} : { detail: projected.raw }),
-        },
-      };
-    case "runtime.raw":
-      return {
-        ...base,
-        type: "runtime.warning",
-        payload: {
-          message: `Native ${config.runtime} emitted an unrecognized event.`,
-          detail: { type: "unknown", redacted: true },
         },
       };
     case "turn.started":
@@ -756,8 +862,36 @@ function eventForProjection(
         },
       };
     }
+    case "plan.updated":
+      return {
+        ...base,
+        type: "turn.plan.updated",
+        ...(projected.requestId ? { turnId: TurnId.make(projected.requestId) } : {}),
+        payload: { plan: [...projected.plan] },
+      };
     case "ui.request": {
       const request = projected.request;
+      if (request.kind === "status") {
+        return {
+          ...base,
+          type: "ui.status.updated",
+          payload: {
+            key: request.key,
+            ...(request.value === undefined ? {} : { value: request.value }),
+          },
+        };
+      }
+      if (request.kind === "widget") {
+        return {
+          ...base,
+          type: "ui.widget.updated",
+          payload: {
+            key: request.key,
+            placement: request.placement ?? "above",
+            ...(request.content === undefined ? {} : { content: request.content }),
+          },
+        };
+      }
       const requestId = RuntimeRequestId.make(request.requestId ?? randomId());
       if (request.kind === "select") {
         return {
@@ -992,7 +1126,7 @@ export const makePiFamilyAdapter = (
       if (projection.kind === "turn.settled" && projection.requestId !== undefined) {
         session.interruptedTurnIds.delete(projection.requestId);
       }
-      return offer(event);
+      return event === undefined ? Effect.void : offer(event);
     };
     const failPending = (
       session: NativeSession,
@@ -1374,7 +1508,9 @@ export const makePiFamilyAdapter = (
       projection: PiFamilyProjectedEvent,
     ): PiFamilyProjectedEvent | undefined => {
       if (
-        (projection.kind !== "turn.started" && projection.kind !== "turn.settled") ||
+        (projection.kind !== "turn.started" &&
+          projection.kind !== "turn.settled" &&
+          projection.kind !== "plan.updated") ||
         projection.requestId !== undefined
       ) {
         return projection;
@@ -2288,6 +2424,43 @@ export const makePiFamilyAdapter = (
           totalMessages: messages.length,
         };
       });
+    const readSubagentTranscript = (
+      threadId: ThreadId,
+      subagentId: string,
+      cursor?: string,
+    ): Effect.Effect<
+      ProviderSubagentTranscriptReadResult,
+      ProviderAdapterError | ProviderNativeSessionError
+    > =>
+      Effect.gen(function* () {
+        if (config.runtime !== "omp") {
+          return yield* new ProviderNativeSessionError({
+            code: "unsupported",
+            message: "Subagent transcripts are only available for OMP sessions.",
+          });
+        }
+        const fromByte = cursor === undefined ? 0 : Number(cursor);
+        if (!Number.isSafeInteger(fromByte) || fromByte < 0) {
+          return yield* new ProviderNativeSessionError({
+            code: "invalid",
+            message: "Subagent transcript cursor is invalid.",
+          });
+        }
+        const session = yield* requireSession(threadId);
+        const response = yield* request(
+          session,
+          { type: "get_subagent_messages", subagentId, fromByte },
+          "get_subagent_messages",
+        );
+        const transcript = transcriptEntriesFromResponse(response);
+        if (transcript === undefined) {
+          return yield* new ProviderNativeSessionError({
+            code: "native",
+            message: "OMP returned an invalid subagent transcript response.",
+          });
+        }
+        return transcript;
+      });
     const renameNativeSession = (
       threadId: ThreadId,
       name: string,
@@ -2530,6 +2703,7 @@ export const makePiFamilyAdapter = (
       readThread,
       listNativeSessions,
       readNativeHistory,
+      readSubagentTranscript,
       renameNativeSession,
       forkNativeSession,
       rollbackThread,

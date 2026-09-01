@@ -15,20 +15,34 @@ import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentPanelModel,
   AgentPanelWorkflowGroup,
+  NativeUiState,
   RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   formatSubagentModelLabel,
   formatSubagentTokenCount,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import type { EnvironmentId, ProviderSubagentTranscriptEntry, ThreadId } from "@t3tools/contracts";
+import {
+  ArrowLeft,
+  Bot,
+  Braces,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ListTodo,
+  Wrench,
+  X,
+} from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
+import { serverEnvironment } from "~/state/server";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
+
+const AgentSelectionContext = createContext<((agentId: string) => void) | null>(null);
 
 /**
  * In-flight states all present as Working (one steady state, per the
@@ -137,8 +151,9 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
   );
 }
 
-/** Flat, non-interactive agent status line. No unfold. */
+/** Flat agent status line. Selecting it swaps the panel to that agent's transcript. */
 function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+  const selectAgent = useContext(AgentSelectionContext);
   const visuals = STATUS_VISUALS[agent.status];
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
@@ -154,7 +169,12 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   ].filter((value): value is string => value !== null);
 
   return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
+    <button
+      type="button"
+      onClick={() => selectAgent?.(agent.id)}
+      className="grid h-[3.875rem] w-full grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1 text-left hover:bg-accent/40"
+      aria-label={`View ${agent.title} transcript`}
+    >
       <span className="col-start-1 row-start-1 flex items-center">
         <StatusDot status={agent.status} />
       </span>
@@ -186,7 +206,7 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
         {metadata.join(" · ")}
       </span>
       <span className="sr-only">{visuals.label}</span>
-    </div>
+    </button>
   );
 }
 
@@ -520,16 +540,238 @@ function WorkflowSection({
   );
 }
 
+const EMPTY_NATIVE_UI_STATE: NativeUiState = { statuses: [], widgets: [] };
+
+function panelAgents(model: AgentPanelModel): ReadonlyArray<RuntimeSubagent> {
+  const agents = new Map<string, RuntimeSubagent>();
+  for (const group of model.workflows) {
+    agents.set(group.workflow.id, group.workflow);
+    for (const member of workflowMembers(group)) agents.set(member.id, member);
+  }
+  for (const agent of model.directAgents) agents.set(agent.id, agent);
+  return [...agents.values()];
+}
+
+function NativeUiShelf({ state }: { state: NativeUiState }) {
+  if (state.statuses.length === 0 && state.widgets.length === 0) return null;
+  const widgets = [...state.widgets].toSorted(
+    (left, right) => Number(left.placement === "below") - Number(right.placement === "below"),
+  );
+  return (
+    <section className="border-b border-border/60 p-2">
+      {state.statuses.length > 0 ? (
+        <div className="mb-1.5 flex flex-wrap gap-1">
+          {state.statuses.map((status) => (
+            <span
+              key={status.key}
+              className="rounded-sm border border-border/60 px-1.5 py-0.5 font-mono text-[.65rem] text-muted-foreground"
+            >
+              {status.value}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-1.5">
+        {widgets.map((widget) => (
+          <div
+            key={widget.key}
+            className="rounded-md border border-border/60 bg-card/30 px-2 py-1.5"
+          >
+            <div className="mb-1 flex items-center gap-1.5 font-mono text-[.65rem] text-muted-foreground">
+              <ListTodo aria-hidden className="size-3" />
+              <span>{widget.key}</span>
+            </div>
+            <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-words font-mono text-[.7rem] leading-relaxed text-foreground/90">
+              {widget.content}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function transcriptLabel(entry: ProviderSubagentTranscriptEntry, agent: RuntimeSubagent): string {
+  if (entry.kind === "user") return "Assignment";
+  if (entry.kind === "reasoning") return "Reasoning";
+  if (entry.kind === "tool") return entry.toolName ?? "Tool";
+  if (entry.kind === "system") return "System";
+  return agent.role ?? agent.title;
+}
+
+function AgentTranscriptBody({
+  agent,
+  environmentId,
+  threadId,
+}: {
+  agent: RuntimeSubagent;
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+}) {
+  const [cursor, setCursor] = useState<string>();
+  const [entries, setEntries] = useState<ReadonlyArray<ProviderSubagentTranscriptEntry>>([]);
+  const endRef = useRef<HTMLDivElement>(null);
+  const result = useAtomValue(
+    serverEnvironment.subagentTranscript({
+      environmentId,
+      input: {
+        threadId,
+        subagentId: agent.id,
+        ...(cursor === undefined ? {} : { cursor }),
+      },
+    }),
+  );
+
+  useEffect(() => {
+    if (result._tag !== "Success") return;
+    const page = result.value;
+    setEntries((current) => {
+      const base = page.reset ? [] : current;
+      const known = new Set(base.map((entry) => entry.id));
+      const additions = page.entries.filter((entry) => !known.has(entry.id));
+      return additions.length === 0 && !page.reset ? current : [...base, ...additions];
+    });
+    if (page.nextCursor !== cursor) setCursor(page.nextCursor);
+  }, [cursor, result]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [entries.length]);
+
+  if (entries.length === 0 && result._tag === "Failure") {
+    return (
+      <div className="p-4 text-center text-xs text-muted-foreground">
+        This provider does not expose this agent&apos;s transcript.
+      </div>
+    );
+  }
+  if (entries.length === 0) {
+    return <div className="p-4 text-center text-xs text-muted-foreground">Loading transcript…</div>;
+  }
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      {entries.map((entry) => (
+        <article key={entry.id} className="min-w-0">
+          <div
+            className={cn(
+              "mb-1 flex items-center gap-1.5 font-mono text-[.65rem] uppercase tracking-wide text-muted-foreground",
+              entry.isError && "text-destructive-foreground",
+            )}
+          >
+            {entry.kind === "tool" ? <Wrench aria-hidden className="size-3" /> : null}
+            {transcriptLabel(entry, agent)}
+          </div>
+          <pre
+            className={cn(
+              "whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/90",
+              entry.kind === "reasoning" && "text-muted-foreground",
+              entry.kind === "tool" &&
+                "rounded-md border border-border/60 bg-card/30 p-2 font-mono text-[.7rem]",
+            )}
+          >
+            {entry.text}
+          </pre>
+        </article>
+      ))}
+      <div ref={endRef} />
+    </div>
+  );
+}
+
+function AgentTranscript({
+  agent,
+  agents,
+  environmentId,
+  threadId,
+  onBack,
+  onSelect,
+}: {
+  agent: RuntimeSubagent;
+  agents: ReadonlyArray<RuntimeSubagent>;
+  environmentId: EnvironmentId | null;
+  threadId: ThreadId | null;
+  onBack: () => void;
+  onSelect: (agentId: string) => void;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex items-center gap-2 border-b border-border/60 px-2 py-1.5">
+        <Button size="icon-sm" variant="ghost-muted" onClick={onBack} aria-label="Back to agents">
+          <ArrowLeft aria-hidden className="size-4" />
+        </Button>
+        <StatusDot status={agent.status} />
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium">{agent.title}</div>
+          <div className="truncate font-mono text-[.65rem] text-muted-foreground">
+            {[agent.role, formatSubagentModelLabel(agent.model, agent.effort)]
+              .filter((value): value is string => Boolean(value))
+              .join(" · ")}
+          </div>
+        </div>
+        <select
+          aria-label="Switch agent"
+          value={agent.id}
+          onChange={(event) => onSelect(event.currentTarget.value)}
+          className="ml-auto max-w-32 rounded-md border border-border/60 bg-background px-1.5 py-1 font-mono text-[.65rem] text-muted-foreground"
+        >
+          {agents.map((candidate) => (
+            <option key={candidate.id} value={candidate.id}>
+              {candidate.title}
+            </option>
+          ))}
+        </select>
+      </header>
+      <ScrollArea className="min-h-0 flex-1">
+        {environmentId !== null && threadId !== null ? (
+          <AgentTranscriptBody
+            key={agent.id}
+            agent={agent}
+            environmentId={environmentId}
+            threadId={threadId}
+          />
+        ) : (
+          <div className="p-4 text-center text-xs text-muted-foreground">
+            Transcript unavailable without an active environment.
+          </div>
+        )}
+      </ScrollArea>
+    </div>
+  );
+}
+
 export function AgentsPanel({
   model,
   environmentId = null,
   threadId = null,
+  nativeUiState = EMPTY_NATIVE_UI_STATE,
 }: {
   model: AgentPanelModel;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
+  nativeUiState?: NativeUiState;
 }) {
-  if (!model.hasAgents) {
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const agents = useMemo(() => panelAgents(model), [model]);
+  const selectedAgent =
+    selectedAgentId === null
+      ? null
+      : (agents.find((agent) => agent.id === selectedAgentId) ?? null);
+
+  if (selectedAgent !== null) {
+    return (
+      <AgentTranscript
+        agent={selectedAgent}
+        agents={agents}
+        environmentId={environmentId}
+        threadId={threadId}
+        onBack={() => setSelectedAgentId(null)}
+        onSelect={setSelectedAgentId}
+      />
+    );
+  }
+
+  const hasNativeUi = nativeUiState.statuses.length > 0 || nativeUiState.widgets.length > 0;
+  if (!model.hasAgents && !hasNativeUi) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <Bot aria-hidden className="size-6 text-muted-foreground/60" />
@@ -543,41 +785,48 @@ export function AgentsPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-2 p-2">
-          {model.workflows.map((group) => (
-            <WorkflowSection
-              key={group.workflow.id}
-              group={group}
-              environmentId={environmentId}
-              threadId={threadId}
-            />
-          ))}
-          {model.directAgents.length > 0 ? (
-            <section>
-              <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
-                Direct spawns
-              </div>
-              {model.directAgents.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
-              ))}
-            </section>
-          ) : null}
-        </div>
-      </ScrollArea>
-      <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-[.7rem] text-muted-foreground">
-        <span className="flex items-center gap-2">
-          {model.runningCount + model.waitingCount > 0 ? (
-            <span className="text-info-foreground">
-              ● {model.runningCount + model.waitingCount} working
+    <AgentSelectionContext.Provider value={setSelectedAgentId}>
+      <div className="flex h-full min-h-0 flex-col">
+        <NativeUiShelf state={nativeUiState} />
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-2 p-2">
+            {model.workflows.map((group) => (
+              <WorkflowSection
+                key={group.workflow.id}
+                group={group}
+                environmentId={environmentId}
+                threadId={threadId}
+              />
+            ))}
+            {model.directAgents.length > 0 ? (
+              <section>
+                <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
+                  Direct spawns
+                </div>
+                {model.directAgents.map((agent) => (
+                  <AgentRow key={agent.id} agent={agent} />
+                ))}
+              </section>
+            ) : null}
+          </div>
+        </ScrollArea>
+        {model.hasAgents ? (
+          <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-[.7rem] text-muted-foreground">
+            <span className="flex items-center gap-2">
+              {model.runningCount + model.waitingCount > 0 ? (
+                <span className="text-info-foreground">
+                  ● {model.runningCount + model.waitingCount} working
+                </span>
+              ) : null}
+              {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
+              {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
             </span>
-          ) : null}
-          {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
-          {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
-        </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
-      </footer>
-    </div>
+            <span className="tabular-nums">
+              Σ {formatSubagentTokenCount(model.totalTokens)} tok
+            </span>
+          </footer>
+        ) : null}
+      </div>
+    </AgentSelectionContext.Provider>
   );
 }

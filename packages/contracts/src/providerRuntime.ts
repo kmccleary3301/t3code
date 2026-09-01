@@ -172,6 +172,8 @@ const ProviderRuntimeEventType = Schema.Literals([
   "item.updated",
   "item.completed",
   "content.delta",
+  "ui.status.updated",
+  "ui.widget.updated",
   "request.opened",
   "request.resolved",
   "user-input.requested",
@@ -223,6 +225,8 @@ const ItemStartedType = Schema.Literal("item.started");
 const ItemUpdatedType = Schema.Literal("item.updated");
 const ItemCompletedType = Schema.Literal("item.completed");
 const ContentDeltaType = Schema.Literal("content.delta");
+const UiStatusUpdatedType = Schema.Literal("ui.status.updated");
+const UiWidgetUpdatedType = Schema.Literal("ui.widget.updated");
 const RequestOpenedType = Schema.Literal("request.opened");
 const RequestResolvedType = Schema.Literal("request.resolved");
 const UserInputRequestedType = Schema.Literal("user-input.requested");
@@ -420,6 +424,19 @@ export const ItemLifecyclePayload = Schema.Struct({
   parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
+
+const UiStatusUpdatedPayload = Schema.Struct({
+  key: TrimmedNonEmptyStringSchema,
+  value: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type UiStatusUpdatedPayload = typeof UiStatusUpdatedPayload.Type;
+
+const UiWidgetUpdatedPayload = Schema.Struct({
+  key: TrimmedNonEmptyStringSchema,
+  content: Schema.optional(TrimmedNonEmptyStringSchema),
+  placement: Schema.Literals(["above", "below"]),
+});
+export type UiWidgetUpdatedPayload = typeof UiWidgetUpdatedPayload.Type;
 
 const ContentDeltaPayload = Schema.Struct({
   streamKind: RuntimeContentStreamKind,
@@ -952,6 +969,20 @@ const ProviderRuntimeItemCompletedEvent = Schema.Struct({
 });
 export type ProviderRuntimeItemCompletedEvent = typeof ProviderRuntimeItemCompletedEvent.Type;
 
+const ProviderRuntimeUiStatusUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: UiStatusUpdatedType,
+  payload: UiStatusUpdatedPayload,
+});
+export type ProviderRuntimeUiStatusUpdatedEvent = typeof ProviderRuntimeUiStatusUpdatedEvent.Type;
+
+const ProviderRuntimeUiWidgetUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: UiWidgetUpdatedType,
+  payload: UiWidgetUpdatedPayload,
+});
+export type ProviderRuntimeUiWidgetUpdatedEvent = typeof ProviderRuntimeUiWidgetUpdatedEvent.Type;
+
 const ProviderRuntimeContentDeltaEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ContentDeltaType,
@@ -1164,6 +1195,8 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeItemUpdatedEvent,
   ProviderRuntimeItemCompletedEvent,
   ProviderRuntimeContentDeltaEvent,
+  ProviderRuntimeUiStatusUpdatedEvent,
+  ProviderRuntimeUiWidgetUpdatedEvent,
   ProviderRuntimeRequestOpenedEvent,
   ProviderRuntimeRequestResolvedEvent,
   ProviderRuntimeUserInputRequestedEvent,

@@ -37,6 +37,15 @@ export type ComposerCommandItem =
     }
   | {
       readonly id: string;
+      readonly type: "provider-slash-argument";
+      readonly command: ServerProviderSlashCommand;
+      readonly insertText: string;
+      readonly searchValue: string;
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
       readonly type: "skill";
       readonly skill: ServerProviderSkill;
       readonly label: string;
@@ -78,6 +87,7 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   switch (item.type) {
     case "slash-command":
     case "provider-slash-command":
+    case "provider-slash-argument":
       return "terminal";
     case "skill":
       return SKILL_SOURCE_SYMBOL_BY_KIND[resolveProviderSkillSourceKind(item.skill)];

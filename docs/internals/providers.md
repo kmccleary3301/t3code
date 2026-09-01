@@ -71,6 +71,19 @@ writes are upserts, so reopening imports newly appended history without duplicat
 records. Native tool records remain owned by the native runtime; later live events use the normal
 canonical thread pipeline.
 
+For attached OMP threads, the web **Agents** panel can select a discovered child agent and tail its
+read-only transcript with an incremental cursor; selecting a child never switches or mutates the
+parent native session. OMP `setStatus` and string-array `setWidget` updates are folded into a keyed
+native UI shelf instead of appended to the work log. Successful OMP `todo` tool results project into
+the canonical plan activity used by the existing todo UI. Mobile keeps the canonical parent thread
+and plan activities, but does not expose the web-only child transcript or native widget shelf.
+
+Provider health discovery also reads Pi `get_commands` and OMP `get_available_commands`. Primary
+command names, OMP aliases, descriptions, input hints, subcommands, and usage syntax populate the
+web, desktop, and mobile composers’ slash suggestions. Static alternatives and flags in native usage
+syntax are suggested for later arguments; selecting any provider suggestion leaves it in the prompt
+for native dispatch.
+
 Rename and fork use each runtime's RPC lifecycle commands. Forking rebinds the native process, so the
 coordinator stops the source attachment before opening the returned session ID as its own T3 thread.
 Stop terminates only the T3-owned live process. **Archive thread** rejects an active turn, then stops

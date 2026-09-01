@@ -3,6 +3,7 @@ import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tool
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
+  foldNativeUiActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
   isAgentAttributedToolActivity,
@@ -875,5 +876,46 @@ describe("nested agents vs subagent shells", () => {
       }),
     ]);
     expect(agents.map((agent) => agent.id)).toEqual(["nested-1"]);
+  });
+});
+
+describe("foldNativeUiActivities", () => {
+  it("replaces and clears keyed statuses and widgets", () => {
+    const state = foldNativeUiActivities([
+      activity("ui.status.updated", { key: "work", value: "Starting" }),
+      activity("ui.widget.updated", {
+        key: "agents",
+        content: "2 running",
+        placement: "above",
+      }),
+      activity("ui.status.updated", { key: "work", value: "Ready" }),
+      activity("ui.widget.updated", { key: "agents", placement: "above" }),
+      activity("ui.widget.updated", {
+        key: "todos",
+        content: "● Implement\n○ Verify",
+        placement: "below",
+      }),
+    ]);
+
+    expect(state).toEqual({
+      statuses: [{ key: "work", value: "Ready" }],
+      widgets: [
+        {
+          key: "todos",
+          content: "● Implement\n○ Verify",
+          placement: "below",
+        },
+      ],
+    });
+  });
+
+  it("clears transient native UI state when the provider session exits", () => {
+    expect(
+      foldNativeUiActivities([
+        activity("ui.status.updated", { key: "work", value: "Running" }),
+        activity("ui.widget.updated", { key: "agents", content: "1 running" }),
+        activity("session.exited", {}),
+      ]),
+    ).toEqual({ statuses: [], widgets: [] });
   });
 });

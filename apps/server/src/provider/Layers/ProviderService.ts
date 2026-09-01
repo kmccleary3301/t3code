@@ -1116,6 +1116,26 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     }
     return yield* routed.adapter.readNativeHistory(routed.threadId, input.cursor);
   });
+  const readSubagentTranscript: ProviderServiceMethod<"readSubagentTranscript"> = Effect.fn(
+    "readSubagentTranscript",
+  )(function* (input) {
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.readSubagentTranscript",
+      allowRecovery: false,
+    });
+    if (routed.adapter.readSubagentTranscript === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "unsupported",
+        message: `Provider '${routed.adapter.provider}' has no subagent transcript reader.`,
+      });
+    }
+    return yield* routed.adapter.readSubagentTranscript(
+      routed.threadId,
+      input.subagentId,
+      input.cursor,
+    );
+  });
   const renameNativeSession: ProviderServiceMethod<"renameNativeSession"> = Effect.fn(
     "renameNativeSession",
   )(function* (input) {
@@ -1309,6 +1329,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getInstanceInfo,
     listNativeSessions,
     readNativeHistory,
+    readSubagentTranscript,
     renameNativeSession,
     forkNativeSession,
     rollbackConversation,

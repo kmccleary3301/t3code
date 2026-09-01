@@ -1609,6 +1609,14 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverReadSubagentTranscript]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverReadSubagentTranscript,
+            nativeSessionCoordinator.readSubagentTranscript(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetTraceDiagnostics,

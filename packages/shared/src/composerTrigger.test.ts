@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { serializeComposerFileLink, serializeComposerMentionPath } from "./composerTrigger.ts";
+import {
+  detectComposerTrigger,
+  serializeComposerFileLink,
+  serializeComposerMentionPath,
+} from "./composerTrigger.ts";
 
 describe("serializeComposerMentionPath", () => {
   it("keeps simple mention paths unquoted", () => {
@@ -39,5 +43,34 @@ describe("serializeComposerFileLink", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",
     );
+  });
+});
+
+describe("detectComposerTrigger", () => {
+  it("keeps native command arguments in the slash trigger", () => {
+    expect(detectComposerTrigger("/goal budget o", 14)).toEqual({
+      kind: "slash-command",
+      query: "goal budget o",
+      rangeStart: 0,
+      rangeEnd: 14,
+    });
+  });
+
+  it("preserves indentation before a native command", () => {
+    expect(detectComposerTrigger("  /goal bud", 11)).toEqual({
+      kind: "slash-command",
+      query: "goal bud",
+      rangeStart: 2,
+      rangeEnd: 11,
+    });
+  });
+
+  it("keeps model argument detection intact", () => {
+    expect(detectComposerTrigger("/model claude", 13)).toEqual({
+      kind: "slash-model",
+      query: "claude",
+      rangeStart: 0,
+      rangeEnd: 13,
+    });
   });
 });
