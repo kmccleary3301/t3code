@@ -406,9 +406,9 @@ function safeDesktopStylesheetHref(href: string | null): string | null {
   if (!href) return null;
   try {
     const parsed = new URL(href);
-    return redactActualSurfaceLog(`${parsed.origin}${parsed.pathname}`);
+    return redactActualSurfaceLog(`${parsed.origin}${parsed.pathname}`).trim();
   } catch {
-    return redactActualSurfaceLog(href.replace(/[?#][^\s]*/gu, ""));
+    return redactActualSurfaceLog(href.replace(/[?#][^\s]*/gu, "")).trim();
   }
 }
 

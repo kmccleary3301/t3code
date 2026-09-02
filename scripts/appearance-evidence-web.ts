@@ -139,10 +139,15 @@ function sanitizedNetworkUrl(value: string, credential: string | undefined): str
   try {
     const parsed = new URL(value);
     return boundedEvidenceText(
-      redactActualSurfaceLog(`${parsed.origin}${parsed.pathname}`, credential ? [credential] : []),
+      redactActualSurfaceLog(
+        `${parsed.origin}${parsed.pathname}`,
+        credential ? [credential] : [],
+      ).trim(),
     );
   } catch {
-    return boundedEvidenceText(redactActualSurfaceLog(value, credential ? [credential] : []));
+    return boundedEvidenceText(
+      redactActualSurfaceLog(value, credential ? [credential] : []).trim(),
+    );
   }
 }
 
