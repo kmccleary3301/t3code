@@ -9,6 +9,8 @@ import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
 import {
   EVIDENCE_ENV_ALLOWLIST,
   commandOutput,
@@ -203,8 +205,11 @@ export function createArtifactIdentity(input: {
 export function createRuntimeIdentity(input: Partial<RuntimeIdentity> = {}): RuntimeIdentity {
   return Schema.decodeUnknownSync(RuntimeIdentitySchema)({
     node: input.node === undefined ? process.version : input.node,
-    platform: input.platform === undefined ? process.platform : input.platform,
-    architecture: input.architecture === undefined ? process.arch : input.architecture,
+    platform: input.platform === undefined ? HostProcessPlatform.defaultValue() : input.platform,
+    architecture:
+      input.architecture === undefined
+        ? HostProcessArchitecture.defaultValue()
+        : input.architecture,
     server: input.server ?? null,
     tool: input.tool ?? null,
     browser: input.browser ?? null,

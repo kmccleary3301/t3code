@@ -5,6 +5,8 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
 import {
   APPEARANCE_SCENE_CATALOG,
   EVIDENCE_SCHEMA_VERSION,
@@ -580,7 +582,7 @@ it.effect("enforces output containment, symlink resolution, collision safety, an
         /overlaps a forbidden path/u,
       );
 
-      if (process.platform !== "win32") {
+      if (HostProcessPlatform.defaultValue() !== "win32") {
         const linkedOutput = NodePath.join(root, "linked-output");
         await NodeFSP.symlink(checkout, linkedOutput, "dir");
         assert.throws(
@@ -891,7 +893,7 @@ it.effect("rejects traversal, duplicate ordering, and symlink leaf escapes", () 
         /does not match its run directory/u,
       );
 
-      if (process.platform !== "win32") {
+      if (HostProcessPlatform.defaultValue() !== "win32") {
         const outside = NodePath.join(root, "outside.json");
         await NodeFSP.writeFile(outside, "outside");
         await NodeFSP.symlink(outside, NodePath.join(runDirectory, "escape.json"), "file");
