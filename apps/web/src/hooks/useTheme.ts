@@ -1,7 +1,7 @@
 import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { applyAppearanceTheme } from "../appearanceRuntime";
 import {
   applyThemePalette,
@@ -743,11 +743,6 @@ export function useTheme() {
     applyTheme(getStored(), { suppressTransitions: true, preservePreview });
     emitChange();
   }, []);
-
-  // Keep DOM in sync on mount/change
-  useEffect(() => {
-    applyTheme(theme);
-  }, [snapshot.appearanceMode, theme]);
 
   return {
     theme,

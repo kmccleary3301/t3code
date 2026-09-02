@@ -101,6 +101,33 @@ describe("theme failure handling", () => {
     expect(toggle).not.toHaveBeenCalled();
   });
 
+  it("leaves the startup appearance runtime authoritative on hook mount", async () => {
+    const useEffect = vi.fn();
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useEffect,
+      useSyncExternalStore: (
+        _subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => getSnapshot(),
+    }));
+    vi.stubGlobal("window", {
+      addEventListener: () => undefined,
+      localStorage: createStorage(),
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+      removeEventListener: () => undefined,
+    });
+
+    const { useTheme } = await import("./useTheme");
+    useTheme();
+
+    expect(useEffect).not.toHaveBeenCalled();
+  });
+
   it("retries a failed storage read only after a relevant storage event", async () => {
     const cause = new Error("persistent storage failure");
     const themeGetItem = vi.fn((): string | null => {
