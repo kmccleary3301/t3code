@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Filesystem-backed desktop appearance tests use host fixtures and asynchronous watch timing.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off -- Filesystem-backed desktop appearance tests use host fixtures and asynchronous watch timing.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
