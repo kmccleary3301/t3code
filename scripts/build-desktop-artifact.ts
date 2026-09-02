@@ -2234,6 +2234,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    // The legacy FUSE2 arm64 runtime links the unversioned `libz.so`, which is
+    // absent from normal Linux installations. The static toolset keeps the
+    // AppImage self-contained on both supported architectures.
+    buildConfig.toolsets = { appimage: "1.0.3" };
     buildConfig.linux = {
       target: [target],
       executableName: identity.cliBinaryName,
