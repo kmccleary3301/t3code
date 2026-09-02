@@ -263,16 +263,7 @@ async function readDesktopInstrumentation(
     `(() => {
       const state = window.__T3_APPEARANCE_EVIDENCE__;
       if (!state) throw new Error("Appearance evidence instrumentation was not installed.");
-      return {
-        reactCommits: [...state.reactCommits],
-        longTasks: state.longTasks.map((entry) => ({ ...entry })),
-        appearanceOperations: state.appearanceOperations.map((entry) => ({ ...entry })),
-        sampledAt: performance.now(),
-        capabilities: {
-          reactDevtools: { ...state.capabilities.reactDevtools },
-          longTasks: { ...state.capabilities.longTasks },
-        },
-      };
+      return state.snapshot();
     })()`,
   );
   return Schema.decodeUnknownSync(InstrumentationSnapshotSchema)(raw);
@@ -360,18 +351,52 @@ async function installDesktopRendererInstrumentation(
     `${APPEARANCE_INSTRUMENTATION_INIT_SCRIPT}
     (() => {
       if (window.__T3_APPEARANCE_CONSOLE__) return;
-      const messages = [];
-      Object.defineProperty(window, "__T3_APPEARANCE_CONSOLE__", { value: messages });
+      const limit = 512;
+      const entries = [];
+      let start = 0;
+      let dropped = 0;
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const clamp = (value) => {
+        const bytes = encoder.encode(value);
+        if (bytes.byteLength <= 4096) return value;
+        return decoder.decode(bytes.slice(0, 4096)) + "[truncated]";
+      };
+      const push = (value) => {
+        const entry = clamp(value);
+        if (entries.length < limit) {
+          entries.push(entry);
+          return;
+        }
+        entries[start] = entry;
+        start = (start + 1) % limit;
+        dropped += 1;
+      };
+      const capture = Object.freeze({
+        snapshot: () => ({
+          dropped,
+          entries:
+            start === 0
+              ? [...entries]
+              : [...entries.slice(start), ...entries.slice(0, start)],
+        }),
+      });
+      Object.defineProperty(window, "__T3_APPEARANCE_CONSOLE__", {
+        configurable: false,
+        enumerable: false,
+        value: capture,
+        writable: false,
+      });
       for (const level of ["debug", "info", "log", "warn", "error"]) {
         const original = console[level];
         console[level] = (...args) => {
-          messages.push(level + ": " + args.map((value) => String(value)).join(" "));
+          push(level + ": " + args.map((value) => String(value)).join(" "));
           return original.apply(console, args);
         };
       }
-      window.addEventListener("error", (event) => messages.push("pageerror: " + event.message));
+      window.addEventListener("error", (event) => push("pageerror: " + event.message));
       window.addEventListener("unhandledrejection", (event) =>
-        messages.push("unhandledrejection: " + String(event.reason)),
+        push("unhandledrejection: " + String(event.reason)),
       );
     })()`,
   );
@@ -381,9 +406,9 @@ function safeDesktopStylesheetHref(href: string | null): string | null {
   if (!href) return null;
   try {
     const parsed = new URL(href);
-    return `${parsed.origin}${parsed.pathname}`;
+    return redactActualSurfaceLog(`${parsed.origin}${parsed.pathname}`);
   } catch {
-    return href.replace(/[?#][^\s]*/gu, "");
+    return redactActualSurfaceLog(href.replace(/[?#][^\s]*/gu, ""));
   }
 }
 
@@ -468,10 +493,20 @@ async function collectDesktopSurfaceEvidence(
             "$1[REDACTED]"
           );
       }
+      const consoleCapture = window.__T3_APPEARANCE_CONSOLE__?.snapshot?.() ?? {
+        dropped: 0,
+        entries: [],
+      };
       return {
         dom: clone.outerHTML,
         styles,
-        console: [...(window.__T3_APPEARANCE_CONSOLE__ ?? [])],
+        console:
+          consoleCapture.dropped === 0
+            ? consoleCapture.entries
+            : [
+                "evidence: " + consoleCapture.dropped + " earlier console entries dropped",
+                ...consoleCapture.entries,
+              ],
       };
     })()`,
   );

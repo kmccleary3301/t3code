@@ -456,12 +456,18 @@ it("attributes renderer metrics by operation timestamps instead of observer deli
     reactDevtools: { status: "available" as const },
     longTasks: { status: "available" as const },
   };
+  const dropped = {
+    reactCommits: 0,
+    longTasks: 0,
+    appearanceOperations: 0,
+  };
   const before = {
     sampledAt: 100,
     reactCommits: [90],
     longTasks: [{ startTime: 90, duration: 99 }],
     appearanceOperations: [{ kind: "compile" as const, startTime: 90, duration: 99 }],
     capabilities,
+    dropped,
   };
   const after = {
     sampledAt: 200,
@@ -476,6 +482,7 @@ it("attributes renderer metrics by operation timestamps instead of observer deli
       { kind: "stylesheet-replacement" as const, startTime: 140, duration: 2 },
     ],
     capabilities,
+    dropped,
   };
 
   assert.deepStrictEqual(metricDelta(before, after), {

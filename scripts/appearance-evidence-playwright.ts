@@ -1,20 +1,6 @@
 /// <reference lib="dom" />
-interface AppearancePerformanceEntry {
-  readonly kind: "compile" | "stylesheet-replacement";
-  readonly startTime: number;
-  readonly duration: number;
-}
 interface EvidenceInstrumentationState {
-  readonly reactCommits: ReadonlyArray<number>;
-  readonly longTasks: ReadonlyArray<{ readonly duration: number; readonly startTime: number }>;
-  readonly appearanceOperations: ReadonlyArray<AppearancePerformanceEntry>;
-  readonly capabilities: {
-    readonly reactDevtools: {
-      readonly status: "available" | "unavailable";
-      readonly reason?: string;
-    };
-    readonly longTasks: { readonly status: "available" | "unavailable"; readonly reason?: string };
-  };
+  readonly snapshot: () => unknown;
 }
 declare global {
   interface Window {
@@ -51,6 +37,11 @@ export const InstrumentationSnapshotSchema = Schema.Struct({
     }),
   ),
   sampledAt: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
+  dropped: Schema.Struct({
+    reactCommits: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    longTasks: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    appearanceOperations: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  }),
   capabilities: Schema.Struct({
     reactDevtools: CapabilitySchema,
     longTasks: CapabilitySchema,
@@ -183,30 +174,82 @@ export interface SurfaceEvidence {
 /** Web installs this before navigation; desktop installs it after shell readiness for warm-switch metrics only. */
 export const APPEARANCE_INSTRUMENTATION_INIT_SCRIPT = `(() => {
   const key = "__T3_APPEARANCE_EVIDENCE__";
-  const existing = window[key];
-  if (existing) return;
-  const state = {
-    reactCommits: [],
-    longTasks: [],
-    appearanceOperations: [],
-    capabilities: {
-      reactDevtools: { status: "available" },
-      longTasks: { status: "available" },
-    },
-  };
-  window[key] = state;
-  Object.defineProperty(window, "__T3_APPEARANCE_PERFORMANCE__", {
-    configurable: true,
-    enumerable: false,
-    value: {
-      record: (entry) => {
-        state.appearanceOperations.push(entry);
-        if (state.appearanceOperations.length > 512) state.appearanceOperations.splice(0, 256);
+  if (window[key]) return;
+  const makeRing = (limit) => {
+    const entries = [];
+    let start = 0;
+    let dropped = 0;
+    return Object.freeze({
+      push: (entry) => {
+        if (entries.length < limit) {
+          entries.push(entry);
+          return;
+        }
+        entries[start] = entry;
+        start = (start + 1) % limit;
+        dropped += 1;
       },
+      snapshot: () =>
+        start === 0
+          ? entries.map((entry) => ({ ...entry }))
+          : [...entries.slice(start), ...entries.slice(0, start)].map((entry) => ({ ...entry })),
+      dropped: () => dropped,
+    });
+  };
+  const reactCommits = makeRing(512);
+  const longTasks = makeRing(512);
+  const appearanceOperations = makeRing(512);
+  const capabilities = {
+    reactDevtools: { status: "available" },
+    longTasks: { status: "available" },
+  };
+  const snapshot = Object.freeze({
+    snapshot: () => ({
+      reactCommits: reactCommits.snapshot().map((entry) => entry.at),
+      longTasks: longTasks.snapshot(),
+      appearanceOperations: appearanceOperations.snapshot(),
+      sampledAt: performance.now(),
+      capabilities: {
+        reactDevtools: { ...capabilities.reactDevtools },
+        longTasks: { ...capabilities.longTasks },
+      },
+      dropped: {
+        reactCommits: reactCommits.dropped(),
+        longTasks: longTasks.dropped(),
+        appearanceOperations: appearanceOperations.dropped(),
+      },
+    }),
+  });
+  Object.defineProperty(window, key, {
+    configurable: false,
+    enumerable: false,
+    value: snapshot,
+    writable: false,
+  });
+  const sink = Object.freeze({
+    begin: (kind) => {
+      if (kind !== "compile" && kind !== "stylesheet-replacement") return () => {};
+      const startTime = performance.now();
+      let finished = false;
+      return () => {
+        if (finished) return;
+        finished = true;
+        appearanceOperations.push({
+          kind,
+          startTime,
+          duration: Math.max(0, performance.now() - startTime),
+        });
+      };
     },
   });
+  Object.defineProperty(window, "__T3_APPEARANCE_PERFORMANCE__", {
+    configurable: false,
+    enumerable: false,
+    value: sink,
+    writable: false,
+  });
   const recordCommit = () => {
-    state.reactCommits.push(performance.now());
+    reactCommits.push({ at: performance.now() });
   };
   const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
   if (hook && typeof hook.onCommitFiberRoot === "function") {
@@ -233,17 +276,20 @@ export const APPEARANCE_INSTRUMENTATION_INIT_SCRIPT = `(() => {
     });
   }
   if (typeof PerformanceObserver !== "function") {
-    state.capabilities.longTasks = { status: "unavailable", reason: "PerformanceObserver is unavailable." };
+    capabilities.longTasks = {
+      status: "unavailable",
+      reason: "PerformanceObserver is unavailable.",
+    };
   } else {
     try {
       const observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
-          state.longTasks.push({ duration: entry.duration, startTime: entry.startTime });
+          longTasks.push({ duration: entry.duration, startTime: entry.startTime });
         }
       });
       observer.observe({ type: "longtask", buffered: true });
     } catch (error) {
-      state.capabilities.longTasks = {
+      capabilities.longTasks = {
         status: "unavailable",
         reason: error instanceof Error ? error.message : "longtask observation failed",
       };
@@ -259,16 +305,7 @@ export async function readInstrumentationSnapshot(page: Page): Promise<Instrumen
   const raw = await page.evaluate(() => {
     const state = window.__T3_APPEARANCE_EVIDENCE__;
     if (!state) throw new Error("Appearance evidence instrumentation was not installed.");
-    return {
-      reactCommits: [...state.reactCommits],
-      longTasks: state.longTasks.map((entry) => ({ ...entry })),
-      appearanceOperations: state.appearanceOperations.map((entry) => ({ ...entry })),
-      sampledAt: performance.now(),
-      capabilities: {
-        reactDevtools: { ...state.capabilities.reactDevtools },
-        longTasks: { ...state.capabilities.longTasks },
-      },
-    };
+    return state.snapshot();
   });
   return decodeInstrumentationSnapshot(raw);
 }

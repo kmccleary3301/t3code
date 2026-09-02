@@ -70,30 +70,20 @@ const APPEARANCE_STARTUP_TIMEOUT_MS = 10_000;
 const APPEARANCE_MANAGED_SHEET_PROPERTY = "__t3AppearanceManaged";
 const APPEARANCE_ROOT_LAYER_ATTRIBUTE = "data-t3-appearance-root-layer";
 type AppearancePerformanceKind = "compile" | "stylesheet-replacement";
-interface AppearancePerformanceEntry {
-  readonly kind: AppearancePerformanceKind;
-  readonly startTime: number;
-  readonly duration: number;
-}
 declare global {
   interface Window {
     readonly __T3_APPEARANCE_PERFORMANCE__?: {
-      readonly record: (entry: AppearancePerformanceEntry) => void;
+      readonly begin: (kind: AppearancePerformanceKind) => () => void;
     };
   }
 }
 function measureAppearanceOperation<T>(kind: AppearancePerformanceKind, operation: () => T): T {
   const sink = typeof window === "undefined" ? undefined : window.__T3_APPEARANCE_PERFORMANCE__;
-  if (sink === undefined) return operation();
-  const startTime = performance.now();
+  const finish = sink?.begin(kind);
   try {
     return operation();
   } finally {
-    sink.record({
-      kind,
-      startTime,
-      duration: Math.max(0, performance.now() - startTime),
-    });
+    finish?.();
   }
 }
 type WebAppearanceLayerId =

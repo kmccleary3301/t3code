@@ -1,10 +1,17 @@
 /// <reference lib="dom" />
 // @effect-diagnostics nodeBuiltinImport:off - Evidence drivers own disposable host filesystem state.
+import * as NodeBuffer from "node:buffer";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+  type Request,
+} from "playwright-core";
 
 import {
   createActualSurfaceChildEnv,
@@ -50,6 +57,58 @@ export interface WebDriverOptions {
   readonly coldCount: number;
   readonly pairCount: number;
 }
+interface NetworkRequestObservation {
+  failure: string | null;
+  method: string;
+  outcome: "pending" | "response" | "failed";
+  resourceType: string;
+  status: number | null;
+  url: string;
+}
+const MAX_CONSOLE_ENTRIES = 512;
+const MAX_NETWORK_ENTRIES = 2_048;
+const MAX_EVIDENCE_TEXT_BYTES = 4_096;
+class EvidenceRing<T> {
+  readonly #entries: T[] = [];
+  #dropped = 0;
+  #start = 0;
+  readonly #limit: number;
+
+  constructor(limit: number) {
+    this.#limit = limit;
+  }
+
+  get dropped(): number {
+    return this.#dropped;
+  }
+
+  clear(): void {
+    this.#entries.length = 0;
+    this.#dropped = 0;
+    this.#start = 0;
+  }
+
+  push(entry: T): void {
+    if (this.#entries.length < this.#limit) {
+      this.#entries.push(entry);
+      return;
+    }
+    this.#entries[this.#start] = entry;
+    this.#start = (this.#start + 1) % this.#limit;
+    this.#dropped += 1;
+  }
+
+  snapshot(): ReadonlyArray<T> {
+    if (this.#start === 0) return [...this.#entries];
+    return [...this.#entries.slice(this.#start), ...this.#entries.slice(0, this.#start)];
+  }
+}
+function boundedEvidenceText(value: string): string {
+  const bytes = NodeBuffer.Buffer.from(value);
+  if (bytes.byteLength <= MAX_EVIDENCE_TEXT_BYTES) return value;
+  const truncated = bytes.subarray(0, MAX_EVIDENCE_TEXT_BYTES).toString("utf8");
+  return `${truncated.endsWith("\uFFFD") ? truncated.slice(0, -1) : truncated}[truncated]`;
+}
 class WebAppearanceBlockedError extends Error {
   readonly code: string;
   readonly classification: "BLOCKED_PRODUCT" | "BLOCKED_INFRASTRUCTURE";
@@ -76,6 +135,16 @@ const THEME_STORAGE_KEY = "t3code:theme";
 function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
+function sanitizedNetworkUrl(value: string, credential: string | undefined): string {
+  try {
+    const parsed = new URL(value);
+    return boundedEvidenceText(
+      redactActualSurfaceLog(`${parsed.origin}${parsed.pathname}`, credential ? [credential] : []),
+    );
+  } catch {
+    return boundedEvidenceText(redactActualSurfaceLog(value, credential ? [credential] : []));
+  }
+}
 
 export function appearanceModeInitScript(appearance: AppearanceMode): string {
   return `(() => {
@@ -91,12 +160,8 @@ async function openWebPage(
   readonly browser: Browser;
   readonly context: BrowserContext;
   readonly page: Page;
-  readonly messages: ReadonlyArray<string>;
-  readonly networkResponses: ReadonlyArray<{
-    readonly resourceType: string;
-    readonly status: number;
-    readonly url: string;
-  }>;
+  readonly messages: EvidenceRing<string>;
+  readonly networkRequests: EvidenceRing<NetworkRequestObservation>;
   readonly coldStartupMs: number;
   readonly dispose: () => Promise<void>;
 }> {
@@ -105,10 +170,11 @@ async function openWebPage(
   let browser: Browser | undefined;
   let context: BrowserContext | undefined;
   let credential: string | undefined;
-  const messages: string[] = [];
-  const networkResponses: Array<{ resourceType: string; status: number; url: string }> = [];
+  const messages = new EvidenceRing<string>(MAX_CONSOLE_ENTRIES);
+  const networkRequests = new EvidenceRing<NetworkRequestObservation>(MAX_NETWORK_ENTRIES);
+  const requests = new WeakMap<Request, NetworkRequestObservation>();
   let observationStage = "actual-surface-environment";
-  const responseFailures: string[] = [];
+  const responseFailures = new EvidenceRing<string>(128);
   const dispose = async (): Promise<void> => {
     const failures: unknown[] = [];
     const currentContext = context;
@@ -172,25 +238,53 @@ async function openWebPage(
     await context.addInitScript({ content: appearanceModeInitScript(appearance) });
     const page = await context.newPage();
     await installAppearanceInstrumentation(page);
-    page.on("console", (message) => messages.push(`${message.type()}: ${message.text()}`));
-    page.on("pageerror", (error) => messages.push(`pageerror: ${error.message}`));
-    page.on("response", (response) => {
-      const resourceType = response.request().resourceType();
-      let url = response.url();
-      try {
-        const parsed = new URL(url);
-        url = `${parsed.origin}${parsed.pathname}`;
-      } catch {
-        url = redactActualSurfaceLog(url, credential ? [credential] : []);
+    page.on("console", (message) =>
+      messages.push(boundedEvidenceText(`${message.type()}: ${message.text()}`)),
+    );
+    page.on("pageerror", (error) =>
+      messages.push(boundedEvidenceText(`pageerror: ${error.message}`)),
+    );
+    page.on("request", (request) => {
+      const observation: NetworkRequestObservation = {
+        failure: null,
+        method: boundedEvidenceText(request.method()),
+        outcome: "pending",
+        resourceType: boundedEvidenceText(request.resourceType()),
+        status: null,
+        url: sanitizedNetworkUrl(request.url(), credential),
+      };
+      requests.set(request, observation);
+      networkRequests.push(observation);
+    });
+    page.on("requestfailed", (request) => {
+      const observation = requests.get(request);
+      if (observation !== undefined) {
+        observation.outcome = "failed";
+        observation.failure = boundedEvidenceText(
+          redactActualSurfaceLog(
+            request.failure()?.errorText ?? "unknown request failure",
+            credential ? [credential] : [],
+          ),
+        );
       }
-      networkResponses.push({
-        resourceType,
-        status: response.status(),
-        url,
-      });
-      if (response.status() < 400 && resourceType !== "fetch" && resourceType !== "xhr") return;
       responseFailures.push(
-        `response ${response.status()}: ${redactActualSurfaceLog(response.url(), credential ? [credential] : [])}`,
+        boundedEvidenceText(
+          `request failed: ${redactActualSurfaceLog(request.url(), credential ? [credential] : [])}`,
+        ),
+      );
+    });
+    page.on("response", (response) => {
+      const request = response.request();
+      const observation = requests.get(request);
+      if (observation !== undefined) {
+        observation.outcome = "response";
+        observation.status = response.status();
+      }
+      if (response.status() < 400) return;
+      responseFailures.push(
+        boundedEvidenceText(
+          `response ${response.status()}: ${redactActualSurfaceLog(response.url(), credential ? [credential] : [])}`,
+        ),
       );
     });
     observationStage = "pairing-route";
@@ -204,9 +298,9 @@ async function openWebPage(
     await page.getByLabel("Pairing token", { exact: true }).fill(credential);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await page.waitForURL((url) => url.pathname !== "/pair", { timeout: 60_000 });
-    messages.length = 0;
-    responseFailures.length = 0;
-    networkResponses.length = 0;
+    messages.clear();
+    responseFailures.clear();
+    networkRequests.clear();
     observationStage = "settings-route";
     await page.goto(`${origin}/settings/appearance`, {
       waitUntil: "domcontentloaded",
@@ -218,7 +312,7 @@ async function openWebPage(
       context,
       page,
       messages,
-      networkResponses,
+      networkRequests,
       coldStartupMs: performance.now() - clientStarted,
       dispose,
     };
@@ -228,7 +322,7 @@ async function openWebPage(
       error instanceof Error ? error.message : String(error),
       secrets,
     );
-    const diagnostic = [...responseFailures, ...messages.slice(-10)]
+    const diagnostic = [...responseFailures.snapshot(), ...messages.snapshot().slice(-10)]
       .map((message) => redactActualSurfaceLog(message, secrets))
       .join(" | ");
     try {
@@ -344,10 +438,16 @@ export async function runWebAppearanceDriver(
         sampleIndex: sampleIndex++,
       });
       if (collectVisual) {
+        const consoleMessages = session.messages.snapshot();
         const evidence = await collectSurfaceEvidence(
           session.page,
           readiness,
-          session.messages,
+          session.messages.dropped === 0
+            ? consoleMessages
+            : [
+                `evidence: ${session.messages.dropped} earlier console entries dropped`,
+                ...consoleMessages,
+              ],
           stylesheetProbe,
         );
         const visualRoot = `visual/settings-theme-library/${appearance}`;
@@ -362,8 +462,11 @@ export async function runWebAppearanceDriver(
           },
           { path: `${visualRoot}/console.json`, content: json(evidence.console) },
           {
-            path: `${visualRoot}/network-responses.json`,
-            content: json(session.networkResponses),
+            path: `${visualRoot}/network-requests.json`,
+            content: json({
+              dropped: session.networkRequests.dropped,
+              requests: session.networkRequests.snapshot(),
+            }),
           },
           {
             path: `${visualRoot}/stylesheet-metrics.json`,
