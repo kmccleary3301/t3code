@@ -435,6 +435,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                   : "text-secondary-label hover:text-foreground",
               )}
               type="button"
+              data-t3-part="mode-control"
               onClick={props.onToggleInteractionMode}
               aria-label={interactionModeTooltip}
             />
@@ -464,7 +465,13 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           onValueChange={(value) => props.onRuntimeModeChange(value!)}
         >
           <TooltipTrigger
-            render={<ComposerSelectControl className="font-medium" aria-label="Runtime mode" />}
+            render={
+              <ComposerSelectControl
+                className="font-medium"
+                aria-label="Runtime mode"
+                data-t3-part="mode-control"
+              />
+            }
           >
             <ComposerControlIcon icon={RuntimeModeIcon} />
             <SelectValue>{runtimeModeOption.label}</SelectValue>
@@ -3426,6 +3433,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   return (
     <form
+      data-t3-surface="composer"
       ref={composerFormRef}
       onSubmit={submitComposer}
       onFocusCapture={(event) => {
@@ -3614,6 +3622,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           <div
             ref={composerSurfaceRef}
             data-chat-composer-surface="true"
+            data-t3-surface="composer-body"
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
             className={cn(
               "rounded-[20px] transition-[background-color] duration-200",
@@ -3772,7 +3781,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     (image) =>
                       !composerPreviewAnnotations.some((annotation) => annotation.id === image.id),
                   )) && (
-                  <div className="mb-3 flex flex-wrap gap-2">
+                  <div className="mb-3 flex flex-wrap gap-2" data-t3-surface="attachments">
                     {composerImages
                       .filter(
                         (image) =>
@@ -4043,8 +4052,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     })}
                   </div>
                 )}
-
-              <div className="relative">
+              <div className="relative" data-t3-part="prompt-editor">
                 <ComposerPromptEditor
                   editorRef={composerEditorRef}
                   value={
@@ -4123,6 +4131,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {isComposerCollapsedMobile || isComposerApprovalState ? null : (
               <div
                 data-chat-composer-footer="true"
+                data-t3-surface="toolbar"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                 className={cn(
                   "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-3 pb-3 sm:px-4 sm:pb-4",

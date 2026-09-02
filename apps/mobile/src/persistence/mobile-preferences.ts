@@ -6,6 +6,11 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  NormalizedAppearanceProfileSchema,
+  STRICT_APPEARANCE_PARSE_OPTIONS,
+  type NormalizedAppearanceProfile,
+} from "@t3tools/shared/appearance";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 
 import * as MobileDatabase from "./mobile-database";
@@ -14,6 +19,17 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
+const decodeNormalizedAppearanceProfile = Schema.decodeUnknownSync(
+  NormalizedAppearanceProfileSchema,
+);
+
+function decodeAppearanceProfile(value: unknown): NormalizedAppearanceProfile | null {
+  try {
+    return decodeNormalizedAppearanceProfile(value, STRICT_APPEARANCE_PARSE_OPTIONS);
+  } catch {
+    return null;
+  }
+}
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
@@ -21,6 +37,8 @@ export interface Preferences {
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
   readonly themeMode?: MobileThemeMode;
+  readonly appearanceProfile?: NormalizedAppearanceProfile;
+  readonly quarantinedAppearanceProfile?: NormalizedAppearanceProfile;
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
@@ -92,6 +110,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
     themeMode?: MobileThemeMode;
+    appearanceProfile?: NormalizedAppearanceProfile;
+    quarantinedAppearanceProfile?: NormalizedAppearanceProfile;
     baseFontSize?: number;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
@@ -136,6 +156,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   ) {
     preferences.themeMode = parsed.themeMode;
   }
+  const profile = decodeAppearanceProfile(parsed.appearanceProfile);
+  if (profile !== null) preferences.appearanceProfile = profile;
+  const quarantinedProfile = decodeAppearanceProfile(parsed.quarantinedAppearanceProfile);
+  if (quarantinedProfile !== null) preferences.quarantinedAppearanceProfile = quarantinedProfile;
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {
     preferences.terminalFontSize = parsed.terminalFontSize;

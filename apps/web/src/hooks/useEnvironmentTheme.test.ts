@@ -96,6 +96,15 @@ describe("environment themes", () => {
 
     expect(definitions.map((definition) => definition.id)).toEqual(["nightfall"]);
   });
+  it("publishes only the first usable theme for a duplicate environment ID", () => {
+    const definitions = publishedThemeDefinitions([
+      NIGHTFALL_THEME,
+      { ...NIGHTFALL_THEME, name: "Conflicting duplicate", accent: "#ff0000" },
+    ]);
+
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0]?.label).toBe(NIGHTFALL_THEME.name);
+  });
 
   it("drops published palettes with no usable colors", () => {
     const theme = { id: "invalid", name: "Invalid", appearance: "dark" } as const;

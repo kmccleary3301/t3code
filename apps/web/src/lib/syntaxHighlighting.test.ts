@@ -1,15 +1,25 @@
+import { normalizeThemeDefinition } from "@t3tools/shared/appearance";
+import { GROVE_THEME, T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
 import type { DiffsHighlighter } from "@pierre/diffs";
 import { expect, it, vi } from "vite-plus/test";
 
-const { getSharedHighlighter } = vi.hoisted(() => ({
+const { getSharedHighlighter, registerCustomTheme } = vi.hoisted(() => ({
   getSharedHighlighter: vi.fn(),
+  registerCustomTheme: vi.fn(),
 }));
 
 vi.mock("@pierre/diffs", () => ({
   getSharedHighlighter,
+  registerCustomTheme,
 }));
 
-import { getSyntaxHighlighterPromise } from "./syntaxHighlighting";
+import {
+  activeSyntaxTheme,
+  clearNormalizedSyntaxTheme,
+  getSyntaxHighlighterPromise,
+  registerNormalizedSyntaxTheme,
+} from "./syntaxHighlighting";
+import { resolveDiffThemeName, setActiveAppearanceDiffTheme } from "./diffRendering";
 
 it("caches the recovered text highlighter for unsupported languages", async () => {
   const textHighlighter = {} as DiffsHighlighter;
@@ -25,4 +35,29 @@ it("caches the recovered text highlighter for unsupported languages", async () =
 
   expect(second).toBe(first);
   expect(getSharedHighlighter).toHaveBeenCalledTimes(2);
+});
+
+it("clears custom syntax and diff themes for safe-mode recovery", () => {
+  setActiveAppearanceDiffTheme("custom-theme");
+  expect(resolveDiffThemeName("dark")).toBe("custom-theme");
+
+  clearNormalizedSyntaxTheme();
+
+  expect(activeSyntaxTheme("pierre-dark")).toBe("pierre-dark");
+  expect(resolveDiffThemeName("dark")).toBe("pierre-dark");
+});
+
+it("registers each content-addressed syntax theme only once across preview rollback", () => {
+  const t3 = normalizeThemeDefinition(T3_CHAT_THEME);
+  const grove = normalizeThemeDefinition(GROVE_THEME);
+  const t3Dark = t3.variants.find((variant) => variant.appearance === "dark");
+  const groveDark = grove.variants.find((variant) => variant.appearance === "dark");
+  if (t3Dark === undefined || groveDark === undefined) throw new Error("Expected dark variants.");
+
+  registerNormalizedSyntaxTheme(t3, t3Dark);
+  registerNormalizedSyntaxTheme(grove, groveDark);
+  clearNormalizedSyntaxTheme();
+  registerNormalizedSyntaxTheme(t3, t3Dark);
+
+  expect(registerCustomTheme).toHaveBeenCalledTimes(2);
 });

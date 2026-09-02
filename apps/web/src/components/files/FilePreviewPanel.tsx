@@ -650,7 +650,7 @@ function EditableFileSurface({
 
   return (
     <EditProvider editor={editor}>
-      <div ref={surfaceRef} className="flex min-h-0 flex-1">
+      <div ref={surfaceRef} className="flex min-h-0 flex-1" data-t3-surface="code-block">
         <Virtualizer
           className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
           config={{
@@ -735,7 +735,7 @@ function RenderedMarkdownSurface({
   });
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <ScrollArea className="min-h-0 flex-1" data-t3-surface="file-preview">
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}
@@ -874,11 +874,15 @@ export default function FilePreviewPanel({
   }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, openPreview, threadRef]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      data-t3-surface="files"
+    >
       {relativePath ? (
         <div
           className="flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
           data-surface-subheader
+          data-t3-surface="file-preview"
         >
           <ScrollArea
             ref={breadcrumbRef}

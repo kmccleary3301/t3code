@@ -7,11 +7,13 @@ import {
   type MobileThemeId as SharedMobileThemeId,
   type ThemeAppearance,
   type ThemeColors,
+  themeColorToNativeColor,
 } from "@t3tools/shared/themePalettes";
 import {
   STANDARD_THEME_PREVIEW_COLORS,
   type ThemePreviewColors,
 } from "@t3tools/shared/themePreview";
+export { themeColorToNativeColor } from "@t3tools/shared/themePalettes";
 
 export const DEFAULT_MOBILE_THEME_ID = MOBILE_DEFAULT_THEME_ID;
 export const MOBILE_THEME_IDS = SHARED_MOBILE_THEME_IDS;
@@ -83,39 +85,6 @@ export function createMobileThemePairPatch(value: MobileThemeId) {
     darkThemeId: value,
     themeId: value,
   };
-}
-
-const OKLCH_PATTERN = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/;
-
-function linearToSrgb(value: number): number {
-  const converted = value <= 0.0031308 ? 12.92 * value : 1.055 * value ** (1 / 2.4) - 0.055;
-  return Math.round(Math.min(1, Math.max(0, converted)) * 255);
-}
-
-/** React Native does not accept OKLCH ColorValues, so palettes cross the app boundary as sRGB. */
-export function themeColorToNativeColor(value: string): string {
-  const match = OKLCH_PATTERN.exec(value);
-  if (!match) return value;
-
-  const lightness = Number(match[1]);
-  const chroma = Number(match[2]);
-  const hue = (Number(match[3]) * Math.PI) / 180;
-  const alpha = match[4] === undefined ? 1 : Number(match[4]);
-  const a = chroma * Math.cos(hue);
-  const b = chroma * Math.sin(hue);
-  const lPrime = lightness + 0.3963377774 * a + 0.2158037573 * b;
-  const mPrime = lightness - 0.1055613458 * a - 0.0638541728 * b;
-  const sPrime = lightness - 0.0894841775 * a - 1.291485548 * b;
-  const l = lPrime ** 3;
-  const m = mPrime ** 3;
-  const s = sPrime ** 3;
-  const red = linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s);
-  const green = linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s);
-  const blue = linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s);
-
-  return alpha < 1
-    ? `rgba(${red}, ${green}, ${blue}, ${Number(alpha.toFixed(4))})`
-    : `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function nativeColors(colors: ThemeColors): ThemeColors {

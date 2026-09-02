@@ -861,9 +861,14 @@ function MarkdownCodeBlock({
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
+      data-t3-surface="code-block"
+      data-t3-part="code"
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
-        <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]">
+        <span
+          className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]"
+          data-t3-part="label"
+        >
           <MarkdownCodeBlockTitleContent
             fenceTitle={fenceTitle}
             language={language}
@@ -965,7 +970,7 @@ function UncachedShikiCodeBlock({
   cacheKey,
   isStreaming,
 }: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
+  const highlighter = use(getSyntaxHighlighterPromise(language, themeName));
   const highlightedHtml = useMemo(() => {
     try {
       return highlighter.codeToHtml(code, { lang: language, theme: themeName });
@@ -2131,6 +2136,48 @@ function ChatMarkdown({
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
       },
+      h1({ node: _node, children, ...props }) {
+        return (
+          <h1 {...props} data-t3-part="heading">
+            {children}
+          </h1>
+        );
+      },
+      h2({ node: _node, children, ...props }) {
+        return (
+          <h2 {...props} data-t3-part="heading">
+            {children}
+          </h2>
+        );
+      },
+      h3({ node: _node, children, ...props }) {
+        return (
+          <h3 {...props} data-t3-part="heading">
+            {children}
+          </h3>
+        );
+      },
+      h4({ node: _node, children, ...props }) {
+        return (
+          <h4 {...props} data-t3-part="heading">
+            {children}
+          </h4>
+        );
+      },
+      h5({ node: _node, children, ...props }) {
+        return (
+          <h5 {...props} data-t3-part="heading">
+            {children}
+          </h5>
+        );
+      },
+      h6({ node: _node, children, ...props }) {
+        return (
+          <h6 {...props} data-t3-part="heading">
+            {children}
+          </h6>
+        );
+      },
       blockquote({ node: _node, children, ...props }) {
         const alert =
           GITHUB_ALERT_PRESENTATIONS[
@@ -2339,7 +2386,7 @@ function ChatMarkdown({
           }
         }
         return (
-          <code {...props} className={className}>
+          <code {...props} className={className} data-t3-part="code">
             {children}
           </code>
         );
@@ -2471,6 +2518,7 @@ function ChatMarkdown({
         "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80 [overflow-wrap:anywhere] [word-break:break-word]",
         className,
       )}
+      data-t3-part="markdown"
       onCopy={handleCopy}
     >
       <ReactMarkdown

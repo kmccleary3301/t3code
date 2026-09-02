@@ -1,7 +1,15 @@
+import type { DesktopAppearancePackageDocument } from "@t3tools/contracts";
 import { DownloadIcon, PlusIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getAppearanceRuntime } from "../../appearanceRuntime";
 import { cn } from "../../lib/utils";
+import {
+  inspectBrowserAppearancePackage,
+  installBrowserAppearancePackage,
+  previewBrowserAppearancePackage,
+  type BrowserAppearancePackageReview,
+} from "../../browserAppearancePackages";
 import {
   getCustomThemes,
   installCustomTheme,
@@ -141,7 +149,12 @@ function ThemeJsonEditor({
 }
 
 /** What the import pipeline needs from a file; DOM File satisfies it. */
-type ImportableThemeFile = { name: string; size: number; text: () => Promise<string> };
+type ImportableThemeFile = {
+  name: string;
+  size: number;
+  text: () => Promise<string>;
+  arrayBuffer?: () => Promise<ArrayBuffer>;
+};
 
 export function ThemeImportDialog({
   open,
@@ -164,12 +177,29 @@ export function ThemeImportDialog({
   // Imports whose id is already installed wait here for an update-or-copy
   // decision instead of failing.
   const [conflicts, setConflicts] = useState<ReadonlyArray<ThemeDefinition> | null>(null);
+  const [packageReview, setPackageReview] = useState<BrowserAppearancePackageReview | null>(null);
+  const [desktopPackageReview, setDesktopPackageReview] =
+    useState<DesktopAppearancePackageDocument | null>(null);
   const importRequestRef = useRef(0);
+  const packagePreviewActiveRef = useRef(false);
+  const packagePreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const packagePreviewGenerationRef = useRef(0);
 
   useEffect(() => {
     importRequestRef.current += 1;
     // Reset on close too: a dialog dismissed mid-drag would otherwise reopen
     // still wearing the drop highlight.
+    if (!open) packagePreviewGenerationRef.current += 1;
+    if (!open && packagePreviewActiveRef.current) {
+      if (packagePreviewTimerRef.current !== null) {
+        clearTimeout(packagePreviewTimerRef.current);
+        packagePreviewTimerRef.current = null;
+      }
+      packagePreviewActiveRef.current = false;
+      void getAppearanceRuntime().then((runtime) =>
+        runtime.execute({ type: "preview", preview: null }),
+      );
+    }
     setIsDropTarget(false);
     if (!open) return;
     setJson("");
@@ -177,7 +207,26 @@ export function ThemeImportDialog({
     setError(null);
     setIsReading(false);
     setConflicts(null);
+    setPackageReview(null);
+    setDesktopPackageReview(null);
   }, [open]);
+  const activatePackagePreviewLease = useCallback(() => {
+    packagePreviewActiveRef.current = true;
+    if (packagePreviewTimerRef.current !== null) {
+      clearTimeout(packagePreviewTimerRef.current);
+    }
+    packagePreviewTimerRef.current = setTimeout(
+      () => {
+        packagePreviewTimerRef.current = null;
+        if (!packagePreviewActiveRef.current) return;
+        packagePreviewActiveRef.current = false;
+        void getAppearanceRuntime().then((runtime) =>
+          runtime.execute({ type: "preview", preview: null }),
+        );
+      },
+      5 * 60 * 1000,
+    );
+  }, []);
 
   const readThemeFile = useCallback(async (file: ImportableThemeFile) => {
     // Check the size first: reading a large file is what locks the UI, so it
@@ -263,13 +312,58 @@ export function ThemeImportDialog({
     [onImportedMany, onOpenChange],
   );
 
+  const readAppearancePackage = useCallback(async (file: ImportableThemeFile) => {
+    if (file.arrayBuffer === undefined) {
+      setError("This package source is unavailable to the browser importer.");
+      return;
+    }
+    const sizeLimit = file.name.toLowerCase().endsWith(".t3appearance.json")
+      ? 30 * 1024 * 1024
+      : 20 * 1024 * 1024;
+    if (file.size > sizeLimit) {
+      setError("Appearance package exceeds its encoded size bound.");
+      return;
+    }
+    const requestId = ++importRequestRef.current;
+    setIsReading(true);
+    try {
+      const runtime = await getAppearanceRuntime();
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const review = await inspectBrowserAppearancePackage(
+        file.name,
+        bytes,
+        new Set(Object.keys(runtime.getSnapshot().packages)),
+      );
+      if (requestId !== importRequestRef.current) return;
+      setPackageReview(review);
+      setFileName(file.name);
+      setJson("");
+      setError(null);
+    } catch (cause) {
+      if (requestId !== importRequestRef.current) return;
+      setError(cause instanceof Error ? cause.message : "That appearance package is invalid.");
+    } finally {
+      if (requestId === importRequestRef.current) setIsReading(false);
+    }
+  }, []);
+
   const readThemeFiles = useCallback(
     (files: ReadonlyArray<ImportableThemeFile>) => {
       if (files.length === 0) return;
-      if (files.length === 1) void readThemeFile(files[0]!);
-      else void readThemeBatch(files);
+      const first = files[0];
+      if (
+        files.length === 1 &&
+        first !== undefined &&
+        /\.(?:zip|t3appearance(?:\.json)?)$/iu.test(first.name)
+      ) {
+        void readAppearancePackage(first);
+      } else if (files.length === 1 && first !== undefined) {
+        void readThemeFile(first);
+      } else {
+        void readThemeBatch(files);
+      }
     },
-    [readThemeBatch, readThemeFile],
+    [readAppearancePackage, readThemeBatch, readThemeFile],
   );
 
   // On desktop the native picker opens in ~/.vscode/extensions (when it
@@ -285,6 +379,7 @@ export function ThemeImportDialog({
             name: file.name,
             size: file.size,
             text: () => Promise.resolve(file.text),
+            arrayBuffer: () => Promise.resolve(new TextEncoder().encode(file.text).buffer),
           })),
         );
       });
@@ -415,6 +510,67 @@ export function ThemeImportDialog({
     }
   }, [json, onImported, onOpenChange]);
 
+  const handlePackageAction = useCallback(
+    async (action: "preview" | "install" | "activate") => {
+      if (packageReview === null) return;
+      const previewGeneration = packagePreviewGenerationRef.current;
+      setIsReading(true);
+      try {
+        const runtime = await getAppearanceRuntime();
+        const result =
+          action === "preview"
+            ? await previewBrowserAppearancePackage(runtime, packageReview)
+            : await installBrowserAppearancePackage(runtime, packageReview, action === "activate");
+        if (result.status !== "applied") {
+          setError(
+            result.status === "rejected"
+              ? result.diagnostics
+                  .map(
+                    (diagnostic) =>
+                      `${diagnostic.severity}: ${diagnostic.file ?? "package"}${diagnostic.line === undefined ? "" : `:${diagnostic.line}`}${diagnostic.column === undefined ? "" : `:${diagnostic.column}`} — ${diagnostic.message} ${diagnostic.recovery}`,
+                  )
+                  .join(" — ")
+              : "Appearance package action was cancelled.",
+          );
+          return;
+        }
+        if (action === "preview") {
+          if (previewGeneration !== packagePreviewGenerationRef.current) {
+            await runtime.execute({ type: "preview", preview: null });
+            return;
+          }
+          activatePackagePreviewLease();
+        }
+        setError(null);
+        if (action !== "preview") onOpenChange(false);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Appearance package action failed.");
+      } finally {
+        setIsReading(false);
+      }
+    },
+    [activatePackagePreviewLease, onOpenChange, packageReview],
+  );
+
+  const handleDesktopPackageInstall = useCallback(async () => {
+    const bridge = window.desktopBridge;
+    if (bridge === undefined) return;
+    setIsReading(true);
+    try {
+      const installed = await bridge.installAppearancePackage();
+      if (installed !== null) {
+        const review = await bridge.readAppearancePackage({ id: installed.id });
+        if (review === null) throw new Error("Installed desktop package could not be reviewed.");
+        setDesktopPackageReview(review);
+        setError(null);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Desktop package installation failed.");
+    } finally {
+      setIsReading(false);
+    }
+  }, []);
+
   return (
     <Dialog
       open={open}
@@ -464,7 +620,7 @@ export function ThemeImportDialog({
             const fileInput = (
               <input
                 ref={fileInputRef}
-                accept=".json,application/json"
+                accept=".json,.zip,.t3appearance,.t3appearance.json,application/json,application/zip"
                 className="sr-only"
                 onChange={handleFileChange}
                 multiple
@@ -487,6 +643,173 @@ export function ThemeImportDialog({
                 <ThemeJsonEditor id="theme-json-editor" onChange={setJson} value={json} />
               </div>
             );
+            if (desktopPackageReview) {
+              const { summary } = desktopPackageReview;
+              return (
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <p className="text-sm font-medium">
+                      Review {summary.name} {summary.version}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Installed disabled from the selected local package. Review its manifest and
+                      diagnostics before previewing or activating it.
+                    </p>
+                    {desktopPackageReview.sharedCss === null &&
+                    desktopPackageReview.desktopCss === null ? null : (
+                      <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                        This package contains custom CSS with local-package trust.
+                      </p>
+                    )}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Compatibility: compatible with this desktop version.
+                    </p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Capabilities:{" "}
+                      {desktopPackageReview.capabilities.length === 0
+                        ? "theme tokens only"
+                        : desktopPackageReview.capabilities.join(", ")}
+                    </p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {summary.diagnosticCount} diagnostics · {desktopPackageReview.assets.length}{" "}
+                      assets
+                    </p>
+                    <details className="mt-2 text-xs">
+                      <summary className="cursor-pointer font-medium">
+                        Review package manifest
+                      </summary>
+                      <pre className="mt-2 max-h-52 overflow-auto rounded bg-background p-2">
+                        {desktopPackageReview.manifestJson}
+                      </pre>
+                    </details>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      disabled={isReading}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const previewGeneration = packagePreviewGenerationRef.current;
+                        void getAppearanceRuntime()
+                          .then(async (runtime) => ({
+                            runtime,
+                            result: await runtime.execute({
+                              type: "preview",
+                              preview: { packageId: summary.id },
+                            }),
+                          }))
+                          .then(async ({ runtime, result }) => {
+                            if (result.status !== "applied") {
+                              setError("Desktop package preview could not be applied.");
+                              return;
+                            }
+                            if (previewGeneration !== packagePreviewGenerationRef.current) {
+                              await runtime.execute({ type: "preview", preview: null });
+                              return;
+                            }
+                            activatePackagePreviewLease();
+                          });
+                      }}
+                    >
+                      Preview
+                    </Button>
+                    <Button
+                      disabled={isReading}
+                      size="sm"
+                      onClick={() => {
+                        void getAppearanceRuntime()
+                          .then((runtime) => runtime.execute({ type: "enable", id: summary.id }))
+                          .then((result) => {
+                            if (result.status === "applied") onOpenChange(false);
+                            else setError("Desktop package activation could not be applied.");
+                          });
+                      }}
+                    >
+                      Activate
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
+                      Keep disabled
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
+            if (packageReview) {
+              const metadata = packageReview.profile.metadata;
+              return (
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
+                    <p className="text-sm font-medium">{metadata.name}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Version {metadata.version} · {packageReview.trust.class} ·{" "}
+                      {packageReview.capabilities.join(", ") || "colors"}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Compatibility verified ·{" "}
+                      {packageReview.profile.compatibility.platforms.join(", ")}
+                      {packageReview.profile.compatibility.minimumAppVersion === undefined
+                        ? ""
+                        : ` · app ≥ ${packageReview.profile.compatibility.minimumAppVersion}`}
+                      {packageReview.profile.compatibility.maximumAppVersion === undefined
+                        ? ""
+                        : ` · app ≤ ${packageReview.profile.compatibility.maximumAppVersion}`}
+                    </p>
+                    <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                      Local package CSS can restyle ordinary app controls. Preview first; safe mode
+                      bypasses it.
+                    </p>
+                    {packageReview.diagnostics.map((diagnostic) => (
+                      <p className="mt-1 text-xs text-muted-foreground" key={diagnostic.message}>
+                        {diagnostic.severity}: {diagnostic.message}
+                      </p>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      disabled={isReading}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handlePackageAction("preview")}
+                    >
+                      Preview
+                    </Button>
+                    <Button
+                      disabled={isReading}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handlePackageAction("install")}
+                    >
+                      {packageReview.replacing ? "Replace, keep state" : "Install disabled"}
+                    </Button>
+                    <Button
+                      disabled={isReading}
+                      size="sm"
+                      onClick={() => void handlePackageAction("activate")}
+                    >
+                      {packageReview.replacing ? "Replace and activate" : "Install and activate"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setPackageReview(null);
+                        if (!packagePreviewActiveRef.current) return;
+                        if (packagePreviewTimerRef.current !== null) {
+                          clearTimeout(packagePreviewTimerRef.current);
+                          packagePreviewTimerRef.current = null;
+                        }
+                        packagePreviewActiveRef.current = false;
+                        void getAppearanceRuntime().then((runtime) =>
+                          runtime.execute({ type: "preview", preview: null }),
+                        );
+                      }}
+                    >
+                      Back
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
             if (conflicts) {
               return (
                 <div className="space-y-3">
@@ -523,12 +846,22 @@ export function ThemeImportDialog({
                   {...dropHandlers}
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">Theme file</p>
+                    <p className="text-sm font-medium">Theme or appearance package</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {fileName ?? "Drop T3 Code or VS Code .json files"}
+                      {fileName ?? "Drop theme JSON, .zip, or .t3appearance files"}
                     </p>
                   </div>
                   {chooseButton()}
+                  {window.desktopBridge === undefined ? null : (
+                    <Button
+                      disabled={isReading}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handleDesktopPackageInstall()}
+                    >
+                      Package or folder
+                    </Button>
+                  )}
                   {fileInput}
                 </div>
                 {editorSection()}

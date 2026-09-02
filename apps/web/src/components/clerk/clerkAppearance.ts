@@ -1,8 +1,9 @@
 import type { ClerkProviderProps } from "@clerk/react";
+import { WEB_RENDERER_OWNERSHIP } from "../../lib/webRendererOwnership";
 
-/** Keeps Clerk's stock component structure while binding its color system to
- * the live T3 Code palette. CSS variables make theme changes propagate to
- * portaled sign-in and profile surfaces without remounting Clerk. */
+/** Clerk mounts its modal/profile markup in a portal owned by the app document. */
+export const CLERK_PORTAL_RENDERER_OWNER = WEB_RENDERER_OWNERSHIP.clerkPortal;
+/** Bridge variables are CSS references, never copied raw package values. */
 export const clerkAppearance = {
   variables: {
     // Clerk reuses its primary color for filled buttons and bare links. The

@@ -105,7 +105,7 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     `img-src 'self' ${input.scheme}: blob: data: http: https:`,
     `media-src 'self' ${input.scheme}: blob:`,
     "style-src 'self' 'unsafe-inline'",
-    `font-src 'self' ${input.scheme}: data:`,
+    `font-src 'self' ${input.scheme}: blob: data:`,
     "worker-src 'self' blob:",
     "frame-src 'self' https://challenges.cloudflare.com",
     "form-action 'self'",

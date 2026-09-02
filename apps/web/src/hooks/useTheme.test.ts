@@ -82,36 +82,23 @@ describe("theme failure handling", () => {
     expect(readThemePreference()).toBe("t3-chat");
   });
 
-  it("falls back during initial theme application and logs only safe attributes", async () => {
-    const cause = new Error("private browsing storage failure");
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("does not apply a legacy theme during module evaluation before runtime recovery", async () => {
+    const getItem = vi.fn(() => "unsafe-custom");
+    const toggle = vi.fn();
     vi.stubGlobal("window", {
-      localStorage: createStorage({
-        getItem: () => {
-          throw cause;
-        },
-      }),
+      localStorage: createStorage({ getItem }),
       matchMedia: () => ({ matches: false }),
     });
     vi.stubGlobal("document", {
       documentElement: {
-        classList: { toggle: vi.fn() },
+        dataset: {},
+        classList: { toggle },
       },
     });
 
     await expect(import("./useTheme")).resolves.toBeDefined();
-
-    expect(errorLog).toHaveBeenCalledWith(
-      "Failed to read theme preference for t3code:theme.",
-      expect.objectContaining({
-        operation: "read",
-        storageKey: "t3code:theme",
-        errorTag: "ThemeStorageError",
-      }),
-    );
-    const attributes = errorLog.mock.calls[0]?.[1];
-    expect(attributes).not.toHaveProperty("cause");
-    expect(JSON.stringify(attributes)).not.toContain(cause.message);
+    expect(getItem).not.toHaveBeenCalled();
+    expect(toggle).not.toHaveBeenCalled();
   });
 
   it("retries a failed storage read only after a relevant storage event", async () => {

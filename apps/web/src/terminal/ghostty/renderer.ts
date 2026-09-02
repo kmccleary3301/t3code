@@ -54,9 +54,14 @@ export function ghosttyTextRunEnd(
   return end;
 }
 
-function fontForCell(cell: GhosttyCell, fontSize: number, fontFamily: string): string {
+function fontForCell(
+  cell: GhosttyCell,
+  fontSize: number,
+  fontFamily: string,
+  fontWeight = 400,
+): string {
   const style = cell.italic ? "italic" : "normal";
-  const weight = cell.bold ? "700" : "400";
+  const weight = cell.bold ? "700" : String(fontWeight);
   return `${style} ${weight} ${fontSize}px ${fontFamily}`;
 }
 
@@ -64,14 +69,17 @@ export function measureGhosttyCell(
   context: CanvasRenderingContext2D,
   fontSize: number,
   fontFamily: string,
+  options: { readonly fontWeight?: number; readonly lineHeight?: number } = {},
 ): GhosttyCellMetrics {
-  context.font = `normal 400 ${fontSize}px ${fontFamily}`;
+  const fontWeight = options.fontWeight ?? 400;
+  const lineHeight = options.lineHeight ?? 1.35;
+  context.font = `normal ${fontWeight} ${fontSize}px ${fontFamily}`;
   const widthMeasurement = context.measureText("M");
   const verticalMeasurement = context.measureText("Mg");
   const ascent = verticalMeasurement.actualBoundingBoxAscent || fontSize;
   const descent = verticalMeasurement.actualBoundingBoxDescent;
   const glyphHeight = ascent + descent;
-  const height = Math.max(1, Math.round(fontSize * 1.35), Math.ceil(glyphHeight));
+  const height = Math.max(1, Math.round(fontSize * lineHeight), Math.ceil(glyphHeight));
   return {
     width: Math.max(1, widthMeasurement.width),
     height,
@@ -95,9 +103,11 @@ export function renderGhosttySnapshot(options: {
   readonly context: CanvasRenderingContext2D;
   readonly snapshot: GhosttySnapshot;
   readonly metrics: GhosttyCellMetrics;
+  readonly padding: number;
   readonly fontSize: number;
   readonly fontFamily: string;
-  readonly padding: number;
+  readonly fontWeight?: number;
+  readonly ligatures?: boolean;
   readonly forceFull: boolean;
   readonly cursorOn: boolean;
   readonly previousCursorY?: number | null;
@@ -113,6 +123,7 @@ export function renderGhosttySnapshot(options: {
     metrics,
     fontSize,
     fontFamily,
+    fontWeight = 400,
     padding,
     forceFull,
     cursorOn,
@@ -146,6 +157,9 @@ export function renderGhosttySnapshot(options: {
   }
 
   context.textBaseline = "alphabetic";
+  if ("fontKerning" in context) {
+    context.fontKerning = options.ligatures === false ? "none" : "normal";
+  }
   for (const rowIndex of rowsToDraw) {
     const row = snapshot.rowData[rowIndex];
     if (!row) continue;
@@ -208,7 +222,7 @@ export function renderGhosttySnapshot(options: {
           metrics.height,
         );
         context.clip();
-        context.font = fontForCell(first, fontSize, fontFamily);
+        context.font = fontForCell(first, fontSize, fontFamily, fontWeight);
         context.fillStyle = cssColor(first.foreground);
         context.fillText(
           text,
@@ -263,7 +277,7 @@ export function renderGhosttySnapshot(options: {
       context.fillRect(left, top, metrics.width, metrics.height);
       const cell = snapshot.rowData[snapshot.cursorY]?.cells[snapshot.cursorX];
       if (cell?.text) {
-        context.font = fontForCell(cell, fontSize, fontFamily);
+        context.font = fontForCell(cell, fontSize, fontFamily, fontWeight);
         context.fillStyle = cssColor(snapshot.background);
         context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
       }

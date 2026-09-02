@@ -49,6 +49,7 @@ import {
   refreshThemeInspectorSpotlight,
   showThemeInspectorHover,
   type ThemeElementInspection,
+  type ThemeInspectorReport,
 } from "./themeInspector";
 
 const THEME_EDITOR_SIMPLE_ROLES: ReadonlyArray<ThemeColorRole> = ["canvas", "accent"];
@@ -302,6 +303,7 @@ export function ThemeEditorPanel({
   const [name, setName] = useState("");
   const [activeAppearance, setActiveAppearance] = useState<ThemeAppearance>(initialAppearance);
   const [isAdvanced, setIsAdvanced] = useState(false);
+  const [roleQuery, setRoleQuery] = useState("");
   const [colorsByAppearance, setColorsByAppearance] = useState<ThemeEditorColorsByAppearance>(() =>
     getThemeEditorColorsByAppearance(),
   );
@@ -310,10 +312,10 @@ export function ThemeEditorPanel({
   >({ light: false, dark: false });
   const [error, setError] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [roleQuery, setRoleQuery] = useState("");
   const [isInspecting, setIsInspecting] = useState(false);
   const [selectedRole, setSelectedRole] = useState<ThemeColorRole | null>(null);
   const [usageCount, setUsageCount] = useState<number | null>(null);
+  const [inspectionReport, setInspectionReport] = useState<ThemeInspectorReport | null>(null);
   // Null parks the panel at its default corner; a value is a dragged spot,
   // kept clamped so the header can always be grabbed again.
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -401,9 +403,9 @@ export function ThemeEditorPanel({
       // regenerate when the guided editor produced it.
       setIsAdvanced(sourceTheme !== null && sourceTheme.managed !== true);
       setSimpleColorsDirtyByAppearance({ light: false, dark: false });
-      setColorsByAppearance(nextColors);
       setSelectedRole(null);
       setUsageCount(null);
+      setInspectionReport(null);
       setIsInspecting(false);
       setError(null);
       setIsDraftSeeded(true);
@@ -504,6 +506,7 @@ export function ThemeEditorPanel({
   const selectThemeRole = useCallback((role: ThemeColorRole, reveal = false) => {
     const visibleRole = getThemeEditorColorFamily(role)?.role ?? role;
     setSelectedRole(visibleRole);
+    if (!reveal) setInspectionReport(null);
     if (!THEME_EDITOR_SIMPLE_ROLES.includes(visibleRole)) {
       setIsAdvanced(true);
       setRoleQuery("");
@@ -516,14 +519,15 @@ export function ThemeEditorPanel({
         ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   }, []);
-
   const toggleThemeRole = useCallback((role: ThemeColorRole) => {
     setSelectedRole((current) => (current === role ? null : role));
+    setInspectionReport(null);
   }, []);
 
   const clearInspectorSelection = useCallback(() => {
     setSelectedRole(null);
     setUsageCount(null);
+    setInspectionReport(null);
     setIsInspecting(false);
   }, []);
 
@@ -676,6 +680,7 @@ export function ThemeEditorPanel({
       if (!inspection) return;
       clearHover();
       selectThemeRole(inspection.role, true);
+      setInspectionReport(inspection.report);
       shouldDisarmAfterClick = true;
     };
     const blockInspectedClick = (event: MouseEvent) => {
@@ -1231,6 +1236,41 @@ export function ThemeEditorPanel({
                 {error}
               </p>
             ) : null}
+            {inspectionReport === null ? null : (
+              <details className="rounded-lg border p-2 text-xs" open>
+                <summary className="cursor-pointer font-medium">
+                  Inspector source and ownership
+                </summary>
+                <dl className="mt-2 grid gap-1 text-muted-foreground">
+                  <div>
+                    <dt className="inline font-medium text-foreground">Supported token: </dt>
+                    <dd className="inline font-mono">
+                      {inspectionReport.supportedToken ?? "Unknown"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-medium text-foreground">Stable surface: </dt>
+                    <dd className="inline font-mono">
+                      {inspectionReport.stableSurfaceSelector ?? "Unknown"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-medium text-foreground">Source stylesheet: </dt>
+                    <dd className="inline">{inspectionReport.matchedStylesheet ?? "Unknown"}</dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-medium text-foreground">Cascade candidate: </dt>
+                    <dd className="inline font-mono">
+                      {inspectionReport.cascadeWinnerCandidate ?? "Unknown"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-medium text-foreground">Adapter ownership: </dt>
+                    <dd className="inline">{inspectionReport.adapterOwnership ?? "Unknown"}</dd>
+                  </div>
+                </dl>
+              </details>
+            )}
             {renderAppearanceButtons()}
             <div className="space-y-3">
               {renderColorsHeader()}

@@ -65,6 +65,7 @@ async function setupThemeSync(mode: "dark" | "system" = "dark") {
   }));
   vi.doMock("@effect/atom-react", () => ({ useAtomValue: () => published }));
   vi.doMock("../state/server", () => ({ primaryServerEnvironmentThemesAtom: {} }));
+  vi.doMock("../appearanceRuntime", () => ({ applyAppearanceTheme: async () => undefined }));
 
   const palette = await import("../themePalette");
   storage.set(palette.THEME_APPEARANCE_MODE_STORAGE_KEY, mode);
@@ -91,6 +92,7 @@ afterEach(() => {
   vi.doUnmock("react");
   vi.doUnmock("@effect/atom-react");
   vi.doUnmock("../state/server");
+  vi.doUnmock("../appearanceRuntime");
   vi.resetModules();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();

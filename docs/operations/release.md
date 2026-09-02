@@ -56,6 +56,34 @@ The automated workflow also publishes `install.sh`, `RELEASE-MANIFEST.json`, and
 Desktop assets are signed when platform credentials are configured. GitHub release assets receive
 build provenance attestations. Fork npm publication is an explicit opt-in.
 
+### Appearance version 2 migration note
+
+The first release containing appearance version 2 must include these user-facing
+notes:
+
+- Existing version 1 palettes and saved preferences normalize into the version 2
+  profile on load; built-in light and dark defaults remain the fallback.
+- Browser and desktop can install local appearance packages, package-contained
+  WOFF2 fonts and images, and explicitly enabled CSS snippets. Packages do not
+  execute JavaScript or load remote assets.
+- Mobile accepts the portable profile only. Package CSS, snippets, browser font
+  assets, and web motion effects are intentionally excluded.
+- Browser package state is client-local in IndexedDB. Desktop package state and
+  quarantine data are client-local in the desktop appearance directory. Neither
+  is synchronized through a connected environment.
+- Recovery entries are `?t3-appearance=safe` and
+  `?t3-appearance=reset` in the browser, `--safe-appearance` and
+  `--reset-appearance` on desktop, and `t3code://appearance/safe` and
+  `t3code://appearance/reset` on mobile. Reset requires confirmation and retains
+  recoverable quarantine data.
+
+Before publication, attach current-artifact evidence for every client in the
+appearance release matrix: both macOS architectures, Windows x64, Linux x64 and
+arm64, supported Chromium browser modes, iOS, and Android. Build success alone
+is not appearance smoke evidence. Missing client, visual, accessibility,
+recovery, or performance evidence blocks release rather than becoming an
+exclusion.
+
 ### Published private release
 
 The current owner-controlled stable release is

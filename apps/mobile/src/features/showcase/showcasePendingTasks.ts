@@ -32,6 +32,21 @@ const FALLBACK_MODEL_SELECTION = {
   model: "gpt-5.4",
 } as const;
 
+export function parseShowcaseEpochMs(
+  showcaseEnabled: boolean,
+  rawEpoch: string | undefined,
+): number | null {
+  if (!showcaseEnabled) return null;
+  if (rawEpoch === undefined || rawEpoch.length === 0) {
+    throw new Error("Showcase capture requires EXPO_PUBLIC_SHOWCASE_EPOCH_MS.");
+  }
+  const epoch = Number(rawEpoch);
+  if (!Number.isSafeInteger(epoch) || epoch < 0 || Number.isNaN(new Date(epoch).getTime())) {
+    throw new Error("EXPO_PUBLIC_SHOWCASE_EPOCH_MS must be a non-negative valid epoch integer.");
+  }
+  return epoch;
+}
+
 export function buildShowcasePendingTasks(
   projects: ReadonlyArray<EnvironmentProject>,
   now: number,

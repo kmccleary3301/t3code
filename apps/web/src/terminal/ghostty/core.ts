@@ -64,12 +64,39 @@ export interface GhosttyColor {
   readonly b: number;
 }
 
+export type GhosttyAnsiPalette = {
+  readonly black: GhosttyColor;
+  readonly red: GhosttyColor;
+  readonly green: GhosttyColor;
+  readonly yellow: GhosttyColor;
+  readonly blue: GhosttyColor;
+  readonly magenta: GhosttyColor;
+  readonly cyan: GhosttyColor;
+  readonly white: GhosttyColor;
+  readonly brightBlack: GhosttyColor;
+  readonly brightRed: GhosttyColor;
+  readonly brightGreen: GhosttyColor;
+  readonly brightYellow: GhosttyColor;
+  readonly brightBlue: GhosttyColor;
+  readonly brightMagenta: GhosttyColor;
+  readonly brightCyan: GhosttyColor;
+  readonly brightWhite: GhosttyColor;
+};
+
 export interface GhosttyTheme {
   readonly foreground: GhosttyColor;
   readonly background: GhosttyColor;
   readonly cursor: GhosttyColor;
-  /** CSS color the renderer overlays on selected cells; not sent to Ghostty. */
+  /**
+   * CSS color the renderer overlays on selected cells; not sent to Ghostty.
+   */
   readonly selectionBackground?: string;
+  /**
+   * ANSI palette is retained by the adapter for renderers that expose palette
+   * hooks. The pinned libghostty-vt ABI only accepts foreground/background/
+   * cursor options, so its internal ANSI palette remains platform-owned.
+   */
+  readonly ansi?: GhosttyAnsiPalette;
 }
 
 export interface GhosttyCell {
@@ -178,6 +205,7 @@ export function ghosttyCellText(codepointView: DataView, graphemeLength: number)
   let text = "";
   for (let start = 0; start < graphemeLength; start += CHUNK_SIZE) {
     const count = Math.min(CHUNK_SIZE, graphemeLength - start);
+    // oxlint-disable-next-line unicorn/no-new-array -- Preallocate each bounded chunk before filling it.
     const codes = new Array<number>(count);
     for (let index = 0; index < count; index += 1) {
       codes[index] = codepointView.getUint32((start + index) * 4, true);

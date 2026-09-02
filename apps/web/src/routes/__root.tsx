@@ -31,7 +31,7 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { applyAppearanceFontVariables } from "~/appearanceFonts";
+import { setAppearanceTypographyPreference } from "../appearanceRuntime";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
@@ -106,19 +106,19 @@ function RootRouteView() {
 
   if (pathname === "/pair" || pathname === "/connect" || pathname.startsWith("/connect/")) {
     return (
-      <>
+      <div data-t3-app data-t3-surface="route-connect">
         <DocumentTitleSync />
         <Outlet />
-      </>
+      </div>
     );
   }
 
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return (
-      <>
+      <div data-t3-app data-t3-surface="route-auth">
         <DocumentTitleSync />
         <Outlet />
-      </>
+      </div>
     );
   }
 
@@ -131,29 +131,31 @@ function RootRouteView() {
   );
 
   return (
-    <ToastProvider>
-      <AnchoredToastProvider>
-        <DocumentTitleSync />
-        <ContrastAppearanceSync />
-        <EnvironmentThemeSync />
-        <GlassAppearanceSync />
-        <FontAppearanceSync />
-        {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
-        <RelayClientInstallDialog />
-        <ConnectOnboardingDialog />
-        <SshPasswordPromptDialog />
-        <ConfirmDialogHost />
-        <SlowRpcRequestToastCoordinator />
-        <HostedStaticEnvironmentBootstrap />
-        {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
-        {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
-        {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
-        {appShell}
-        {/* Above the router: a theme draft is judged by walking the app, so the
-            editor has to survive navigation away from settings. */}
-        <ThemeEditorHost />
-      </AnchoredToastProvider>
-    </ToastProvider>
+    <div data-t3-app data-t3-surface="app-shell">
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <DocumentTitleSync />
+          <ContrastAppearanceSync />
+          <EnvironmentThemeSync />
+          <GlassAppearanceSync />
+          <FontAppearanceSync />
+          {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
+          <RelayClientInstallDialog />
+          <ConnectOnboardingDialog />
+          <SshPasswordPromptDialog />
+          <ConfirmDialogHost />
+          <SlowRpcRequestToastCoordinator />
+          <HostedStaticEnvironmentBootstrap />
+          {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+          {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
+          {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+          {appShell}
+          {/* Above the router: a theme draft is judged by walking the app, so the
+              editor has to survive navigation away from settings. */}
+          <ThemeEditorHost />
+        </AnchoredToastProvider>
+      </ToastProvider>
+    </div>
   );
 }
 
@@ -190,28 +192,36 @@ function FontAppearanceSync() {
   const fontFamilySans = useClientSettings((settings) => settings.fontFamilySans);
   const fontFamilyCode = useClientSettings((settings) => settings.fontFamilyCode);
   const fontFamilyComposer = useClientSettings((settings) => settings.fontFamilyComposer);
+  const fontFamilyTerminal = useClientSettings((settings) => settings.fontFamilyTerminal);
   const fontSizeInterface = useClientSettings((settings) => settings.fontSizeInterface);
   const fontSizePrompt = useClientSettings((settings) => settings.fontSizePrompt);
   const fontSizeCode = useClientSettings((settings) => settings.fontSizeCode);
+  const fontSizeTerminal = useClientSettings((settings) => settings.fontSizeTerminal);
   const fontSmoothing = useClientSettings((settings) => settings.fontSmoothing);
 
   useEffect(() => {
-    applyAppearanceFontVariables(document.documentElement, {
+    void setAppearanceTypographyPreference({
       sans: fontFamilySans,
       code: fontFamilyCode,
       composer: fontFamilyComposer,
+      terminal: fontFamilyTerminal,
       sizeInterface: fontSizeInterface,
       sizePrompt: fontSizePrompt,
       sizeCode: fontSizeCode,
+      sizeTerminal: fontSizeTerminal,
       smoothing: fontSmoothing,
+    }).catch((error: unknown) => {
+      console.error("Unable to apply the appearance typography preference.", error);
     });
   }, [
     fontFamilyCode,
     fontFamilyComposer,
+    fontFamilyTerminal,
     fontFamilySans,
     fontSizeCode,
     fontSizeInterface,
     fontSizePrompt,
+    fontSizeTerminal,
     fontSmoothing,
   ]);
 
@@ -268,13 +278,21 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   const details = errorDetails(error);
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
-      <div className="pointer-events-none absolute inset-0 opacity-80">
+    <div
+      data-t3-app
+      data-t3-surface="route-error"
+      className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6"
+    >
+      <div data-t3-surface="overlay" className="pointer-events-none absolute inset-0 opacity-80">
         <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-red-500)_16%,transparent),transparent)]" />
         <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />
       </div>
 
-      <section className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8">
+      <section
+        data-t3-surface="fatal-error"
+        data-t3-part="recovery"
+        className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8"
+      >
         <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
           {APP_DISPLAY_NAME}
         </p>

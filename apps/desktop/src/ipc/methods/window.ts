@@ -322,9 +322,8 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   }),
 });
 
-/** Theme files are a few KB; anything larger returns empty text and lets the
- *  renderer reject it by size without the contents ever crossing the bridge. */
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
+const PICKED_APPEARANCE_PACKAGE_MAX_BYTES = 30 * 1024 * 1024;
 
 export const pickThemeFiles = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PICK_THEME_FILES_CHANNEL,
@@ -356,7 +355,10 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
       return Effect.gen(function* () {
         const info = yield* fileSystem.stat(filePath);
         const size = Number(info.size);
-        if (size > PICKED_THEME_FILE_MAX_BYTES) {
+        const limit = name.toLowerCase().endsWith(".t3appearance.json")
+          ? PICKED_APPEARANCE_PACKAGE_MAX_BYTES
+          : PICKED_THEME_FILE_MAX_BYTES;
+        if (size > limit) {
           return { name, size, text: "" } satisfies PickedThemeFile;
         }
         const text = yield* fileSystem.readFileString(filePath);

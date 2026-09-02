@@ -1,14 +1,27 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - This host-side fixture creates an isolated local T3 environment.
+import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeUtil from "node:util";
+import { createActualSurfaceChildEnv } from "./actual-surface-environment.ts";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
 export const SHOWCASE_PROJECT_ID = "t3code";
 export const SHOWCASE_THREAD_ID = "remote-command-center";
+export const SHOWCASE_SEED_EPOCH = Date.parse("2026-01-01T00:00:00.000Z");
+export const SHOWCASE_SEED_ISO = new Date(SHOWCASE_SEED_EPOCH).toISOString();
+
+export interface ShowcaseSeedManifest {
+  readonly schemaVersion: 1;
+  readonly seedEpoch: number;
+  readonly seedIso: string;
+  readonly projectIds: ReadonlyArray<string>;
+  readonly threadIds: ReadonlyArray<string>;
+  readonly seedFixtureSha256: string;
+}
 export const SHOWCASE_TERMINAL_ID = "term-1";
 
 export const SHOWCASE_SCENES = ["threads", "thread", "terminal", "review", "environments"] as const;
@@ -267,14 +280,18 @@ function minutesBefore(now: number, minutes: number): string {
 }
 
 async function runGit(workspaceRoot: string, args: ReadonlyArray<string>): Promise<void> {
+  const gitHome = NodePath.join(workspaceRoot, ".showcase-git-home");
+  await NodeFSP.mkdir(gitHome, { recursive: true, mode: 0o700 });
   await execFile("git", [...args], {
     cwd: workspaceRoot,
     env: {
-      ...process.env,
+      ...createActualSurfaceChildEnv(process.env, { HOME: gitHome }),
       GIT_AUTHOR_NAME: "Alex Rivera",
       GIT_AUTHOR_EMAIL: "alex@lumen.test",
       GIT_COMMITTER_NAME: "Alex Rivera",
       GIT_COMMITTER_EMAIL: "alex@lumen.test",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_TERMINAL_PROMPT: "0",
     },
   });
 }
@@ -626,17 +643,74 @@ function seedDatabase(
   }
 }
 
+function seedFixtureHash(): string {
+  return NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify({
+        projects: SHOWCASE_PROJECTS,
+        environments: SHOWCASE_ENVIRONMENTS,
+        threads: SHOWCASE_THREADS,
+        terminal: SHOWCASE_TERMINAL_BUFFER,
+        scripts: PROJECT_SCRIPTS,
+        model: MODEL_SELECTION,
+      }),
+    )
+    .digest("hex");
+}
+
+export const SHOWCASE_SEED_FIXTURE_SHA256 = seedFixtureHash();
+
+export function createShowcaseSeedManifest(
+  projectIds: ReadonlyArray<string> = SHOWCASE_PROJECTS.map((project) => project.id),
+  now = SHOWCASE_SEED_EPOCH,
+): ShowcaseSeedManifest {
+  if (!Number.isSafeInteger(now) || now < 0 || Number.isNaN(new Date(now).getTime())) {
+    throw new Error("Showcase seed epoch must be a non-negative valid epoch integer.");
+  }
+  const selectedProjectIds = new Set(projectIds);
+  const projects = SHOWCASE_PROJECTS.filter((project) => selectedProjectIds.has(project.id));
+  if (
+    selectedProjectIds.size !== projectIds.length ||
+    projects.length !== selectedProjectIds.size
+  ) {
+    throw new Error("Showcase project IDs must be known and unique.");
+  }
+  if (projects.length === 0) throw new Error("At least one showcase project must be selected.");
+  const threads = SHOWCASE_THREADS.filter((thread) => selectedProjectIds.has(thread.projectId));
+  return {
+    schemaVersion: 1,
+    seedEpoch: now,
+    seedIso: new Date(now).toISOString(),
+    projectIds: projects.map((project) => project.id),
+    threadIds: threads.map((thread) => thread.id),
+    seedFixtureSha256: SHOWCASE_SEED_FIXTURE_SHA256,
+  };
+}
+
+export function hashShowcaseSeedManifest(manifest: ShowcaseSeedManifest): string {
+  const canonicalManifest: ShowcaseSeedManifest = {
+    schemaVersion: manifest.schemaVersion,
+    seedEpoch: manifest.seedEpoch,
+    seedIso: manifest.seedIso,
+    projectIds: [...manifest.projectIds],
+    threadIds: [...manifest.threadIds],
+    seedFixtureSha256: manifest.seedFixtureSha256,
+  };
+  return NodeCrypto.createHash("sha256").update(JSON.stringify(canonicalManifest)).digest("hex");
+}
 export async function seedShowcaseEnvironment(input: {
   readonly baseDir: string;
   readonly projectIds?: ReadonlyArray<string>;
   readonly now?: number;
-}): Promise<{ readonly dbPath: string; readonly workspaceRoot: string }> {
-  const now = input.now ?? Date.now();
-  const selectedProjectIds = new Set(
-    input.projectIds ?? SHOWCASE_PROJECTS.map((project) => project.id),
-  );
+}): Promise<{
+  readonly dbPath: string;
+  readonly workspaceRoot: string;
+  readonly seedManifest: ShowcaseSeedManifest;
+  readonly seedManifestHash: string;
+}> {
+  const seedManifest = createShowcaseSeedManifest(input.projectIds, input.now);
+  const selectedProjectIds = new Set(seedManifest.projectIds);
   const projects = SHOWCASE_PROJECTS.filter((project) => selectedProjectIds.has(project.id));
-  if (projects.length === 0) throw new Error("At least one showcase project must be selected.");
   const threads = SHOWCASE_THREADS.filter((thread) => selectedProjectIds.has(thread.projectId));
   const workspaceBase = NodePath.join(input.baseDir, "workspace");
   const workspaceRoots = new Map(
@@ -670,7 +744,7 @@ export async function seedShowcaseEnvironment(input: {
   // The environment server begins listening before it finishes migrating the
   // database, so wait for the schema before deleting from and reseeding it.
   await waitForSeedableSchema(dbPath);
-  seedDatabase(dbPath, workspaceRoots, projects, threads, now);
+  seedDatabase(dbPath, workspaceRoots, projects, threads, seedManifest.seedEpoch);
 
   const terminalDirectory = NodePath.join(input.baseDir, "userdata", "logs", "terminals");
   if (selectedProjectIds.has(SHOWCASE_PROJECT_ID)) {
@@ -681,5 +755,6 @@ export async function seedShowcaseEnvironment(input: {
       SHOWCASE_TERMINAL_BUFFER,
     );
   }
-  return { dbPath, workspaceRoot };
+  const seedManifestHash = hashShowcaseSeedManifest(seedManifest);
+  return { dbPath, workspaceRoot, seedManifest, seedManifestHash };
 }

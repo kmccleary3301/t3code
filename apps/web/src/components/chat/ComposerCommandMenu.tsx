@@ -103,6 +103,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         ref={listRef}
         className="w-full overflow-hidden pb-(--chat-composer-attachment-overlap) **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
         data-composer-command-drawer="true"
+        data-t3-surface="autocomplete"
       >
         {props.items.length > 0 ? (
           <CommandList className="max-h-72 scroll-pb-6">

@@ -122,6 +122,54 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@layer t3.base {
+  :root {
+    --font-interface: var(--font-sans);
+    --font-composer: var(--font-interface);
+    --font-code: var(--font-mono);
+    --font-terminal: var(--font-code);
+    --font-markdown: var(--font-interface);
+    --font-label: var(--font-interface);
+    --font-heading: var(--font-interface);
+    --t3-motion-enabled: 1;
+    --t3-reduced-motion: respect-system;
+    --t3-motion-duration-instant: 0ms;
+    --t3-motion-duration-fast: 100ms;
+    --t3-motion-duration-normal: 200ms;
+    --t3-motion-duration-slow: 350ms;
+    --t3-motion-easing-linear: linear;
+    --t3-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+    --t3-motion-easing-enter: cubic-bezier(0, 0, 0.2, 1);
+    --t3-motion-easing-exit: cubic-bezier(0.4, 0, 1, 1);
+    --t3-space-sm: 8px;
+    --t3-space-md: 12px;
+    --t3-space-lg: 16px;
+    --t3-space-xl: 24px;
+    --t3-radius-none: 0px;
+    --t3-radius-sm: 4px;
+    --t3-radius-md: 8px;
+    --t3-radius-lg: 12px;
+    --t3-radius-full: 999px;
+    --t3-border-thin: 1px;
+    --t3-border-regular: 1px;
+    --t3-artwork-cursor: auto;
+    --t3-border-style: solid;
+    --t3-outline-width: 2px;
+    --t3-outline-offset: 2px;
+    --t3-outline-style: solid;
+    --t3-shadow-none: none;
+    --t3-shadow-low: 0 1px 2px rgb(0 0 0 / 8%);
+    --t3-shadow-medium: 0 4px 12px rgb(0 0 0 / 12%);
+    --t3-shadow-high: 0 12px 32px rgb(0 0 0 / 18%);
+    --t3-selection: var(--terminal-selection-background, var(--accent));
+    --t3-scrollbar: var(--app-scrollbar-thumb);
+    --t3-scrollbar-hover: var(--app-scrollbar-thumb-hover);
+    --t3-artwork-background-image: none;
+    --t3-artwork-sidebar-artwork: none;
+    --t3-artwork-icon: none;
+  }
+}
+
 .wco {
   --workspace-topbar-height: env(titlebar-area-height, 52px);
   --workspace-controls-top: env(titlebar-area-y, 0px);
@@ -1071,9 +1119,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    same palette. Success, info, provider, and channel identity colors remain
    independent; error, warning, and update roles are themeable below. */
 
-/* The non-empty marker adds enough specificity to outrank the generated root
+/* The active marker adds enough specificity to outrank the generated root
    dark variant without reintroducing raw `.dark` selectors. */
-html[data-theme-id]:not([data-theme-id=""]) {
+html[data-t3-appearance-active="true"] {
   --background: var(--app-theme-canvas);
   --app-chrome-background: var(--app-theme-chrome);
   --toolbar-background: var(--app-theme-toolbar);
@@ -1215,14 +1263,14 @@ html[data-theme-token-probe] *::after {
 /* Workspace actions use a small, separate chrome hierarchy. Keeping these
    roles explicit prevents the thread toolbar from falling back to the default
    dark-mode whites while preserving the same theme file across clients. */
-html[data-theme-id] [data-chat-header] {
+html[data-t3-appearance-active="true"] [data-chat-header] {
   background-color: var(--toolbar-background);
   color: var(--contrast-toolbar-foreground);
 }
 
-html[data-theme-id] [data-chat-header] [data-slot="button"],
-html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"],
-html[data-theme-id] [data-chat-header] [data-toolbar-control] {
+html[data-t3-appearance-active="true"] [data-chat-header] [data-slot="button"],
+html[data-t3-appearance-active="true"] [data-chat-header] [data-slot="menu-trigger"],
+html[data-t3-appearance-active="true"] [data-chat-header] [data-toolbar-control] {
   --control-icon-color: var(--contrast-toolbar-control-foreground);
   background-color: var(--toolbar-control);
   border-color: var(--contrast-toolbar-border);
@@ -1234,47 +1282,49 @@ html[data-theme-id] [data-chat-header] [data-toolbar-control] {
    the panel opens. They only take the themed foreground; hover and pressed
    keep the base ghost accent. The tooltip trigger's data-slot wins over the
    toggle's when the trigger renders the toggle, so match both. */
-html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"],
-html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"],
-html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="toggle"],
-html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigger"] {
+html[data-t3-appearance-active="true"] [data-panel-layout-controls] [data-slot="toggle"],
+html[data-t3-appearance-active="true"] [data-panel-layout-controls] [data-slot="tooltip-trigger"],
+html[data-t3-appearance-active="true"] [data-workspace-titlebar-controls] [data-slot="toggle"],
+html[data-t3-appearance-active="true"]
+  [data-workspace-titlebar-controls]
+  [data-slot="tooltip-trigger"] {
   --control-icon-color: var(--contrast-toolbar-foreground);
   color: var(--contrast-toolbar-foreground);
 }
 
-html[data-theme-id] [data-chat-header] [data-slot="button"]:hover,
-html[data-theme-id] [data-chat-header] [data-slot="button"][data-pressed],
-html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"]:hover,
-html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"][data-pressed],
-html[data-theme-id] [data-chat-header] [data-toolbar-control]:hover,
-html[data-theme-id] [data-chat-header] [data-toolbar-control][data-pressed] {
+html[data-t3-appearance-active="true"] [data-chat-header] [data-slot="button"]:hover,
+html[data-t3-appearance-active="true"] [data-chat-header] [data-slot="button"][data-pressed],
+html[data-t3-appearance-active="true"] [data-chat-header] [data-slot="menu-trigger"]:hover,
+html[data-t3-appearance-active="true"] [data-chat-header] [data-slot="menu-trigger"][data-pressed],
+html[data-t3-appearance-active="true"] [data-chat-header] [data-toolbar-control]:hover,
+html[data-t3-appearance-active="true"] [data-chat-header] [data-toolbar-control][data-pressed] {
   background-color: var(--toolbar-control-hover);
 }
 
-html[data-theme-id] [data-chat-header] [data-slot="separator"] {
+html[data-t3-appearance-active="true"] [data-chat-header] [data-slot="separator"] {
   background-color: var(--contrast-toolbar-border);
 }
 
 /* Chat code blocks join the other code surfaces on the code tokens. The
    default look keeps its secondary/input tints; themed palettes tint those
    surfaces with the accent, which fights syntax highlighting. */
-html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
+html[data-t3-appearance-active="true"] .chat-markdown .chat-markdown-codeblock {
   background-color: var(--code-background);
   border-color: var(--contrast-border);
   color: var(--code-foreground);
 }
 
-html[data-theme-id] .chat-markdown pre {
+html[data-t3-appearance-active="true"] .chat-markdown pre {
   background-color: var(--code-background);
   color: var(--code-foreground);
 }
 
-html[data-theme-id] .chat-markdown .chat-markdown-codeblock pre {
+html[data-t3-appearance-active="true"] .chat-markdown .chat-markdown-codeblock pre {
   background-color: transparent;
 }
 
-html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action {
+html[data-t3-appearance-active="true"] .chat-markdown .chat-markdown-codeblock-header,
+html[data-t3-appearance-active="true"] .chat-markdown .chat-markdown-chrome-action {
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
@@ -1300,12 +1350,14 @@ html[data-theme-id="t3-chat"] {
   }
 }
 
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action:hover,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
+html[data-t3-appearance-active="true"] .chat-markdown .chat-markdown-chrome-action:hover,
+html[data-t3-appearance-active="true"]
+  .chat-markdown
+  .chat-markdown-chrome-action[aria-pressed="true"] {
   color: var(--code-foreground);
 }
 
-html[data-theme-id] [data-app-sidebar] {
+html[data-t3-appearance-active="true"] [data-app-sidebar] {
   --background: var(--app-theme-canvas);
   --foreground: var(--app-theme-text);
   --card: var(--app-theme-surface);
@@ -1465,6 +1517,82 @@ body {
   padding: 0;
 }
 
+[data-t3-app] {
+  font-family: var(--font-interface, var(--font-sans));
+  font-size: var(--font-size-interface, 1rem);
+  font-weight: var(--font-weight-interface, 400);
+  line-height: var(--line-height-interface, 1.5);
+  letter-spacing: var(--letter-spacing-interface, 0em);
+  font-variant-ligatures: var(--font-variant-ligatures-interface, normal);
+  font-feature-settings: var(--font-feature-settings-interface, normal);
+  font-variation-settings: var(--font-variation-settings-interface, normal);
+}
+
+[data-t3-part="composer"] {
+  font-family: var(--font-composer, var(--font-interface, var(--font-sans)));
+  font-size: var(--font-size-composer, 1rem);
+  font-weight: var(--font-weight-composer, 400);
+  line-height: var(--line-height-composer, 1.5);
+  letter-spacing: var(--letter-spacing-composer, 0em);
+  font-variant-ligatures: var(--font-variant-ligatures-composer, normal);
+  font-feature-settings: var(--font-feature-settings-composer, normal);
+  font-variation-settings: var(--font-variation-settings-composer, normal);
+}
+
+[data-t3-part="code"] {
+  font-family: var(--font-code, var(--font-mono));
+  font-size: var(--font-size-code, 1rem);
+  font-weight: var(--font-weight-code, 400);
+  line-height: var(--line-height-code, 1.5);
+  letter-spacing: var(--letter-spacing-code, 0em);
+  font-variant-ligatures: var(--font-variant-ligatures-code, normal);
+  font-feature-settings: var(--font-feature-settings-code, normal);
+  font-variation-settings: var(--font-variation-settings-code, normal);
+}
+
+[data-t3-part="terminal"] {
+  font-family: var(--font-terminal, var(--font-code, var(--font-mono)));
+  font-size: var(--font-size-terminal, var(--font-size-code, 1rem));
+  font-weight: var(--font-weight-terminal, 400);
+  line-height: var(--line-height-terminal, 1.5);
+  letter-spacing: var(--letter-spacing-terminal, 0em);
+  font-variant-ligatures: var(--font-variant-ligatures-terminal, normal);
+  font-feature-settings: var(--font-feature-settings-terminal, normal);
+  font-variation-settings: var(--font-variation-settings-terminal, normal);
+}
+
+[data-t3-part="markdown"] {
+  font-family: var(--font-markdown, var(--font-interface, var(--font-sans)));
+  font-size: var(--font-size-markdown, 1rem);
+  font-weight: var(--font-weight-markdown, 400);
+  line-height: var(--line-height-markdown, 1.6);
+  letter-spacing: var(--letter-spacing-markdown, 0em);
+  font-variant-ligatures: var(--font-variant-ligatures-markdown, normal);
+  font-feature-settings: var(--font-feature-settings-markdown, normal);
+  font-variation-settings: var(--font-variation-settings-markdown, normal);
+}
+
+[data-t3-part="label"] {
+  font-family: var(--font-label, var(--font-interface, var(--font-sans)));
+  font-size: var(--font-size-label, 0.75rem);
+  font-weight: var(--font-weight-label, 500);
+  line-height: var(--line-height-label, 1.3);
+  letter-spacing: var(--letter-spacing-label, 0em);
+  font-variant-ligatures: var(--font-variant-ligatures-label, normal);
+  font-feature-settings: var(--font-feature-settings-label, normal);
+  font-variation-settings: var(--font-variation-settings-label, normal);
+}
+
+[data-t3-part="heading"] {
+  font-family: var(--font-heading, var(--font-interface, var(--font-sans)));
+  font-size: var(--font-size-heading, 1.25rem);
+  font-weight: var(--font-weight-heading, 600);
+  line-height: var(--line-height-heading, 1.25);
+  letter-spacing: var(--letter-spacing-heading, -0.01em);
+  font-variant-ligatures: var(--font-variant-ligatures-heading, normal);
+  font-feature-settings: var(--font-feature-settings-heading, normal);
+  font-variation-settings: var(--font-variation-settings-heading, normal);
+}
 html,
 body {
   min-height: calc(100svh + env(safe-area-inset-top));
@@ -1513,14 +1641,22 @@ html[data-theme-id="t3-chat"] {
 }
 
 body {
-  background-image: var(--surface-grain);
+  background-image: var(--t3-artwork-background-image, var(--surface-grain));
   background-repeat: repeat;
   background-size: var(--surface-grain-size);
 }
 
 pre,
 code {
-  font-family: var(--font-mono);
+  font-family: var(--font-code, var(--font-mono));
+}
+
+[data-t3-app] {
+  cursor: var(--t3-artwork-cursor, auto);
+}
+
+::selection {
+  background: var(--t3-selection, var(--accent));
 }
 
 /* Code blocks in chat carry the size preference. Scoped to chat markdown
@@ -1566,12 +1702,12 @@ code {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--app-scrollbar-thumb);
-  border-radius: 3px;
+  background: var(--t3-scrollbar, var(--app-scrollbar-thumb));
+  border-radius: var(--t3-radius-sm, 3px);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--app-scrollbar-thumb-hover);
+  background: var(--t3-scrollbar-hover, var(--app-scrollbar-thumb-hover));
 }
 
 /* Chat markdown rendering */
@@ -1600,33 +1736,189 @@ code {
 .chat-markdown h5,
 .chat-markdown h6 {
   margin: 1.25rem 0 0.5rem;
-  font-weight: 600;
-  line-height: 1.3;
+  font-family: var(--font-heading, var(--font-interface, var(--font-sans)));
+  font-weight: var(--font-weight-heading, 600);
+  line-height: var(--line-height-heading, 1.3);
+  letter-spacing: var(--letter-spacing-heading, -0.01em);
+  font-variant-ligatures: var(--font-variant-ligatures-heading, normal);
+  font-feature-settings: var(--font-feature-settings-heading, normal);
+  font-variation-settings: var(--font-variation-settings-heading, normal);
   color: var(--contrast-foreground);
 }
 
 .chat-markdown h1 {
-  font-size: 1.25rem;
+  font-size: var(--font-size-heading, 1.25rem);
 }
 
 .chat-markdown h2 {
-  font-size: 1.125rem;
+  font-size: calc(var(--font-size-heading, 1.25rem) * 0.9);
 }
 
 .chat-markdown h3 {
-  font-size: 1rem;
+  font-size: calc(var(--font-size-heading, 1.25rem) * 0.8);
 }
 
 .chat-markdown h4,
 .chat-markdown h5,
 .chat-markdown h6 {
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-heading, 1.25rem) * 0.7);
 }
 
 .chat-markdown h6 {
   color: var(--contrast-muted-foreground);
 }
 
+/* Appearance metrics and motion are consumed by the stable T3 surfaces rather
+   than merely being exposed as unused custom properties. */
+[data-t3-surface="sidebar"] {
+  --sidebar-width: clamp(
+    var(--t3-size-sidebar-min, 192px),
+    var(--t3-size-sidebar, 256px),
+    var(--t3-size-sidebar-max, 480px)
+  );
+}
+
+[data-t3-surface="sidebar"] [data-slot="sidebar-container"],
+[data-t3-surface="sidebar"] [data-slot="sidebar-gap"] {
+  min-width: min(100%, var(--t3-size-sidebar-min, 192px));
+  max-width: min(100%, var(--t3-size-sidebar-max, 480px));
+}
+
+form[data-t3-surface="composer"] {
+  width: min(
+    100%,
+    clamp(
+      var(--t3-size-composer-min, 240px),
+      var(--t3-size-composer, 720px),
+      var(--t3-size-composer-max, 1200px)
+    )
+  );
+  max-width: 100%;
+  padding-inline: min(var(--t3-content-gutter, 24px), 1rem);
+}
+
+[data-t3-surface="composer-body"] {
+  border-radius: var(--t3-radius-lg, 12px);
+  gap: calc(var(--t3-space-sm, 8px) * var(--t3-density-scale, 1));
+  transition-property: background-color, border-color, box-shadow;
+  transition-duration: var(--t3-motion-duration-normal, 200ms);
+  transition-timing-function: var(--t3-motion-easing-standard, cubic-bezier(0.2, 0, 0, 1));
+}
+
+[data-t3-surface="terminal"] {
+  min-height: min(100%, var(--t3-size-terminal-min, 120px));
+  max-height: var(--t3-size-terminal-max, 1200px);
+  font-family: var(--font-terminal, var(--font-code, var(--font-mono)));
+}
+
+[data-t3-surface="tabs"] [data-t3-part="tab"] {
+  min-width: clamp(
+    var(--t3-size-tab-min, 32px),
+    var(--t3-size-tab, 40px),
+    var(--t3-size-tab-max, 64px)
+  );
+  min-height: var(--t3-size-tab-min, 32px);
+  border-radius: var(--t3-radius-sm, 4px);
+  transition-duration: var(--t3-motion-duration-fast, 100ms);
+  transition-timing-function: var(--t3-motion-easing-standard, cubic-bezier(0.2, 0, 0, 1));
+}
+
+[data-t3-surface="timeline"],
+[data-t3-surface="split-pane"],
+[data-t3-surface="diff"],
+[data-t3-surface="review"] {
+  gap: var(--t3-panel-gap, 8px);
+}
+
+[data-t3-part="thread-row"],
+[data-t3-part="timeline-message"] {
+  gap: calc(var(--t3-space-sm, 8px) * var(--t3-density-scale, 1));
+  padding-block: calc(var(--t3-space-xs, 4px) * var(--t3-density-scale, 1));
+}
+
+[data-t3-part="timeline-message"] {
+  padding-inline: var(--t3-content-gutter, 24px);
+}
+
+[data-t3-part="send-button"],
+[data-t3-part="stop-button"],
+[data-t3-part="mode-control"],
+[data-t3-part="permission-control"],
+[data-t3-part="model-selector"],
+[data-t3-part="switch"],
+[data-t3-part="field"],
+[data-t3-part="slider"] {
+  border-radius: var(--t3-radius-md, 8px);
+  border-width: var(--t3-border-thin, 1px);
+  border-style: var(--t3-border-style, solid);
+  transition-duration: var(--t3-motion-duration-fast, 100ms);
+  transition-timing-function: var(--t3-motion-easing-standard, cubic-bezier(0.2, 0, 0, 1));
+}
+
+[data-t3-surface="dialog"],
+[data-t3-surface="popover"],
+[data-t3-surface="menu"],
+[data-t3-surface="tooltip"],
+[data-t3-surface="toast"] {
+  border-radius: var(--t3-radius-lg, 12px);
+  border-width: var(--t3-border-regular, 1px);
+  border-style: var(--t3-border-style, solid);
+  box-shadow: var(--t3-shadow-medium, 0 4px 12px rgb(0 0 0 / 12%));
+}
+
+[data-t3-surface="dialog"],
+[data-t3-surface="toast"] {
+  box-shadow: var(--t3-shadow-high, 0 12px 32px rgb(0 0 0 / 18%));
+}
+
+[data-t3-app] :where(button, input, textarea, select, a, [tabindex]):focus-visible {
+  outline: var(--t3-outline-width, 2px) var(--t3-outline-style, solid) var(--ring);
+  outline-offset: var(--t3-outline-offset, 2px);
+}
+
+[data-t3-surface="sidebar"] [data-slot="sidebar-inner"] {
+  background-image: var(--t3-artwork-sidebar-artwork, none), var(--surface-grain);
+  background-repeat: no-repeat, repeat;
+  background-size: cover, var(--surface-grain-size);
+}
+
+[data-t3-part="provider-badge"] {
+  background-image: var(--t3-artwork-icon, none);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+[data-t3-part="send-button"],
+[data-t3-part="stop-button"],
+[data-t3-part="mode-control"],
+[data-t3-part="tab"],
+[data-t3-part="timeline-tool-call"],
+[data-t3-part="timeline-message"] {
+  transition-property: color, background-color, border-color, opacity, transform;
+}
+
+.ultrathink-frame::before,
+.ultrathink-chroma {
+  animation-duration: calc(var(--t3-motion-duration-slow, 350ms) * 28.5714);
+  animation-timing-function: var(--t3-motion-easing-linear, linear);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body,
+  body *,
+  body *::before,
+  body *::after,
+  [data-t3-app],
+  [data-t3-app] *,
+  [data-t3-app] *::before,
+  [data-t3-app] *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
 .chat-markdown ul {
   /* Reset for nested uls under a widened ol — --list-gutter is an inherited
      custom property, so without this a task-list under a 3+ digit ordered
@@ -1973,13 +2265,15 @@ code {
   opacity: 0;
   transform: scaleX(1);
   transition:
-    transform 150ms ease-out,
-    opacity 150ms ease-out 220ms;
+    transform var(--t3-motion-duration-fast, 150ms) var(--t3-motion-easing-exit, ease-out),
+    opacity var(--t3-motion-duration-fast, 150ms) var(--t3-motion-easing-linear, linear)
+      calc(var(--t3-motion-duration-fast, 100ms) * 2.2);
 }
 
 .preview-loading-progress[data-loading="true"] {
   opacity: 1;
-  animation: preview-loading-progress 5.3s cubic-bezier(0.1, 0.5, 0.2, 1) forwards;
+  animation: preview-loading-progress calc(var(--t3-motion-duration-slow, 350ms) * 15.142857)
+    var(--t3-motion-easing-standard, cubic-bezier(0.1, 0.5, 0.2, 1)) forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {

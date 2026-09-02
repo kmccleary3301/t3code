@@ -12,6 +12,7 @@ function Switch({ className, ...props }: SwitchPrimitive.Root.Props) {
         className,
       )}
       data-slot="switch"
+      data-t3-part="switch"
       {...props}
     >
       <SwitchPrimitive.Thumb

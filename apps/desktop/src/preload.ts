@@ -1,3 +1,4 @@
+import { DesktopAppearanceWatchEventSchema } from "@t3tools/contracts";
 import type {
   DesktopBridge,
   DesktopPreviewPointerEvent,
@@ -6,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
+import * as Schema from "effect/Schema";
 
 import * as IpcChannels from "./ipc/channels.ts";
 
@@ -55,6 +57,39 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
+  readAppearanceState: () =>
+    ipcRenderer.invoke(IpcChannels.READ_APPEARANCE_STATE_CHANNEL, undefined),
+  commitAppearanceState: (input) =>
+    ipcRenderer.invoke(IpcChannels.COMMIT_APPEARANCE_STATE_CHANNEL, input),
+  listAppearancePackages: () => ipcRenderer.invoke(IpcChannels.LIST_APPEARANCE_PACKAGES_CHANNEL),
+  readAppearancePackage: (input) =>
+    ipcRenderer.invoke(IpcChannels.READ_APPEARANCE_PACKAGE_CHANNEL, input),
+  installAppearancePackage: () =>
+    ipcRenderer.invoke(IpcChannels.INSTALL_APPEARANCE_PACKAGE_CHANNEL),
+  exportAppearancePackage: (input) =>
+    ipcRenderer.invoke(IpcChannels.EXPORT_APPEARANCE_PACKAGE_CHANNEL, input),
+  startAppearanceWatch: () => ipcRenderer.invoke(IpcChannels.START_APPEARANCE_WATCH_CHANNEL),
+  onAppearanceWatchEvent: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, raw: unknown) => {
+      try {
+        listener(Schema.decodeUnknownSync(DesktopAppearanceWatchEventSchema)(raw));
+      } catch {
+        // Main-process payloads still cross an untrusted serialization boundary.
+      }
+    };
+    ipcRenderer.on(IpcChannels.APPEARANCE_WATCH_EVENT_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.APPEARANCE_WATCH_EVENT_CHANNEL, wrappedListener);
+    };
+  },
+  revealAppearanceFolder: () => ipcRenderer.invoke(IpcChannels.REVEAL_APPEARANCE_FOLDER_CHANNEL),
+  setAppearanceSafeMode: (input) =>
+    ipcRenderer.invoke(IpcChannels.SET_APPEARANCE_SAFE_MODE_CHANNEL, input),
+  resetAppearance: () => ipcRenderer.invoke(IpcChannels.RESET_APPEARANCE_CHANNEL),
+  readAppearanceQuarantine: () =>
+    ipcRenderer.invoke(IpcChannels.READ_APPEARANCE_QUARANTINE_CHANNEL),
+  restoreAppearanceQuarantine: () =>
+    ipcRenderer.invoke(IpcChannels.RESTORE_APPEARANCE_QUARANTINE_CHANNEL),
   getConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.GET_CONNECTION_CATALOG_CHANNEL),
   setConnectionCatalog: (catalog) =>
     ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),

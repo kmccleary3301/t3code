@@ -44,6 +44,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
                 ? " text-foreground"
                 : ""
           }`}
+          data-t3-part="permission-control"
           disabled={isResponding}
           onClick={() => void onRespondToApproval(requestId, option.decision)}
         >

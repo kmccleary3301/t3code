@@ -558,7 +558,7 @@ function NativeUiShelf({ state }: { state: NativeUiState }) {
     (left, right) => Number(left.placement === "below") - Number(right.placement === "below"),
   );
   return (
-    <section className="border-b border-border/60 p-2">
+    <section className="border-b border-border/60 p-2" data-t3-surface="native-session">
       {state.statuses.length > 0 ? (
         <div className="mb-1.5 flex flex-wrap gap-1">
           {state.statuses.map((status) => (
@@ -786,7 +786,7 @@ export function AgentsPanel({
 
   return (
     <AgentSelectionContext.Provider value={setSelectedAgentId}>
-      <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-full min-h-0 flex-col" data-t3-surface="tool-output">
         <NativeUiShelf state={nativeUiState} />
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-2 p-2">

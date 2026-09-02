@@ -5,11 +5,19 @@ export const DIFF_THEME_NAMES = {
   light: "pierre-light",
   dark: "pierre-dark",
 } as const;
+export type DiffThemeName =
+  | (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES]
+  | (string & {});
+let activeAppearanceDiffTheme: DiffThemeName | null = null;
 
-export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
+export function setActiveAppearanceDiffTheme(themeName: string | null): void {
+  activeAppearanceDiffTheme = themeName;
+}
 
 export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
+  return (
+    activeAppearanceDiffTheme ?? (theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light)
+  );
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
@@ -197,61 +205,49 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-file],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
-  --diffs-header-font-family: var(--font-sans) !important;
-  --diffs-font-family: var(--font-mono) !important;
-  --diffs-bg: var(--code-background) !important;
-  --diffs-light-bg: var(--code-background) !important;
-  --diffs-dark-bg: var(--code-background) !important;
-  --diffs-token-light-bg: transparent;
-  --diffs-token-dark-bg: transparent;
-
-  /* Gutter, context, and row tints all derive from the code surface the diff
-     body sits on — mixing from the canvas leaves the gutter looking unthemed
-     when a palette separates the two. */
-  --diffs-bg-context-override: color-mix(in srgb, var(--code-background) 97%, var(--code-foreground));
-  --diffs-bg-hover-override: color-mix(in srgb, var(--code-background) 94%, var(--code-foreground));
-  --diffs-bg-separator-override: color-mix(
-    in srgb,
-    var(--code-background) 95%,
-    var(--code-foreground)
-  );
-  --diffs-bg-buffer-override: color-mix(in srgb, var(--code-background) 90%, var(--code-foreground));
-
-  --diffs-bg-addition-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--success)),
-    color-mix(in srgb, var(--code-background) 70%, var(--success))
-  );
-  --diffs-bg-addition-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--success)),
-    color-mix(in srgb, var(--code-background) 60%, var(--success))
-  );
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--code-background) 85%, var(--success));
-  --diffs-bg-addition-emphasis-override: color-mix(
-    in srgb,
-    var(--code-background) 80%,
-    var(--success)
-  );
-
-  --diffs-bg-deletion-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--destructive)),
-    color-mix(in srgb, var(--code-background) 70%, var(--destructive))
-  );
-  --diffs-bg-deletion-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--destructive)),
-    color-mix(in srgb, var(--code-background) 60%, var(--destructive))
-  );
-  --diffs-bg-deletion-hover-override: color-mix(
-    in srgb,
-    var(--code-background) 85%,
-    var(--destructive)
-  );
-  --diffs-bg-deletion-emphasis-override: color-mix(
-    in srgb,
-    var(--code-background) 80%,
-    var(--destructive)
-  );
-
+  --diffs-header-font-family: var(--font-interface) !important;
+  --diffs-font-family: var(--font-code) !important;
+  --diffs-light-bg: var(--diffs-bg) !important;
+  --diffs-dark-bg: var(--diffs-bg) !important;
+  --diffs-light: var(--diffs-fg, var(--code-foreground)) !important;
+  --diffs-dark: var(--diffs-fg, var(--code-foreground)) !important;
+  --diffs-bg-context-override: var(--diffs-bg-context, var(--diffs-bg)) !important;
+  --diffs-bg-context-gutter-override: var(--diffs-bg-context-gutter, var(--diffs-bg)) !important;
+  --diffs-bg-separator-override: var(--diffs-bg-separator, var(--diffs-bg)) !important;
+  --diffs-bg-buffer-override: var(--diffs-bg-context, var(--diffs-bg)) !important;
+  --diffs-addition-color-override: var(--diffs-addition-base, var(--success)) !important;
+  --diffs-deletion-color-override: var(--diffs-deletion-base, var(--destructive)) !important;
+  --diffs-modified-color-override: var(--diffs-modified-base, var(--warning)) !important;
+  --diffs-bg-modification-override: var(--diffs-bg-modification, var(--diffs-bg)) !important;
+  --diffs-fg-gutter-override: var(--diffs-fg-gutter, var(--diffs-fg)) !important;
+  --diffs-fg-hunk-override: var(--diffs-fg-hunk, var(--diffs-fg)) !important;
+  --diffs-bg-addition-override: var(--diffs-bg-addition, var(--diffs-bg)) !important;
+  --diffs-bg-addition-number-override: var(--diffs-bg-addition, var(--diffs-bg)) !important;
+  --diffs-bg-addition-hover-override: var(--diffs-bg-addition, var(--diffs-bg)) !important;
+  --diffs-bg-addition-emphasis-override: var(--diffs-bg-addition, var(--diffs-bg)) !important;
+  --diffs-bg-deletion-override: var(--diffs-bg-deletion, var(--diffs-bg)) !important;
+  --diffs-bg-deletion-number-override: var(--diffs-bg-deletion, var(--diffs-bg)) !important;
+  --diffs-bg-deletion-hover-override: var(--diffs-bg-deletion, var(--diffs-bg)) !important;
+  --diffs-bg-deletion-emphasis-override: var(--diffs-bg-deletion, var(--diffs-bg)) !important;
+  --diffs-bg-selection-override: var(--diffs-bg-selection, var(--diffs-bg)) !important;
+  --diffs-fg-number-override: var(--diffs-fg-number, var(--diffs-fg)) !important;
   background-color: var(--diffs-bg) !important;
-  color: var(--code-foreground) !important;
+  color: var(--diffs-fg) !important;
+}
+
+[data-diffs-header] {
+  background-color: var(--diffs-header-bg, var(--diffs-bg)) !important;
+  color: var(--diffs-header-fg, var(--diffs-fg)) !important;
+}
+
+:is([data-diff], [data-file]) [data-gutter-buffer],
+:is([data-diff], [data-file])
+  [data-column-number]:not([data-line-type="change-addition"]):not([data-line-type="change-deletion"]) {
+  color: var(--diffs-fg-gutter-override, var(--diffs-fg)) !important;
+}
+
+:is([data-diff], [data-file]) [data-separator] [data-separator-content],
+:is([data-diff], [data-file]) [data-separator] [data-expand-button] {
+  color: var(--diffs-fg-hunk-override, var(--diffs-fg)) !important;
 }
 `;

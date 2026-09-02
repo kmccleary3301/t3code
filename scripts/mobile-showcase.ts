@@ -3,7 +3,6 @@
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
@@ -26,17 +25,27 @@ import showcaseConfig, {
 import {
   SHOWCASE_ENVIRONMENTS,
   SHOWCASE_PROJECTS,
+  SHOWCASE_SEED_EPOCH,
   SHOWCASE_TERMINAL_ID,
   SHOWCASE_THREAD_ID,
   seedShowcaseEnvironment,
 } from "./mobile-showcase-environment.ts";
+
+import {
+  createActualSurfaceChildEnv,
+  commandOutput,
+  createActualSurfaceEnvironment,
+  stopActualSurfaceProcess as stopProcess,
+  waitForPort,
+  waitForFileContent,
+} from "./actual-surface-environment.ts";
+import type { ActualSurfaceEnvironment } from "./actual-surface-environment.ts";
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
 const ANDROID_PACKAGE = "com.t3tools.t3code";
 const APP_SCHEME = "t3code";
 const IOS_READY_FILENAME = "T3ShowcaseReadyScene";
-const SERVER_HOST = "0.0.0.0";
 const IOS_SIMULATOR_ARCH = NodeProcess.arch === "arm64" ? "arm64" : "x86_64";
 const IOS_APP_PATH = NodePath.join(
   MOBILE_ROOT,
@@ -55,21 +64,26 @@ export function resolveAndroidSdkRoot(
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
   return NodePath.join(home, platform === "darwin" ? "Library/Android/sdk" : "Android/Sdk");
 }
-
 const ANDROID_SDK_ROOT = resolveAndroidSdkRoot(NodeProcess.env);
+export function resolveShowcaseJavaHome(
+  environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform = NodeProcess.platform,
+): string | undefined {
+  return (
+    environment.JAVA_HOME ??
+    (platform === "darwin"
+      ? "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+      : undefined)
+  );
+}
+const JAVA_HOME = resolveShowcaseJavaHome(NodeProcess.env);
 const MOBILE_BUILD_ENV = {
-  ...NodeProcess.env,
-  ANDROID_HOME: ANDROID_SDK_ROOT,
+  ...createActualSurfaceChildEnv(NodeProcess.env, { ANDROID_HOME: ANDROID_SDK_ROOT }),
   APP_VARIANT: "production",
   EXPO_NO_GIT_STATUS: "1",
-  // Lets the capture build require full screen on iPad so the app can rotate
-  // itself to landscape (see app.config.ts).
   T3_SHOWCASE_CAPTURE_BUILD: "1",
-  JAVA_HOME:
-    NodeProcess.env.JAVA_HOME ??
-    (NodeProcess.platform === "darwin"
-      ? "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-      : undefined),
+  EXPO_PUBLIC_SHOWCASE_EPOCH_MS: String(SHOWCASE_SEED_EPOCH),
+  ...(JAVA_HOME ? { JAVA_HOME } : {}),
   NODE_ENV: "development",
 };
 
@@ -82,6 +96,7 @@ interface CliOptions {
   readonly skipBuild: boolean;
   readonly skipMetro: boolean;
   readonly keepRunning: boolean;
+  readonly disposableDevice: boolean;
   readonly validateOnly: boolean;
   readonly list: boolean;
 }
@@ -291,6 +306,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
   let skipBuild = false;
   let skipMetro = false;
   let keepRunning = false;
+  let disposableDevice = false;
   let validateOnly = false;
   let list = false;
 
@@ -348,6 +364,8 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
       skipMetro = true;
     } else if (argument === "--keep-running") {
       keepRunning = true;
+    } else if (argument === "--disposable-device") {
+      disposableDevice = true;
     } else if (argument === "--validate-only") {
       validateOnly = true;
     } else if (argument === "--list") {
@@ -368,9 +386,21 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
     skipBuild,
     skipMetro,
     keepRunning,
+    disposableDevice,
     validateOnly,
     list,
   };
+}
+
+export function assertDisposableDeviceApproval(
+  disposableDevice: boolean,
+  captureCount: number,
+): void {
+  if (captureCount > 0 && !disposableDevice) {
+    throw new Error(
+      "Capture requires --disposable-device because selected simulators and emulators are cleared and reconfigured.",
+    );
+  }
 }
 
 export function planShowcaseCaptures(
@@ -426,6 +456,7 @@ Options:
   --skip-build               Reuse the existing simulator app / debug APK
   --skip-metro               Reuse an already running showcase Metro server
   --keep-running             Leave devices and Metro running after capture
+  --disposable-device        Confirm selected devices are disposable and may be cleared
   --validate-only            Validate existing upload assets without capturing
   --list                     Print this help and the configured matrix
 
@@ -449,7 +480,7 @@ function spawnProcess(
 ): NodeChildProcess.ChildProcess {
   return NodeChildProcess.spawn(command, args, {
     cwd: REPO_ROOT,
-    env: NodeProcess.env,
+    env: createActualSurfaceChildEnv(NodeProcess.env),
     stdio: "inherit",
     ...options,
   });
@@ -469,7 +500,7 @@ async function runCommand(
       } else {
         reject(
           new Error(
-            `${command} ${args.join(" ")} failed ${signal ? `with signal ${signal}` : `with code ${String(code)}`}.`,
+            `${command} failed ${signal ? `with signal ${signal}` : `with code ${String(code)}`}.`,
           ),
         );
       }
@@ -477,194 +508,8 @@ async function runCommand(
   });
 }
 
-async function commandOutput(
-  command: string,
-  args: ReadonlyArray<string>,
-  options: NodeChildProcess.ExecFileOptions = {},
-): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    NodeChildProcess.execFile(
-      command,
-      [...args],
-      { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 10 * 1024 * 1024, ...options },
-      (error, stdout) => {
-        if (error) reject(error);
-        else resolve(String(stdout));
-      },
-    );
-  });
-}
-
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function stopProcess(child: NodeChildProcess.ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-
-  const exited = new Promise<void>((resolve) => {
-    child.once("exit", () => resolve());
-  });
-  child.kill("SIGTERM");
-  await Promise.race([exited, delay(5_000)]);
-  if (child.exitCode !== null || child.signalCode !== null) return;
-
-  child.kill("SIGKILL");
-  await Promise.race([exited, delay(1_000)]);
-}
-
-async function waitForPort(port: number, label = "Process", timeoutMs = 60_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const open = await new Promise<boolean>((resolve) => {
-      const socket = NodeNet.createConnection({ host: "127.0.0.1", port });
-      socket.once("connect", () => {
-        socket.destroy();
-        resolve(true);
-      });
-      socket.once("error", () => resolve(false));
-      socket.setTimeout(500, () => {
-        socket.destroy();
-        resolve(false);
-      });
-    });
-    if (open) return;
-    await delay(500);
-  }
-  throw new Error(`${label} did not begin listening on port ${port} within ${timeoutMs}ms.`);
-}
-
-async function waitForFileContent(
-  filePath: string,
-  label: string,
-  timeoutMs = 60_000,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const content = await NodeFSP.readFile(filePath, "utf8").then(
-      (value) => value.trim(),
-      () => "",
-    );
-    if (content) return content;
-    await delay(250);
-  }
-  throw new Error(`${label} was not written to ${filePath} within ${timeoutMs}ms.`);
-}
-
-async function reserveAvailablePort(): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
-    const server = NodeNet.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close();
-        reject(new Error("Could not reserve a local port for the showcase environment."));
-        return;
-      }
-      server.close((error) => (error ? reject(error) : resolve(address.port)));
-    });
-  });
-}
-
-async function createShowcaseShell(baseDir: string): Promise<string> {
-  const shellPath = NodePath.join(baseDir, "showcase-shell");
-  await NodeFSP.writeFile(
-    shellPath,
-    `#!/bin/sh
-if [ "$1" = "-ilc" ] || [ "$1" = "-lic" ]; then
-  exec /bin/sh -c "$2"
-fi
-exec /bin/cat
-`,
-    { mode: 0o755 },
-  );
-  return shellPath;
-}
-
-async function createShowcaseLabelProbe(baseDir: string, label: string): Promise<string> {
-  const binDirectory = NodePath.join(baseDir, "showcase-bin");
-  await NodeFSP.mkdir(binDirectory, { recursive: true });
-  const probeScript = `#!/bin/sh
-if [ "$1" = "--get" ] && [ "$2" = "ComputerName" ]; then
-  printf '%s\\n' ${JSON.stringify(label)}
-  exit 0
-fi
-if [ "$1" = "--pretty" ]; then
-  printf '%s\\n' ${JSON.stringify(label)}
-  exit 0
-fi
-exit 1
-`;
-  await Promise.all(
-    ["scutil", "hostnamectl"].map((executable) =>
-      NodeFSP.writeFile(NodePath.join(binDirectory, executable), probeScript, { mode: 0o755 }),
-    ),
-  );
-  return binDirectory;
-}
-
-function startShowcaseServer(
-  baseDir: string,
-  workspaceRoot: string,
-  port: number,
-  shellPath: string,
-  labelProbeDirectory: string,
-): NodeChildProcess.ChildProcess {
-  return spawnProcess(
-    "node",
-    [
-      "apps/server/src/bin.ts",
-      "serve",
-      "--host",
-      SERVER_HOST,
-      "--port",
-      String(port),
-      "--base-dir",
-      baseDir,
-      "--no-browser",
-      "--log-level",
-      "error",
-      workspaceRoot,
-    ],
-    {
-      env: {
-        ...NodeProcess.env,
-        PATH: `${labelProbeDirectory}:${NodeProcess.env.PATH ?? ""}`,
-        SHELL: shellPath,
-      },
-    },
-  );
-}
-
-export function parsePairingCredentialOutput(output: string): string {
-  const jsonStart = output.indexOf("{");
-  const jsonEnd = output.lastIndexOf("}");
-  if (jsonStart === -1 || jsonEnd < jsonStart) {
-    throw new Error("Pairing credential command did not return JSON.");
-  }
-  const parsed = JSON.parse(output.slice(jsonStart, jsonEnd + 1)) as {
-    readonly credential?: unknown;
-  };
-  if (typeof parsed.credential !== "string" || parsed.credential.length === 0) {
-    throw new Error("Pairing credential command returned no credential.");
-  }
-  return parsed.credential;
-}
-
-async function issuePairingCredential(baseDir: string): Promise<string> {
-  const output = await commandOutput(
-    "node",
-    ["apps/server/src/bin.ts", "auth", "pairing", "create", "--base-dir", baseDir, "--json"],
-    { env: { ...NodeProcess.env, NO_COLOR: "1" } },
-  );
-  return parsePairingCredentialOutput(output);
-}
-
-function buildShowcasePairingUrl(host: string, port: number, credential: string): string {
-  const url = new URL(`http://${host}:${port}/`);
-  url.hash = new URLSearchParams([["token", credential]]).toString();
-  return url.toString();
 }
 
 export function showcaseSceneUrl(scene: ShowcaseScene, environmentId: string): string {
@@ -965,25 +810,29 @@ async function captureIos(
   );
   const firstScene = capture.scenes[0] ?? "threads";
   const launchShowcaseApp = async (terminateRunningProcess: boolean) => {
-    await runCommand("xcrun", [
-      "simctl",
-      "launch",
-      ...(terminateRunningProcess ? ["--terminate-running-process"] : []),
-      simulator.udid,
-      ANDROID_PACKAGE,
-      "--initialUrl",
-      metroUrl,
-      "--showcasePairingUrl",
-      JSON.stringify(pairingUrls),
-      "--showcaseScene",
-      firstScene,
-      "--showcaseTheme",
-      capture.theme,
-      // The app rotates itself; Simulator menu UI scripting needs macOS
-      // Accessibility permission that CI runners do not grant to osascript.
-      "--showcaseOrientation",
-      capture.device.orientation ?? "portrait",
-    ]);
+    await runCommand(
+      "xcrun",
+      [
+        "simctl",
+        "launch",
+        ...(terminateRunningProcess ? ["--terminate-running-process"] : []),
+        simulator.udid,
+        ANDROID_PACKAGE,
+        "--initialUrl",
+        metroUrl,
+        "--showcasePairingUrl",
+        JSON.stringify(pairingUrls),
+        "--showcaseScene",
+        firstScene,
+        "--showcaseTheme",
+        capture.theme,
+        // The app rotates itself; Simulator menu UI scripting needs macOS
+        // Accessibility permission that CI runners do not grant to osascript.
+        "--showcaseOrientation",
+        capture.device.orientation ?? "portrait",
+      ],
+      { stdio: "ignore" },
+    );
   };
   await NodeFSP.rm(readyPath, { force: true });
   await NodeFSP.writeFile(scenePath, firstScene);
@@ -1035,8 +884,12 @@ async function adbOutput(serial: string, args: ReadonlyArray<string>): Promise<s
   return await commandOutput(androidSdkTool("platform-tools/adb"), ["-s", serial, ...args]);
 }
 
-async function runAdb(serial: string, args: ReadonlyArray<string>): Promise<void> {
-  await runCommand(androidSdkTool("platform-tools/adb"), ["-s", serial, ...args]);
+async function runAdb(
+  serial: string,
+  args: ReadonlyArray<string>,
+  options: NodeChildProcess.SpawnOptions = {},
+): Promise<void> {
+  await runCommand(androidSdkTool("platform-tools/adb"), ["-s", serial, ...args], options);
 }
 
 async function runningAndroidAvds(): Promise<ReadonlyMap<string, string>> {
@@ -1222,26 +1075,30 @@ async function captureAndroid(
   await runAdb(serial, ["reverse", `tcp:${config.metroPort}`, `tcp:${config.metroPort}`]);
   const metroUrl = encodeURIComponent(`http://127.0.0.1:${config.metroPort}?disableOnboarding=1`);
   const firstScene = capture.scenes[0] ?? "threads";
-  await runAdb(serial, [
-    "shell",
-    "am",
-    "start",
-    "-W",
-    "-a",
-    "android.intent.action.VIEW",
-    "-d",
-    `${APP_SCHEME}://expo-development-client/?url=${metroUrl}`,
-    "--es",
-    "showcasePairingUrl",
-    encodeAndroidPairingUrls(pairingUrls),
-    "--es",
-    "showcaseScene",
-    firstScene,
-    "--es",
-    "showcaseTheme",
-    capture.theme,
-    ANDROID_PACKAGE,
-  ]);
+  await runAdb(
+    serial,
+    [
+      "shell",
+      "am",
+      "start",
+      "-W",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      `${APP_SCHEME}://expo-development-client/?url=${metroUrl}`,
+      "--es",
+      "showcasePairingUrl",
+      encodeAndroidPairingUrls(pairingUrls),
+      "--es",
+      "showcaseScene",
+      firstScene,
+      "--es",
+      "showcaseTheme",
+      capture.theme,
+      ANDROID_PACKAGE,
+    ],
+    { stdio: "ignore" },
+  );
   for (const [sceneIndex, scene] of capture.scenes.entries()) {
     if (sceneIndex > 0) await writeAndroidShowcaseScene(serial, scene);
     await waitForAndroidShowcaseScene(serial, scene);
@@ -1254,7 +1111,12 @@ async function captureAndroid(
       NodeChildProcess.execFile(
         androidSdkTool("platform-tools/adb"),
         ["-s", serial, "exec-out", "screencap", "-p"],
-        { cwd: REPO_ROOT, encoding: "buffer", maxBuffer: 64 * 1024 * 1024 },
+        {
+          cwd: REPO_ROOT,
+          encoding: "buffer",
+          env: createActualSurfaceChildEnv(NodeProcess.env),
+          maxBuffer: 64 * 1024 * 1024,
+        },
         (error, stdout) => {
           if (error) reject(error);
           else resolve(stdout);
@@ -1305,6 +1167,7 @@ async function main(): Promise<void> {
     }
     return;
   }
+  assertDisposableDeviceApproval(options.disposableDevice, captures.length);
   const hasIos = captures.some((capture) => capture.device.platform === "ios");
   const hasAndroid = captures.some((capture) => capture.device.platform === "android");
   const metroHost = hasIos ? lanIpv4Address() : "127.0.0.1";
@@ -1318,13 +1181,7 @@ async function main(): Promise<void> {
   const showcaseRootDir = await NodeFSP.mkdtemp(
     NodePath.join(NodeOS.tmpdir(), "t3-mobile-showcase-"),
   );
-  const showcaseServers: NodeChildProcess.ChildProcess[] = [];
-  const showcaseEnvironments: Array<{
-    readonly baseDir: string;
-    readonly environmentId: string;
-    readonly label: string;
-    readonly port: number;
-  }> = [];
+  const showcaseEnvironments: ActualSurfaceEnvironment[] = [];
   let metro: NodeChildProcess.ChildProcess | null = null;
   const iosCleanups: IosCaptureCleanup[] = [];
   const androidCleanups: AndroidCaptureCleanup[] = [];
@@ -1337,27 +1194,21 @@ async function main(): Promise<void> {
 
       const baseDir = NodePath.join(showcaseRootDir, "environments", environment.id);
       const workspaceRoot = NodePath.join(baseDir, "workspace", project.directory);
-      const port = await reserveAvailablePort();
-      await NodeFSP.mkdir(workspaceRoot, { recursive: true });
-      const shellPath = await createShowcaseShell(baseDir);
-      const labelProbeDirectory = await createShowcaseLabelProbe(baseDir, environment.label);
-      const server = startShowcaseServer(
+      const actualEnvironment = await createActualSurfaceEnvironment({
         baseDir,
         workspaceRoot,
-        port,
-        shellPath,
-        labelProbeDirectory,
-      );
-      showcaseServers.push(server);
-      await waitForPort(port, `${environment.label} server`);
-      await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
-      // The server begins listening before the ServerEnvironment layer
-      // persists the environment id, so poll rather than read once.
-      const environmentId = await waitForFileContent(
+        label: environment.label,
+        prepare: async () => {
+          await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
+        },
+      });
+      showcaseEnvironments.push(actualEnvironment);
+      // The server begins listening before the ServerEnvironment layer persists
+      // the environment id, so poll rather than read once.
+      await waitForFileContent(
         NodePath.join(baseDir, "userdata", "environment-id"),
         `${environment.label} environment id`,
       );
-      showcaseEnvironments.push({ baseDir, environmentId, label: environment.label, port });
     }
 
     if (!options.skipMetro) {
@@ -1386,10 +1237,7 @@ async function main(): Promise<void> {
     for (const capture of captures) {
       const pairingHost = capture.device.platform === "ios" ? "127.0.0.1" : "10.0.2.2";
       const pairingUrls = await Promise.all(
-        showcaseEnvironments.map(async (environment) => {
-          const credential = await issuePairingCredential(environment.baseDir);
-          return buildShowcasePairingUrl(pairingHost, environment.port, credential);
-        }),
+        showcaseEnvironments.map((environment) => environment.pairingUrl(pairingHost)),
       );
       if (capture.device.platform === "ios") {
         await captureIos(
@@ -1432,7 +1280,7 @@ async function main(): Promise<void> {
   } finally {
     if (options.keepRunning) {
       metro?.unref();
-      for (const server of showcaseServers) server.unref();
+      for (const environment of showcaseEnvironments) environment.server.unref();
     } else {
       for (const cleanup of androidCleanups) {
         await cleanupAndroidViewport(cleanup.device, cleanup.serial).catch(() => undefined);
@@ -1450,7 +1298,7 @@ async function main(): Promise<void> {
       }
       await Promise.all([
         ...(metro ? [stopProcess(metro)] : []),
-        ...showcaseServers.map((server) => stopProcess(server)),
+        ...showcaseEnvironments.map((environment) => environment.dispose()),
       ]);
       await NodeFSP.rm(showcaseRootDir, {
         recursive: true,

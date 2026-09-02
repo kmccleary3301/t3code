@@ -1,3 +1,4 @@
+import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMacPlatform } from "../../lib/utils";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
@@ -13,7 +14,7 @@ import {
   type GhosttyCellRange,
   type GhosttyCellMetrics,
 } from "./renderer";
-import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
+import { WEB_RENDERER_OWNERSHIP } from "../../lib/webRendererOwnership";
 import { isMonospaceFamily } from "../../appearanceFonts";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
@@ -44,10 +45,13 @@ const TERMINAL_FONT_LOAD_VARIANTS = [
   "italic 700",
 ] as const;
 
-/** Requested terminal font; omitted fields fall back to the defaults. */
+/** Requested terminal font; omitted fields fall back to the normalized defaults. */
 export interface GhosttyTerminalFont {
   readonly family?: string;
   readonly size?: number;
+  readonly weight?: number;
+  readonly lineHeight?: number;
+  readonly ligatures?: boolean;
 }
 
 let symbolsFontLoad: Promise<void> | null = null;
@@ -559,6 +563,9 @@ export class GhosttyTerminalSurface {
   private fontFamily: string;
   private requestedFontFamily: string | undefined;
   private fontSize: number;
+  private fontWeight: number;
+  private lineHeight: number;
+  private ligatures: boolean;
   private fontEpoch = 0;
   private pendingFontEpoch: number | null = null;
   private readonly resizeObserver: ResizeObserver;
@@ -640,13 +647,16 @@ export class GhosttyTerminalSurface {
     this.context = context;
     this.core = core;
     this.mouseAnyEventTracking = core.isMouseAnyEventTracking();
-    this.metrics = metrics;
     this.options = options;
     this.theme = options.theme;
+    this.metrics = metrics;
+    this.resizeObserver = new ResizeObserver(() => this.fit());
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
-    this.resizeObserver = new ResizeObserver(() => this.fit());
+    this.fontWeight = Math.max(1, Math.min(1000, Math.round(options.font?.weight ?? 400)));
+    this.lineHeight = Math.max(0.8, Math.min(3, options.font?.lineHeight ?? 1.4));
+    this.ligatures = options.font?.ligatures ?? true;
     this.installEvents();
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
@@ -661,6 +671,7 @@ export class GhosttyTerminalSurface {
     const canvas = document.createElement("canvas");
     canvas.className = "block size-full cursor-text";
     canvas.setAttribute("aria-hidden", "true");
+    canvas.dataset.rendererOwner = WEB_RENDERER_OWNERSHIP.ghosttyCanvas;
 
     const input = document.createElement("textarea");
     input.className = "t3-ghostty-input";
@@ -681,7 +692,7 @@ export class GhosttyTerminalSurface {
     scrollbar.hidden = true;
     const scrollbarThumb = document.createElement("div");
     scrollbarThumb.className =
-      "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
+      "absolute inset-x-px top-0 rounded-[3px] bg-[var(--terminal-scrollbar,var(--app-scrollbar-thumb))] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--terminal-scrollbar-hover,var(--app-scrollbar-thumb-hover))] group-focus-visible:bg-[var(--terminal-scrollbar-hover,var(--app-scrollbar-thumb-hover))]";
     scrollbar.append(scrollbarThumb);
     mount.replaceChildren(canvas, input, scrollbar);
 
@@ -701,7 +712,10 @@ export class GhosttyTerminalSurface {
       // Metrics fall back to whichever faces are already available.
     }
     const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
-    const metrics = measureGhosttyCell(context, fontSize, fontFamily);
+    const metrics = measureGhosttyCell(context, fontSize, fontFamily, {
+      ...(options.font?.weight === undefined ? {} : { fontWeight: options.font.weight }),
+      ...(options.font?.lineHeight === undefined ? {} : { lineHeight: options.font.lineHeight }),
+    });
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(
       grid.cols,
@@ -773,12 +787,17 @@ export class GhosttyTerminalSurface {
     this.fontFamily = fontFamily;
     this.requestedFontFamily = font.family;
     this.fontSize = fontSize;
+    this.fontWeight = Math.max(1, Math.min(1000, Math.round(font.weight ?? this.fontWeight)));
+    this.lineHeight = Math.max(0.8, Math.min(3, font.lineHeight ?? this.lineHeight));
+    this.ligatures = font.ligatures ?? this.ligatures;
     this.applyFontMetrics();
   }
 
   private applyFontMetrics(): void {
-    this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
-    this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
+    this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily, {
+      fontWeight: this.fontWeight,
+      lineHeight: this.lineHeight,
+    });
     // Cached IME textarea coordinates are stale in the new cell geometry.
     this.inputLeft = -1;
     this.inputTop = -1;
@@ -1716,6 +1735,8 @@ export class GhosttyTerminalSurface {
       metrics: this.metrics,
       fontSize: this.fontSize,
       fontFamily: this.fontFamily,
+      fontWeight: this.fontWeight,
+      ligatures: this.ligatures,
       padding: CONTENT_PADDING,
       originY: this.originY,
       forceFull: this.forceFullRender,

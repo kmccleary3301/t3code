@@ -1,5 +1,11 @@
+import { createEmptyAppearanceState } from "@t3tools/client-runtime/appearance";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import {
+  HostProcessArguments,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -32,6 +38,7 @@ vi.mock("electron", async (importOriginal) => ({
   },
 }));
 
+import { DesktopAppearanceStorage } from "../appearance/DesktopAppearanceStorage.ts";
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -47,6 +54,11 @@ import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/cha
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+
+vi.spyOn(DesktopAppearanceStorage.prototype, "load").mockResolvedValue(
+  createEmptyAppearanceState(),
+);
+vi.spyOn(DesktopAppearanceStorage.prototype, "watch").mockReturnValue(() => {});
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -191,7 +203,6 @@ const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
 );
-
 function makeTestLayer(input: {
   readonly window: Electron.BrowserWindow;
   readonly createCount: Ref.Ref<number>;
@@ -205,6 +216,9 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly platform?: NodeJS.Platform;
+  readonly hostArguments?: ReadonlyArray<string>;
+  readonly hostEnvironment?: NodeJS.ProcessEnv;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -259,9 +273,27 @@ function makeTestLayer(input: {
     syncAllAppearance: (sync) => sync(input.window),
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
+  const desktopEnvironmentLayer = DesktopEnvironment.layer({
+    ...environmentInput,
+    ...(input.platform === undefined ? {} : { platform: input.platform }),
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
+    ),
+  );
+
   return DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(HostProcessArguments, input.hostArguments ?? ["t3code"]),
+        Layer.succeed(HostProcessEnvironment, input.hostEnvironment ?? {}),
+        Layer.succeed(HostProcessPlatform, input.platform ?? environmentInput.platform),
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
@@ -431,6 +463,116 @@ describe("DesktopWindow", () => {
       }),
     );
   });
+  it("forces appearance recovery into the renderer URL before window creation", () => {
+    assert.isTrue(
+      DesktopWindow.isAppearanceSafeModeForced({
+        argv: ["t3code", "--safe-appearance"],
+        env: {},
+      }),
+    );
+    assert.isTrue(
+      DesktopWindow.isAppearanceSafeModeForced({
+        argv: ["t3code"],
+        env: { T3CODE_APPEARANCE_SAFE_MODE: "1" },
+      }),
+    );
+    assert.isTrue(
+      DesktopWindow.isAppearanceResetForced({
+        argv: ["t3code", "--reset-appearance"],
+      }),
+    );
+    assert.isFalse(DesktopWindow.isAppearanceResetForced({ argv: ["t3code"] }));
+    assert.equal(
+      DesktopWindow.withAppearanceSafeMode("t3code://app/", true),
+      "t3code://app/?t3-appearance=safe",
+    );
+    assert.equal(DesktopWindow.withAppearanceSafeMode("t3code://app/", false), "t3code://app/");
+  });
+  it("loads durable appearance recovery before creating a renderer", async () => {
+    assert.isTrue(
+      await DesktopWindow.shouldUseAppearanceSafeModeBeforeWindow(
+        { argv: ["t3code"], env: {} },
+        async () => true,
+      ),
+    );
+    assert.isTrue(
+      await DesktopWindow.shouldUseAppearanceSafeModeBeforeWindow(
+        { argv: ["t3code"], env: {} },
+        async () => Promise.reject(new Error("corrupt state")),
+      ),
+    );
+    assert.isFalse(
+      await DesktopWindow.shouldUseAppearanceSafeModeBeforeWindow(
+        { argv: ["t3code"], env: {} },
+        async () => false,
+      ),
+    );
+  });
+  it.effect("does not rerun a forced appearance reset for a second window", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        hostArguments: ["t3code", "--reset-appearance"],
+      });
+      const reset = vi
+        .spyOn(DesktopAppearanceStorage.prototype, "reset")
+        .mockRejectedValue(new Error("simulated reset failure"));
+      try {
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createMain;
+          yield* desktopWindow.createMain;
+          assert.equal(yield* Ref.get(createCount), 2);
+          assert.equal(reset.mock.calls.length, 1);
+        }).pipe(Effect.provide(layer));
+      } finally {
+        reset.mockRestore();
+      }
+    }),
+  );
+  it.effect("maps native titlebar and background options per desktop platform", () =>
+    Effect.gen(function* () {
+      for (const platform of ["darwin", "win32", "linux"] as const) {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          createdWindowOptions,
+          platform,
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createMain;
+        }).pipe(Effect.provide(layer));
+
+        const options = createdWindowOptions[0];
+        assert.isDefined(options);
+        assert.equal(options.backgroundColor, "#ffffff");
+        if (platform === "darwin") {
+          assert.equal(options.titleBarStyle, "hiddenInset");
+          assert.deepEqual(options.trafficLightPosition, { x: 16, y: 18 });
+          assert.isUndefined(options.titleBarOverlay);
+        } else {
+          assert.equal(options.titleBarStyle, "hidden");
+          assert.deepEqual(options.titleBarOverlay, {
+            color: "#01000000",
+            height: 40,
+            symbolColor: "#1f2937",
+          });
+        }
+      }
+    }),
+  );
 
   it.effect("does not open a development window until the backend is ready", () =>
     Effect.gen(function* () {

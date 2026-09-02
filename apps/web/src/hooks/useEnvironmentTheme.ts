@@ -80,15 +80,19 @@ export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefini
 export function publishedThemeDefinitions(
   themes: ReadonlyArray<EnvironmentTheme>,
 ): ReadonlyArray<ThemeDefinition> {
+  const seenIds = new Set<string>();
   return themes
     .filter((theme) => {
-      if (isReservedThemeId(theme.id)) return false;
-      if (theme.canvas !== undefined && theme.accent !== undefined) return true;
-      const otherAppearance = theme.appearance === "dark" ? "light" : "dark";
-      return [theme.colors, theme.variants?.[otherAppearance]].some(
-        (colors) =>
-          colors !== undefined && Object.keys(lenientThemeColorOverrides(colors)).length > 0,
-      );
+      if (isReservedThemeId(theme.id) || seenIds.has(theme.id)) return false;
+      const usable =
+        theme.canvas !== undefined && theme.accent !== undefined
+          ? true
+          : [theme.colors, theme.variants?.[theme.appearance === "dark" ? "light" : "dark"]].some(
+              (colors) =>
+                colors !== undefined && Object.keys(lenientThemeColorOverrides(colors)).length > 0,
+            );
+      if (usable) seenIds.add(theme.id);
+      return usable;
     })
     .map(environmentThemeDefinition);
 }

@@ -32,6 +32,7 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
+import type { AppearanceCommand, AppearanceSnapshot } from "@t3tools/client-runtime/appearance";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
@@ -92,6 +93,7 @@ import {
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { getAppearanceRuntime } from "../appearanceRuntime";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
@@ -111,6 +113,7 @@ import {
   resolveWslProjectSelection,
 } from "../wslPaths";
 import {
+  buildAppearanceCommandPaletteItem,
   ADDON_ICON_CLASS,
   browseInputEndPaddingClass,
   buildBrowseGroups,
@@ -591,6 +594,64 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const [appearanceSnapshot, setAppearanceSnapshot] = useState<AppearanceSnapshot | null>(null);
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+    void getAppearanceRuntime().then(
+      (runtime) => {
+        if (!active) return;
+        const update = () => setAppearanceSnapshot(runtime.getSnapshot());
+        update();
+        unsubscribe = runtime.subscribe(update);
+      },
+      () => {
+        if (active) setAppearanceSnapshot(null);
+      },
+    );
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, []);
+  const runAppearanceCommand = useCallback(async (command: AppearanceCommand): Promise<void> => {
+    if (
+      command.type === "reset" &&
+      !window.confirm(
+        "Reset all appearance packages and snippets? A recovery copy is kept where supported.",
+      )
+    ) {
+      return;
+    }
+    const runtime = await getAppearanceRuntime();
+    const snapshot = runtime.getSnapshot();
+    if (
+      command.type === "preference" &&
+      command.preference.packageId !== undefined &&
+      snapshot.packages[command.preference.packageId]?.enabled === false
+    ) {
+      const enabled = await runtime.execute({
+        type: "enable",
+        id: command.preference.packageId,
+      });
+      if (enabled.status !== "applied") {
+        throw new Error(
+          enabled.status === "rejected"
+            ? (enabled.diagnostics[0]?.message ?? "Appearance package could not be enabled.")
+            : "Appearance package activation was cancelled.",
+        );
+      }
+    }
+    const result = await runtime.execute(command);
+    if (result.status !== "applied") {
+      throw new Error(
+        result.status === "rejected"
+          ? (result.diagnostics[0]?.message ?? "Appearance command was rejected.")
+          : "Appearance command was cancelled.",
+      );
+    }
+    setAppearanceSnapshot(result.snapshot);
+  }, []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -1443,6 +1504,24 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
     startAddProjectSourceSelection,
   ]);
+  const openAppearanceSettings = useCallback(async () => {
+    await navigate({ to: "/settings/appearance" });
+  }, [navigate]);
+  const appearanceBridge = typeof window === "undefined" ? undefined : window.desktopBridge;
+  const openAppearanceFolder =
+    appearanceBridge === undefined ? null : () => appearanceBridge.revealAppearanceFolder();
+  const appearanceAction = useMemo(
+    () =>
+      buildAppearanceCommandPaletteItem({
+        snapshot: appearanceSnapshot,
+        icon: <PaletteIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
+        run: runAppearanceCommand,
+        openSettings: openAppearanceSettings,
+        openAppearanceFolder,
+      }),
+    [appearanceSnapshot, openAppearanceFolder, openAppearanceSettings, runAppearanceCommand],
+  );
 
   useLayoutEffect(() => {
     if (openIntent?.kind !== "add-project") {
@@ -1604,6 +1683,8 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push(appearanceAction);
 
   actionItems.push({
     kind: "action",
@@ -2437,6 +2518,7 @@ function OpenCommandPaletteDialog(props: {
     <CommandPaletteContent
       key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${addProjectCloneFlow?.step ?? "none"}`}
       aria-label="Command palette"
+      data-t3-surface="command-palette"
       autoHighlight={isBrowsing || isRemoteProjectCloneFlow ? false : "always"}
       footerActionLabel={footerActionLabel}
       footerTrailing={footerTrailing}

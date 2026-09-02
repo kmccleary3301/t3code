@@ -147,18 +147,51 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 
 ### Appearance
 
+Appearance terms describe the normalized profile and the platform adapters that render it. See [appearance.md][27].
+
+#### Appearance profile
+
+The immutable, fully resolved input consumed by a renderer. It includes the active light or dark appearance, semantic tokens, typography, geometry, motion, renderer-specific palettes, assets, package identity, enabled snippet order, and safety state. Renderers do not read storage or parse package files.
+
+#### Theme definition
+
+The normalized data model for a theme. Existing version 1 color files, built-ins, imported themes, environment themes, and future package manifests all decode into this model.
+
+#### Theme package
+
+An installable directory or archive with one manifest, optional CSS entrypoints, and bounded local assets. A package can provide manifest values, CSS, or both. It contains no JavaScript.
+
+#### CSS snippet
+
+One independently named stylesheet with an enabled state and deterministic order. Snippets apply after the active theme package and remain local to a client unless the user explicitly exports and imports them.
+
+#### Supported token
+
+A documented semantic CSS custom property or native appearance field with compatibility guarantees. Tokens describe intent, such as a raised surface, terminal cursor, compact row gap, or code font, rather than implementation-specific component names.
+
+#### Stable selector
+
+A documented `data-t3-*` hook on a T3-owned DOM element. Stable selectors exist only when a token cannot express a useful customization. Ordinary classes, DOM hierarchy, generated IDs, and third-party internals are not stable selectors.
+
+#### Appearance adapter
+
+A concrete implementation that consumes an appearance profile at a renderer seam. Adapters include web CSS, browser storage, desktop storage, terminal, diff/syntax, preview annotation, Electron native theme, and React Native.
+
+#### Trust class
+
+The origin and capability class of appearance data: `builtin`, `local-package`, `local-snippet`, `environment-palette`, or `community-reviewed`. The last class is reserved for a future distribution system and is not implied by local installation.
+
+#### Appearance safe mode
+
+A startup and runtime state that ignores all non-builtin package CSS, snippets, custom assets, and boot-cache appearance data while retaining enough unstyled settings access to inspect, disable, export, quarantine, or delete the failing customization. It bypasses injection before the renderer starts.
+
 #### Environment theme
 
-A theme an environment's machine publishes for clients to follow, one file per theme under `themes/` in that environment's state directory; the filename is the theme id. [environmentTheme.ts][25] watches the directory and streams the set over `subscribeServerConfig`; clients render each as a library card, generating a full palette when the file carries seed colors and using the palette directly when it is a standard exported theme file. A desktop that retints its apps when the system theme changes rewrites its file, so T3 Code follows along without a restart. See [environment-theme.md][26].
+A bounded, data-only palette an environment publishes for clients, one file per theme under `themes/` in that environment's state directory. [`environmentTheme.ts`][25] watches the directory and streams the set over `subscribeServerConfig`; clients render each as a library card. A connected environment cannot make a client execute raw CSS. See [environment-theme.md][26] and [appearance.md][27].
 
 #### Default theme
 
-The environment's theme, held in its `settings.json` as `defaultTheme` (with `defaultThemeSetAt`
-as the set-generation) and set with `t3 theme set <id>`. Web and desktop clients apply each set
-once — live when connected, on the next connect otherwise — so setting it switches them, while a
-theme a user picks in Settings afterwards sticks until the next set; mobile keeps its own
-appearance settings. Naming a published [environment theme](#environment-theme) is how a desktop
-ships T3 Code already matching it.
+The environment's theme, held in its `settings.json` as `defaultTheme` with `defaultThemeSetAt` as the set-generation and set with `t3 theme set <id>`. Web and desktop clients apply each set once, live when connected or on the next connect otherwise. A theme picked in Settings sticks until the next set; mobile keeps its own appearance settings. See [environment-theme.md][26] and [appearance.md][27].
 
 ## Practical Shortcuts
 
@@ -201,3 +234,4 @@ ships T3 Code already matching it.
 [24]: ./overview.md
 [25]: ../../apps/server/src/environmentTheme.ts
 [26]: ../user/environment-theme.md
+[27]: ./appearance.md

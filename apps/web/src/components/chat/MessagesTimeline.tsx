@@ -604,7 +604,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+      <div
+        className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip"
+        data-timeline-root="true"
+        data-t3-surface="timeline"
+      >
         <TimelineRowContent row={item} />
       </div>
     ),
@@ -616,7 +620,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return null;
     }
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full items-center justify-center" data-t3-surface="timeline-status">
         <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
       </div>
     );
@@ -996,12 +1000,13 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   row.kind === "work" ||
                   row.kind === "work-live" ||
                   row.kind === "work-toggle"
-                ? "pb-2"
-                : "pb-4",
-        row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
+                ? "pb-1"
+                : "pb-3",
       )}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
+      data-t3-part="timeline-message"
+      data-streaming={row.kind === "message" && row.message.streaming === true ? "true" : undefined}
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
@@ -1241,7 +1246,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const Icon = row.expanded ? ChevronDownIcon : ChevronRightIcon;
 
   return (
-    <div className="border-b border-border/60 pb-2 pt-1">
+    <div className="border-b border-border/60 pb-2 pt-1" data-t3-part="timeline-checkpoint">
       <button
         type="button"
         aria-expanded={row.expanded}
@@ -1262,7 +1267,11 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
 
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
+      <div
+        className="relative min-w-0 px-1 py-0.5"
+        data-streaming={row.message.streaming === true ? "true" : undefined}
+        data-t3-part="timeline-markdown"
+      >
         <ChatMarkdown
           text={messageText}
           cwd={ctx.markdownCwd}
@@ -1323,7 +1332,7 @@ function ProposedPlanTimelineRow({
   const ctx = use(TimelineRowCtx);
 
   return (
-    <div className="min-w-0 px-1 py-0.5">
+    <div className="min-w-0 px-1 py-0.5" data-t3-part="timeline-approval">
       <ProposedPlanCard
         planMarkdown={row.proposedPlan.planMarkdown}
         environmentId={ctx.activeThreadEnvironmentId}
@@ -1338,7 +1347,7 @@ function ProposedPlanTimelineRow({
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isPreparingWorktree } = use(TimelineRowActivityCtx);
   return (
-    <div className="border-b border-border/60 pb-2 pt-1">
+    <div className="border-b border-border/60 pb-2 pt-1" data-t3-part="timeline-status">
       <div className="flex h-6 min-w-0 items-baseline px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
         <span
           key={isPreparingWorktree ? "setup" : "working"}
@@ -1366,7 +1375,7 @@ function ThinkingTimelineRow() {
   const { isPreparingWorktree } = use(TimelineRowActivityCtx);
   // Reserve the activity row during setup so the handoff keeps the same height.
   return (
-    <div className="min-h-7">
+    <div className="min-h-7" data-t3-part="timeline-status">
       {isPreparingWorktree ? null : <LiveActivityRow label="Thinking" />}
     </div>
   );
@@ -1427,6 +1436,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
     <GroupContainer
       className={cn("-mx-1 px-1", isExpandedToolGroupEntry ? "py-0" : "space-y-0.5 py-0.5")}
       aria-label={isExpandedToolGroupEntry ? undefined : "Activity"}
+      data-t3-part="timeline-tool-call"
     >
       <div className="space-y-px">
         {nonEmptyEntries.map((workEntry) => (
@@ -1531,6 +1541,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     <button
       type="button"
       className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      data-t3-part="timeline-tool-call"
       aria-label={failed ? `${label}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
@@ -1589,6 +1600,7 @@ function WorkGroupToggleTimelineRow({
     <button
       type="button"
       className="group/tool-group flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      data-t3-part="timeline-tool-call"
       aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}

@@ -7215,7 +7215,10 @@ function ChatViewContent(props: ChatViewProps) {
   });
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div
+      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      data-t3-surface="canvas"
+    >
       {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -7223,6 +7226,7 @@ function ChatViewContent(props: ChatViewProps) {
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-t3-surface="split-pane"
       >
         {/* Top bar */}
         <WorkspacePageHeader
@@ -7276,6 +7280,7 @@ function ChatViewContent(props: ChatViewProps) {
           <div
             className="relative flex min-h-0 min-w-0 flex-1 flex-col"
             data-chat-workspace-drop-target="true"
+            data-t3-surface="timeline"
             onDragEnter={workspaceFileDropHandlers.onDragEnter}
             onDragOver={workspaceFileDropHandlers.onDragOver}
             onDragLeave={workspaceFileDropHandlers.onDragLeave}
@@ -7285,6 +7290,8 @@ function ChatViewContent(props: ChatViewProps) {
               <div
                 className="pointer-events-none absolute inset-2 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/60 bg-primary/[0.035]"
                 data-chat-workspace-drop-overlay="true"
+                data-t3-surface="overlay"
+                data-t3-part="drag-region"
               >
                 <div
                   role="status"
@@ -7303,71 +7310,69 @@ function ChatViewContent(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col">
-              {/* Messages — LegendList handles virtualization and scrolling internally */}
-              <MessagesTimeline
-                agentPanelModel={agentPanelModel}
-                onOpenAgents={addAgentsSurface}
-                onOpenNativeTerminal={openNativeTerminalFallback}
-                key={activeThread.id}
-                isWorking={isWorking}
-                isPreparingWorktree={isPreparingWorktree}
-                activeTurnStartedAt={activeWorkStartedAt}
-                listRef={legendListRef}
-                timelineEntries={timelineEntries}
-                latestTurn={activeLatestTurn}
-                runningTurnId={activeRunningTurnId}
-                turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-                activeThreadEnvironmentId={activeThread.environmentId}
-                routeThreadKey={routeThreadKey}
-                onOpenTurnDiff={onOpenTurnDiff}
-                revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-                onRevertUserMessage={onRevertUserMessage}
-                onUseArtifactTemplate={useArtifactTemplate}
-                isRevertingCheckpoint={isRevertingCheckpoint}
-                onImageExpand={onExpandTimelineImage}
-                onFileOpen={openFileAttachment}
-                openingVideoAttachmentId={openingVideoAttachmentId}
-                markdownCwd={gitCwd ?? undefined}
-                resolvedTheme={resolvedTheme}
-                timestampFormat={timestampFormat}
-                workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
-                anchorMessageId={timelineAnchorMessageId}
-                onAnchorReady={onTimelineAnchorReady}
-                contentInsetEndAdjustment={composerOverlayHeight}
-                liveFollowEnabled={timelineLiveFollowEnabled}
-                onIsAtEndChange={onIsAtEndChange}
-                onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
-                hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
-                topFadeEnabled={!hasTimelineTopBanner}
-                loadEarlier={loadEarlierTurns}
-              />
+            <MessagesTimeline
+              agentPanelModel={agentPanelModel}
+              onOpenAgents={addAgentsSurface}
+              onOpenNativeTerminal={openNativeTerminalFallback}
+              key={activeThread.id}
+              isWorking={isWorking}
+              isPreparingWorktree={isPreparingWorktree}
+              activeTurnStartedAt={activeWorkStartedAt}
+              listRef={legendListRef}
+              timelineEntries={timelineEntries}
+              latestTurn={activeLatestTurn}
+              runningTurnId={activeRunningTurnId}
+              turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+              activeThreadEnvironmentId={activeThread.environmentId}
+              routeThreadKey={routeThreadKey}
+              onOpenTurnDiff={onOpenTurnDiff}
+              revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+              onRevertUserMessage={onRevertUserMessage}
+              onUseArtifactTemplate={useArtifactTemplate}
+              isRevertingCheckpoint={isRevertingCheckpoint}
+              onImageExpand={onExpandTimelineImage}
+              onFileOpen={openFileAttachment}
+              openingVideoAttachmentId={openingVideoAttachmentId}
+              markdownCwd={gitCwd ?? undefined}
+              resolvedTheme={resolvedTheme}
+              timestampFormat={timestampFormat}
+              workspaceRoot={activeWorkspaceRoot}
+              skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+              anchorMessageId={timelineAnchorMessageId}
+              onAnchorReady={onTimelineAnchorReady}
+              contentInsetEndAdjustment={composerOverlayHeight}
+              liveFollowEnabled={timelineLiveFollowEnabled}
+              onIsAtEndChange={onIsAtEndChange}
+              onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
+              hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+              topFadeEnabled={!hasTimelineTopBanner}
+              loadEarlier={loadEarlierTurns}
+            />
 
-              {/* scroll to end pill — shown when user has scrolled away from the live edge */}
-              {showScrollToBottom && (
-                <div
-                  className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
-                  style={{ bottom: scrollToEndClearance + 4 }}
+            {/* scroll to end pill — shown when user has scrolled away from the live edge */}
+            {showScrollToBottom && (
+              <div
+                className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
+                style={{ bottom: scrollToEndClearance + 4 }}
+              >
+                <Button
+                  aria-label="Scroll to end"
+                  onClick={() => scrollToEnd(true)}
+                  className="pointer-events-auto gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
+                  size="xs"
+                  variant="glass"
                 >
-                  <Button
-                    aria-label="Scroll to end"
-                    onClick={() => scrollToEnd(true)}
-                    className="pointer-events-auto gap-1.5 rounded-full px-3 text-muted-foreground hover:text-foreground"
-                    size="xs"
-                    variant="glass"
-                  >
-                    <ChevronDownIcon className="size-3.5" />
-                    Scroll to end
-                  </Button>
-                </div>
-              )}
-            </div>
+                  <ChevronDownIcon className="size-3.5" />
+                  Scroll to end
+                </Button>
+              </div>
+            )}
 
             {/* Input bar — centered hero while a draft has no messages, docked at the bottom otherwise */}
             <div
               ref={setComposerOverlayElement}
               data-chat-composer-overlay="true"
+              data-t3-surface="composer"
               className={
                 isDraftHeroState
                   ? "pointer-events-none absolute inset-0 z-20 flex items-center"

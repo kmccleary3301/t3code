@@ -44,6 +44,7 @@ describe("semver helpers", () => {
 
   it("compares prerelease versions before stable versions", () => {
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
+    expect(compareSemverVersions("2.1.111-alpha-1", "2.1.111-alpha-2")).toBeLessThan(0);
   });
 
   it("falls back to lexical comparison for malformed numeric segments", () => {

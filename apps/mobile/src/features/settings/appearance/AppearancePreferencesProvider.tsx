@@ -20,6 +20,15 @@ import {
   resolveAppearancePreferences,
   type ResolvedAppearance,
 } from "../../../lib/appearancePreferences";
+import {
+  normalizeThemeDefinition,
+  type NormalizedAppearanceProfile,
+} from "@t3tools/shared/appearance";
+import { T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
+import {
+  compileMobileAppearance,
+  type MobileAppearanceOutput,
+} from "../../../lib/mobileAppearanceAdapter";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import {
@@ -42,6 +51,9 @@ import { cacheTerminalFontSize } from "../../terminal/terminalUiState";
 interface AppearancePreferencesContextValue {
   /** Effective values with base-size derivation applied. Use this for rendering. */
   readonly appearance: ResolvedAppearance;
+  readonly appearanceOutput: MobileAppearanceOutput;
+  readonly nativeAppearance: MobileAppearanceOutput["native"];
+  readonly profile: NormalizedAppearanceProfile;
   readonly themeId: MobileThemeId;
   readonly themeIds: MobileThemeIds;
   readonly themeMode: MobileThemeMode;
@@ -61,9 +73,14 @@ interface AppearancePreferencesContextValue {
   readonly setCodeWordBreak: (value: boolean) => void;
 }
 
+const BUILT_IN_APPEARANCE_PROFILE = normalizeThemeDefinition(T3_CHAT_THEME);
+
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
 
-export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
+export function AppearancePreferencesProvider(props: {
+  readonly children: ReactNode;
+  readonly skipPortableProfile?: boolean;
+}) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";
@@ -74,8 +91,17 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     () => resolveAppearancePreferences(storedPreferences),
     [storedPreferences],
   );
+  const storedProfile = storedPreferences?.appearanceProfile;
+  const profile =
+    props.skipPortableProfile || storedProfile === undefined
+      ? BUILT_IN_APPEARANCE_PROFILE
+      : storedProfile;
   const themeMode = normalizeMobileThemeMode(storedPreferences?.themeMode);
   const themeAppearance = themeMode === "system" ? systemColorScheme : themeMode;
+  const appearanceOutput = useMemo(
+    () => compileMobileAppearance(profile, themeAppearance),
+    [profile, themeAppearance],
+  );
   const resolvedThemeIds = resolveMobileThemeIds(storedPreferences ?? {});
   const themeIds = useMemo<MobileThemeIds>(
     () => ({ light: resolvedThemeIds.light, dark: resolvedThemeIds.dark }),
@@ -143,8 +169,22 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   useLayoutEffect(() => {
     selectedThemeIdsRef.current = themeIds;
     syncThemeRuntime(runtimeState);
-    cacheTerminalFontSize(appearance.terminalFontSize);
-  }, [appearance.terminalFontSize, runtimeState, syncThemeRuntime, themeIds]);
+    Uniwind.updateCSSVariables(activeThemeName, appearanceOutput.uniwindVariables);
+    cacheTerminalFontSize(
+      appearance.isTerminalFontSizeCustom
+        ? appearance.terminalFontSize
+        : appearanceOutput.rendererPalettes.terminal.fontSize,
+    );
+  }, [
+    activeThemeName,
+    appearance.terminalFontSize,
+    appearance.isTerminalFontSizeCustom,
+    appearanceOutput.uniwindVariables,
+    appearanceOutput.rendererPalettes.terminal.fontSize,
+    runtimeState,
+    syncThemeRuntime,
+    themeIds,
+  ]);
 
   const setThemeIdForAppearance = useCallback(
     (appearance: MobileThemeAppearance, value: MobileThemeId) => {
@@ -231,6 +271,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
       appearance,
+      appearanceOutput,
+      nativeAppearance: appearanceOutput.native,
+      profile,
       themeId,
       themeIds,
       themeMode,
@@ -246,6 +289,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     }),
     [
       appearance,
+      appearanceOutput,
+      profile,
       themeId,
       themeIds,
       themeMode,

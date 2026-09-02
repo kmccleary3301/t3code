@@ -106,6 +106,7 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
+import { AppearanceCustomizationManager } from "./AppearanceCustomizationManager";
 import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import {
@@ -1031,6 +1032,7 @@ export function AppearanceSettingsPanel() {
             onImportOpenChange={setIsImportThemeOpen}
           />
         </div>
+        <AppearanceCustomizationManager />
 
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
@@ -1074,6 +1076,7 @@ export function AppearanceSettingsPanel() {
                 step={5}
                 style={appearanceContrastSliderStyle}
                 type="range"
+                data-t3-part="slider"
                 value={settings.appearanceContrast}
               />
             </div>
@@ -1120,6 +1123,7 @@ export function AppearanceSettingsPanel() {
                 step={5}
                 style={glassOpacitySliderStyle}
                 type="range"
+                data-t3-part="slider"
                 value={settings.glassOpacity}
               />
             </div>

@@ -655,6 +655,7 @@ export function PreviewView({
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
+      data-t3-surface="preview"
     >
       <PreviewChromeRow
         url={url}
@@ -699,7 +700,7 @@ export function PreviewView({
         }
       />
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden" data-t3-surface="preview-viewport">
         {runtimeTabId && snapshot && !showEmptyState ? (
           <BrowserSurfaceSlot
             key={runtimeTabId}
@@ -734,7 +735,7 @@ export function PreviewView({
           </div>
         ) : null}
         {navStatus._tag === "LoadFailed" ? (
-          <div className="absolute inset-0 z-10 bg-background">
+          <div className="absolute inset-0 z-10 bg-background" data-t3-surface="preview-error">
             <PreviewUnreachable
               url={navStatus.url}
               code={navStatus.code}

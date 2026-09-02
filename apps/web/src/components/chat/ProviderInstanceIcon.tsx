@@ -41,6 +41,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       )}
       style={accentStyle}
       data-provider-accent-color={props.accentColor}
+      data-t3-part="provider-badge"
     >
       {Icon ? (
         <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />

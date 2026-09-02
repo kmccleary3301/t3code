@@ -68,6 +68,7 @@ export function PendingReviewCommentCard({
   return (
     <div
       className={cn(CARD_CLASS, "border-dashed")}
+      data-t3-part="diff-comment"
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -215,6 +216,7 @@ export function ReviewThreadCard({
   return (
     <div
       className={CARD_CLASS}
+      data-t3-part="diff-comment"
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >

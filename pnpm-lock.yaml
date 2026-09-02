@@ -161,6 +161,9 @@ importers:
       electron-updater:
         specifier: ^6.6.2
         version: 6.8.3
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
       playwright-core:
         specifier: 1.60.0
         version: 1.60.0
@@ -795,6 +798,9 @@ importers:
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared
+      css-tree:
+        specifier: 3.2.1
+        version: 3.2.1
       effect:
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)
@@ -817,6 +823,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(patch_hash=a16b1e870d8c29e4a98b17cc4c638a4ff471753d8ca3487f78a22b759caf951b)(effect@4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6))
+      '@types/css-tree':
+        specifier: 2.3.10
+        version: 2.3.10
       micromark-util-types:
         specifier: ^2.0.2
         version: 2.0.2
@@ -985,6 +994,9 @@ importers:
       effect:
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)
+      playwright-core:
+        specifier: 1.60.0
+        version: 1.60.0
       pngjs:
         specifier: 7.0.0
         version: 7.0.0
@@ -4775,6 +4787,9 @@ packages:
 
   '@types/connect@3.4.38':
     resolution: {integrity: sha512-K6uROf1LD88uDQqJCktA4yzL1YYAK6NgfsI0v/mTgyPKWsX1CnJ0XPSDhViejru1GcRkLWb8RlzFYJRqGUbaug==}
+
+  '@types/css-tree@2.3.10':
+    resolution: {integrity: sha512-WcaBazJ84RxABvRttQjjFWgTcHvZR9jGr0Y3hccPkHjFyk/a3N8EuxjKr+QfrwjoM5b1yI1Uj1i7EzOAAwBwag==}
 
   '@types/culori@4.0.1':
     resolution: {integrity: sha512-43M51r/22CjhbOXyGT361GZ9vncSVQ39u62x5eJdBQFviI8zWp2X5jzqg7k4M6PVgDQAClpy2bUe2dtwEgEDVQ==}
@@ -14583,6 +14598,8 @@ snapshots:
   '@types/connect@3.4.38':
     dependencies:
       '@types/node': 24.12.4
+
+  '@types/css-tree@2.3.10': {}
 
   '@types/culori@4.0.1': {}
 

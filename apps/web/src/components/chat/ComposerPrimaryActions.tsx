@@ -96,6 +96,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             ? "size-9 sm:size-8"
             : "size-8 sm:h-8 sm:w-8",
       )}
+      data-t3-part="stop-button"
       {...pointerFocusProps}
       onClick={onInterrupt}
       aria-label="Stop generation"
@@ -227,6 +228,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           ? "bg-transparent text-white enabled:shadow-black/24 enabled:hover:brightness-110"
           : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
       )}
+      data-t3-part="send-button"
       {...pointerFocusProps}
       disabled={
         isSendBusy ||

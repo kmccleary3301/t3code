@@ -472,6 +472,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     <ComposerSurface.ContextStrip
       ref={setStripElement}
       data-compact={labelsOverflow ? "" : undefined}
+      data-t3-surface="toolbar"
     >
       {isMobile && showGitControls ? (
         <MobileRunContextSelector

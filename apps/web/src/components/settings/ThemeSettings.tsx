@@ -887,7 +887,7 @@ export function ThemeLibrary({
   );
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-t3-surface="settings-panel">
       <p className="px-3 text-[13px] leading-[1.45] text-muted-foreground/80 sm:px-4">
         Choose how T3 Code looks. Use a built-in theme or make your own.
       </p>

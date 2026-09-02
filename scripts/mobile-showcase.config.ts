@@ -80,13 +80,22 @@ export function resolveShowcaseAndroidAbi(
   value: string | undefined,
 ): NonNullable<ShowcaseAndroidDevice["abi"]> {
   if (!value) return "arm64-v8a";
-  if (ANDROID_ABIS.some((abi) => abi === value)) {
-    return value as NonNullable<ShowcaseAndroidDevice["abi"]>;
-  }
+  const resolved = ANDROID_ABIS.find((abi) => abi === value);
+  if (resolved) return resolved;
   throw new Error(
     `Unsupported T3_SHOWCASE_ANDROID_ABI '${value}'. Use ${ANDROID_ABIS.join(", ")}.`,
   );
 }
+
+export function resolveShowcaseAndroidAvd(value: string | undefined): string {
+  if (value === undefined || value.length === 0) return "Pixel_10_Pro";
+  if (value.trim() !== value || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error("T3_SHOWCASE_ANDROID_AVD must be a non-empty device name without controls.");
+  }
+  return value;
+}
+
+const SHOWCASE_ANDROID_AVD = resolveShowcaseAndroidAvd(process.env.T3_SHOWCASE_ANDROID_AVD);
 
 /**
  * The defaults cover every App Store Connect and Google Play upload slot used
@@ -156,7 +165,7 @@ const config: ShowcaseConfig = {
     {
       id: "pixel",
       platform: "android",
-      avd: "Pixel_10_Pro",
+      avd: SHOWCASE_ANDROID_AVD,
       // Apple Silicon uses ARM64 locally; CI overrides this with x86_64 so its
       // Blacksmith Linux runner can use KVM acceleration.
       abi: resolveShowcaseAndroidAbi(process.env.T3_SHOWCASE_ANDROID_ABI),
@@ -181,7 +190,7 @@ const config: ShowcaseConfig = {
     {
       id: "android-tablet-7",
       platform: "android",
-      avd: "Pixel_10_Pro",
+      avd: SHOWCASE_ANDROID_AVD,
       abi: resolveShowcaseAndroidAbi(process.env.T3_SHOWCASE_ANDROID_ABI),
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
@@ -204,7 +213,7 @@ const config: ShowcaseConfig = {
     {
       id: "android-tablet-10",
       platform: "android",
-      avd: "Pixel_10_Pro",
+      avd: SHOWCASE_ANDROID_AVD,
       abi: resolveShowcaseAndroidAbi(process.env.T3_SHOWCASE_ANDROID_ABI),
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,

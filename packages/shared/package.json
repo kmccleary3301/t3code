@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./appearance": {
+      "types": "./src/appearance/index.ts",
+      "import": "./src/appearance/index.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"

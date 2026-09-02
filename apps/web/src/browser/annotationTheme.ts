@@ -1,7 +1,16 @@
 import type { DesktopPreviewAnnotationTheme } from "@t3tools/contracts";
+import { WEB_RENDERER_OWNERSHIP } from "../lib/webRendererOwnership";
 
-const readVariable = (styles: CSSStyleDeclaration, name: string, fallback: string): string =>
-  styles.getPropertyValue(name).trim() || fallback;
+/**
+ * Annotation colors are sent through the desktop preview bridge as data. They
+ * are not CSS and are never inserted into the hosted/remote document.
+ */
+export const PREVIEW_ANNOTATION_THEME_OWNER = WEB_RENDERER_OWNERSHIP.previewIsolatedDocument;
+export const PREVIEW_ANNOTATION_THEME_CHANNEL = "desktop-preview-annotation";
+
+function readVariable(styles: CSSStyleDeclaration, name: string, fallback: string): string {
+  return styles.getPropertyValue(name).trim() || fallback;
+}
 
 export function readPreviewAnnotationTheme(): DesktopPreviewAnnotationTheme {
   const root = document.documentElement;

@@ -53,10 +53,20 @@ export function resolveTerminalFontSizePreference(input: {
 function quoteFontFamilyName(name: string): string {
   const bare = name.trim();
   if (bare.length === 0) return "";
-  // Already quoted, or a single ident that needs no quoting.
-  if (/^(['"]).*\1$/.test(bare)) return bare;
-  if (/^[a-zA-Z][a-zA-Z0-9-]*$/.test(bare)) return bare;
-  return `"${bare.replaceAll('"', "")}"`;
+  if (/^[a-zA-Z][a-zA-Z0-9-]*$/u.test(bare)) return bare;
+  const unquoted =
+    (bare.startsWith('"') && bare.endsWith('"')) || (bare.startsWith("'") && bare.endsWith("'"))
+      ? bare.slice(1, -1)
+      : bare;
+  const escaped = [...unquoted]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x1f || codePoint === 0x7f ? " " : character;
+    })
+    .join("")
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"');
+  return escaped.trim().length === 0 ? "" : `"${escaped}"`;
 }
 
 /**
@@ -385,5 +395,163 @@ export async function queryInstalledFontFamilies(): Promise<InstalledFontFamilie
     return installedFamiliesCache;
   } catch {
     return { families: [], status: "denied" };
+  }
+}
+
+export interface AppearanceFontLoadRequest {
+  readonly family: string;
+  readonly style?: "normal" | "italic" | "oblique";
+  readonly weight?: number;
+}
+
+export interface AppearanceFontSet {
+  readonly load: (font: string) => Promise<ReadonlyArray<FontFace>>;
+}
+
+export interface AppearanceFontLoadDiagnostic {
+  readonly family: string;
+  readonly code: "font-load-failed" | "font-load-timeout";
+  readonly message: string;
+  readonly recovery: string;
+}
+
+export interface AppearanceFontLoadResult {
+  readonly loaded: readonly string[];
+  readonly diagnostics: readonly AppearanceFontLoadDiagnostic[];
+}
+
+type AppearanceFontDiagnosticsListener = () => void;
+
+let appearanceFontDiagnostics: readonly AppearanceFontLoadDiagnostic[] = [];
+const appearanceFontDiagnosticsListeners = new Set<AppearanceFontDiagnosticsListener>();
+
+/**
+ * Font probing is intentionally outside the persisted appearance state: a
+ * failed warm-up never blocks fallback content or changes the selected theme.
+ * Keep the latest result observable so Settings can offer an actionable retry
+ * without making the font request part of the render path.
+ */
+export function getAppearanceFontLoadDiagnostics(): readonly AppearanceFontLoadDiagnostic[] {
+  return appearanceFontDiagnostics;
+}
+
+export function subscribeAppearanceFontLoadDiagnostics(
+  listener: AppearanceFontDiagnosticsListener,
+): () => void {
+  appearanceFontDiagnosticsListeners.add(listener);
+  return () => appearanceFontDiagnosticsListeners.delete(listener);
+}
+
+export function setAppearanceFontLoadDiagnostics(
+  diagnostics: ReadonlyArray<AppearanceFontLoadDiagnostic>,
+): void {
+  appearanceFontDiagnostics = Object.freeze(diagnostics.map((diagnostic) => ({ ...diagnostic })));
+  for (const listener of appearanceFontDiagnosticsListeners) listener();
+}
+
+export interface AppearanceFontLoadOptions {
+  readonly fontSet?: AppearanceFontSet;
+  readonly timeoutMs?: number;
+}
+
+const DEFAULT_FONT_LOAD_TIMEOUT_MS = 3_000;
+const MAX_FONT_LOAD_CACHE_ENTRIES = 64;
+
+function fontLoadDescriptor(request: AppearanceFontLoadRequest): string {
+  const style =
+    request.style === "italic" || request.style === "oblique" ? `${request.style} ` : "";
+  const weight = request.weight === undefined ? "400" : String(request.weight);
+  return `${style}${weight} 16px ${JSON.stringify(request.family)}`;
+}
+
+/**
+ * Warm package faces without making content wait for them. `font-display: swap`
+ * remains the layout contract; this helper only records a bounded diagnostic.
+ */
+export async function loadAppearanceFonts(
+  requests: ReadonlyArray<AppearanceFontLoadRequest>,
+  options: AppearanceFontLoadOptions = {},
+): Promise<AppearanceFontLoadResult> {
+  const fontSet =
+    options.fontSet ??
+    (typeof document === "undefined" ? undefined : (document.fonts as AppearanceFontSet));
+  if (fontSet === undefined) return { loaded: [], diagnostics: [] };
+  const timeoutMs =
+    options.timeoutMs === undefined || !Number.isFinite(options.timeoutMs)
+      ? DEFAULT_FONT_LOAD_TIMEOUT_MS
+      : Math.max(0, Math.min(DEFAULT_FONT_LOAD_TIMEOUT_MS, options.timeoutMs));
+  const loaded: string[] = [];
+  const diagnostics: AppearanceFontLoadDiagnostic[] = [];
+  const seen = new Set<string>();
+  await Promise.all(
+    requests.map(async (request) => {
+      const descriptor = fontLoadDescriptor(request);
+      if (seen.has(descriptor)) return;
+      seen.add(descriptor);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+      });
+      try {
+        await Promise.race([fontSet.load(descriptor), timeout]);
+        loaded.push(request.family);
+      } catch (error) {
+        const timedOut = error instanceof Error && error.message === "timeout";
+        diagnostics.push({
+          family: request.family,
+          code: timedOut ? "font-load-timeout" : "font-load-failed",
+          message: timedOut
+            ? `Appearance font '${request.family}' exceeded the load timeout.`
+            : `Appearance font '${request.family}' failed to load; using its fallback stack.`,
+          recovery: timedOut
+            ? "Check the font asset or network, then retry; fallback text remains available."
+            : "Check the font asset declaration, then retry; fallback text remains available.",
+        });
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    }),
+  );
+  loaded.sort();
+  diagnostics.sort((left, right) => left.family.localeCompare(right.family));
+  return { loaded, diagnostics };
+}
+
+/** Bounded cache for in-flight font probes; failed probes are removed for retry. */
+export class AppearanceFontLoadCache {
+  readonly #entries = new Map<string, Promise<AppearanceFontLoadResult>>();
+
+  load(
+    requests: ReadonlyArray<AppearanceFontLoadRequest>,
+    options: AppearanceFontLoadOptions = {},
+  ): Promise<AppearanceFontLoadResult> {
+    const key = requests
+      .map(
+        (request) => `${request.family}\u0000${request.style ?? ""}\u0000${request.weight ?? ""}`,
+      )
+      .sort()
+      .join("\u0001");
+    const cached = this.#entries.get(key);
+    if (cached !== undefined) return cached;
+    while (this.#entries.size >= MAX_FONT_LOAD_CACHE_ENTRIES) {
+      const oldest = this.#entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.#entries.delete(oldest);
+    }
+    const pending = loadAppearanceFonts(requests, options)
+      .then((result) => {
+        if (result.diagnostics.length > 0) this.#entries.delete(key);
+        return result;
+      })
+      .catch((error: unknown) => {
+        this.#entries.delete(key);
+        throw error;
+      });
+    this.#entries.set(key, pending);
+    return pending;
+  }
+
+  clear(): void {
+    this.#entries.clear();
   }
 }
