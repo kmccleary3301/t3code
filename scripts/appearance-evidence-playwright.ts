@@ -1,7 +1,13 @@
 /// <reference lib="dom" />
+interface AppearancePerformanceEntry {
+  readonly kind: "compile" | "stylesheet-replacement";
+  readonly startTime: number;
+  readonly duration: number;
+}
 interface EvidenceInstrumentationState {
   readonly reactCommits: ReadonlyArray<number>;
   readonly longTasks: ReadonlyArray<{ readonly duration: number; readonly startTime: number }>;
+  readonly appearanceOperations: ReadonlyArray<AppearancePerformanceEntry>;
   readonly capabilities: {
     readonly reactDevtools: {
       readonly status: "available" | "unavailable";
@@ -37,6 +43,14 @@ export const InstrumentationSnapshotSchema = Schema.Struct({
     Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
   ),
   longTasks: Schema.Array(LongTaskSchema),
+  appearanceOperations: Schema.Array(
+    Schema.Struct({
+      kind: Schema.Literals(["compile", "stylesheet-replacement"]),
+      startTime: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
+      duration: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
+    }),
+  ),
+  sampledAt: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
   capabilities: Schema.Struct({
     reactDevtools: CapabilitySchema,
     longTasks: CapabilitySchema,
@@ -174,12 +188,23 @@ export const APPEARANCE_INSTRUMENTATION_INIT_SCRIPT = `(() => {
   const state = {
     reactCommits: [],
     longTasks: [],
+    appearanceOperations: [],
     capabilities: {
       reactDevtools: { status: "available" },
       longTasks: { status: "available" },
     },
   };
   window[key] = state;
+  Object.defineProperty(window, "__T3_APPEARANCE_PERFORMANCE__", {
+    configurable: true,
+    enumerable: false,
+    value: {
+      record: (entry) => {
+        state.appearanceOperations.push(entry);
+        if (state.appearanceOperations.length > 512) state.appearanceOperations.splice(0, 256);
+      },
+    },
+  });
   const recordCommit = () => {
     state.reactCommits.push(performance.now());
   };
@@ -237,6 +262,8 @@ export async function readInstrumentationSnapshot(page: Page): Promise<Instrumen
     return {
       reactCommits: [...state.reactCommits],
       longTasks: state.longTasks.map((entry) => ({ ...entry })),
+      appearanceOperations: state.appearanceOperations.map((entry) => ({ ...entry })),
+      sampledAt: performance.now(),
       capabilities: {
         reactDevtools: { ...state.capabilities.reactDevtools },
         longTasks: { ...state.capabilities.longTasks },
@@ -454,14 +481,24 @@ export function metricDelta(
 ): {
   readonly reactCommits: number;
   readonly maxLongTaskDurationMs: number;
+  readonly compileDurationMs: number;
+  readonly stylesheetReplacementDurationMs: number;
 } {
-  const start = before.longTasks.length;
-  const newTasks = after.longTasks.slice(start);
+  const inWindow = (startTime: number) =>
+    startTime >= before.sampledAt && startTime <= after.sampledAt;
+  const newTasks = after.longTasks.filter((entry) => inWindow(entry.startTime));
+  const operations = after.appearanceOperations.filter((entry) => inWindow(entry.startTime));
   return {
-    reactCommits: Math.max(0, after.reactCommits.length - before.reactCommits.length),
+    reactCommits: after.reactCommits.filter(inWindow).length,
     maxLongTaskDurationMs: newTasks.reduce(
       (maximum, entry) => Math.max(maximum, entry.duration),
       0,
     ),
+    compileDurationMs: operations
+      .filter((entry) => entry.kind === "compile")
+      .reduce((total, entry) => total + entry.duration, 0),
+    stylesheetReplacementDurationMs: operations
+      .filter((entry) => entry.kind === "stylesheet-replacement")
+      .reduce((total, entry) => total + entry.duration, 0),
   };
 }

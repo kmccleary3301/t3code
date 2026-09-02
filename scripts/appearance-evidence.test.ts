@@ -37,6 +37,7 @@ import {
   type EvidenceLeaf,
 } from "./appearance-evidence.ts";
 import {
+  metricDelta,
   stylesheetMetricsFromProbe,
   type StylesheetProbe,
 } from "./appearance-evidence-playwright.ts";
@@ -335,10 +336,34 @@ it("validates identity, metric units, duplicate samples, and aggregate statistic
       unit: "ms",
       sampleIndex: 0,
     },
+    {
+      kind: "compiler",
+      client: "web",
+      appearance: "light",
+      value: 1,
+      unit: "ms",
+      sampleIndex: 0,
+    },
+    {
+      kind: "stylesheet-replacement",
+      client: "web",
+      appearance: "light",
+      value: 1,
+      unit: "ms",
+      sampleIndex: 0,
+    },
   ]);
   assert.deepStrictEqual(
     orderedGroups.map((summary) => summary.kind),
-    ["cold-startup", "long-task", "memory", "react-commits", "stylesheet-count"],
+    [
+      "cold-startup",
+      "compiler",
+      "long-task",
+      "memory",
+      "react-commits",
+      "stylesheet-count",
+      "stylesheet-replacement",
+    ],
   );
   assert.throws(
     () =>
@@ -424,6 +449,41 @@ it("validates identity, metric units, duplicate samples, and aggregate statistic
       }),
     /Multiple managed fallback appearance styles cannot pass/u,
   );
+});
+
+it("attributes renderer metrics by operation timestamps instead of observer delivery order", () => {
+  const capabilities = {
+    reactDevtools: { status: "available" as const },
+    longTasks: { status: "available" as const },
+  };
+  const before = {
+    sampledAt: 100,
+    reactCommits: [90],
+    longTasks: [{ startTime: 90, duration: 99 }],
+    appearanceOperations: [{ kind: "compile" as const, startTime: 90, duration: 99 }],
+    capabilities,
+  };
+  const after = {
+    sampledAt: 200,
+    reactCommits: [90, 130, 170],
+    longTasks: [
+      { startTime: 90, duration: 99 },
+      { startTime: 150, duration: 40 },
+    ],
+    appearanceOperations: [
+      { kind: "compile" as const, startTime: 90, duration: 99 },
+      { kind: "compile" as const, startTime: 120, duration: 3 },
+      { kind: "stylesheet-replacement" as const, startTime: 140, duration: 2 },
+    ],
+    capabilities,
+  };
+
+  assert.deepStrictEqual(metricDelta(before, after), {
+    reactCommits: 2,
+    maxLongTaskDurationMs: 40,
+    compileDurationMs: 3,
+    stylesheetReplacementDurationMs: 2,
+  });
 });
 
 it("allows only explicit toolchain environment keys and redacts evidence output", () => {

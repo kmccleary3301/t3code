@@ -266,6 +266,8 @@ async function readDesktopInstrumentation(
       return {
         reactCommits: [...state.reactCommits],
         longTasks: state.longTasks.map((entry) => ({ ...entry })),
+        appearanceOperations: state.appearanceOperations.map((entry) => ({ ...entry })),
+        sampledAt: performance.now(),
         capabilities: {
           reactDevtools: { ...state.capabilities.reactDevtools },
           longTasks: { ...state.capabilities.longTasks },
@@ -1060,6 +1062,22 @@ export async function runDesktopAppearanceDriver(
               client: "desktop",
               appearance: nextAppearance,
               value: delta.maxLongTaskDurationMs,
+              unit: "ms",
+              sampleIndex: index + 10_000,
+            },
+            {
+              kind: "compiler",
+              client: "desktop",
+              appearance: nextAppearance,
+              value: delta.compileDurationMs,
+              unit: "ms",
+              sampleIndex: index + 10_000,
+            },
+            {
+              kind: "stylesheet-replacement",
+              client: "desktop",
+              appearance: nextAppearance,
+              value: delta.stylesheetReplacementDurationMs,
               unit: "ms",
               sampleIndex: index + 10_000,
             },

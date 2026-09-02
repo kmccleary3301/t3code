@@ -69,6 +69,33 @@ const APPEARANCE_LAYER_ATTRIBUTE = "data-t3-appearance-layer";
 const APPEARANCE_STARTUP_TIMEOUT_MS = 10_000;
 const APPEARANCE_MANAGED_SHEET_PROPERTY = "__t3AppearanceManaged";
 const APPEARANCE_ROOT_LAYER_ATTRIBUTE = "data-t3-appearance-root-layer";
+type AppearancePerformanceKind = "compile" | "stylesheet-replacement";
+interface AppearancePerformanceEntry {
+  readonly kind: AppearancePerformanceKind;
+  readonly startTime: number;
+  readonly duration: number;
+}
+declare global {
+  interface Window {
+    readonly __T3_APPEARANCE_PERFORMANCE__?: {
+      readonly record: (entry: AppearancePerformanceEntry) => void;
+    };
+  }
+}
+function measureAppearanceOperation<T>(kind: AppearancePerformanceKind, operation: () => T): T {
+  const sink = typeof window === "undefined" ? undefined : window.__T3_APPEARANCE_PERFORMANCE__;
+  if (sink === undefined) return operation();
+  const startTime = performance.now();
+  try {
+    return operation();
+  } finally {
+    sink.record({
+      kind,
+      startTime,
+      duration: Math.max(0, performance.now() - startTime),
+    });
+  }
+}
 type WebAppearanceLayerId =
   | "order"
   | "theme"
@@ -647,9 +674,11 @@ const webCompiler: AppearanceCompilerAdapter = {
       platform: runtimeAppearancePlatform(),
     }),
   compile: async (input) =>
-    compileWebAppearance(input, {
-      includeDesktopCss: typeof window !== "undefined" && window.desktopBridge !== undefined,
-    }),
+    measureAppearanceOperation("compile", () =>
+      compileWebAppearance(input, {
+        includeDesktopCss: typeof window !== "undefined" && window.desktopBridge !== undefined,
+      }),
+    ),
 };
 
 let appearanceAdoptedSheet: CSSStyleSheet | null = null;
@@ -782,7 +811,7 @@ function applyFallbackAppearanceSheet(css: string, nonce: string): void {
   appearanceAdoptedRootLayerIds = [];
 }
 
-function applyWebAppearanceLayers(compiled: AppearanceCompiledOutput): void {
+function applyWebAppearanceLayersUnmeasured(compiled: AppearanceCompiledOutput): void {
   const layers = isWebAppearanceCompiledOutput(compiled)
     ? compiled[WEB_APPEARANCE_LAYERS]
     : ([
@@ -814,6 +843,11 @@ function applyWebAppearanceLayers(compiled: AppearanceCompiledOutput): void {
   orderStyle.removeAttribute(APPEARANCE_ROOT_LAYER_ATTRIBUTE);
   if (orderStyle.textContent !== order.css) orderStyle.textContent = order.css;
   removeLegacyAppearanceStyles();
+}
+function applyWebAppearanceLayers(compiled: AppearanceCompiledOutput): void {
+  measureAppearanceOperation("stylesheet-replacement", () =>
+    applyWebAppearanceLayersUnmeasured(compiled),
+  );
 }
 
 async function applyWebAppearance(compiled: AppearanceCompiledOutput): Promise<void> {

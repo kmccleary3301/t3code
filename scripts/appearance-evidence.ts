@@ -41,6 +41,8 @@ const MetricAppearance = Schema.Literals(["light", "dark"]);
 const MetricKind = Schema.Literals([
   "cold-startup",
   "warm-switch",
+  "compiler",
+  "stylesheet-replacement",
   "react-commits",
   "long-task",
   "stylesheet-count",
@@ -221,6 +223,8 @@ export function createRuntimeIdentity(input: Partial<RuntimeIdentity> = {}): Run
 const METRIC_UNITS: Readonly<Record<MetricKind, string>> = {
   "cold-startup": "ms",
   "warm-switch": "ms",
+  compiler: "ms",
+  "stylesheet-replacement": "ms",
   "react-commits": "count",
   "long-task": "ms",
   "stylesheet-count": "count",

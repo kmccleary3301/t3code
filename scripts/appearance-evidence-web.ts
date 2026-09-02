@@ -92,6 +92,11 @@ async function openWebPage(
   readonly context: BrowserContext;
   readonly page: Page;
   readonly messages: ReadonlyArray<string>;
+  readonly networkResponses: ReadonlyArray<{
+    readonly resourceType: string;
+    readonly status: number;
+    readonly url: string;
+  }>;
   readonly coldStartupMs: number;
   readonly dispose: () => Promise<void>;
 }> {
@@ -101,6 +106,7 @@ async function openWebPage(
   let context: BrowserContext | undefined;
   let credential: string | undefined;
   const messages: string[] = [];
+  const networkResponses: Array<{ resourceType: string; status: number; url: string }> = [];
   let observationStage = "actual-surface-environment";
   const responseFailures: string[] = [];
   const dispose = async (): Promise<void> => {
@@ -170,6 +176,18 @@ async function openWebPage(
     page.on("pageerror", (error) => messages.push(`pageerror: ${error.message}`));
     page.on("response", (response) => {
       const resourceType = response.request().resourceType();
+      let url = response.url();
+      try {
+        const parsed = new URL(url);
+        url = `${parsed.origin}${parsed.pathname}`;
+      } catch {
+        url = redactActualSurfaceLog(url, credential ? [credential] : []);
+      }
+      networkResponses.push({
+        resourceType,
+        status: response.status(),
+        url,
+      });
       if (response.status() < 400 && resourceType !== "fetch" && resourceType !== "xhr") return;
       responseFailures.push(
         `response ${response.status()}: ${redactActualSurfaceLog(response.url(), credential ? [credential] : [])}`,
@@ -188,6 +206,7 @@ async function openWebPage(
     await page.waitForURL((url) => url.pathname !== "/pair", { timeout: 60_000 });
     messages.length = 0;
     responseFailures.length = 0;
+    networkResponses.length = 0;
     observationStage = "settings-route";
     await page.goto(`${origin}/settings/appearance`, {
       waitUntil: "domcontentloaded",
@@ -199,6 +218,7 @@ async function openWebPage(
       context,
       page,
       messages,
+      networkResponses,
       coldStartupMs: performance.now() - clientStarted,
       dispose,
     };
@@ -342,6 +362,10 @@ export async function runWebAppearanceDriver(
           },
           { path: `${visualRoot}/console.json`, content: json(evidence.console) },
           {
+            path: `${visualRoot}/network-responses.json`,
+            content: json(session.networkResponses),
+          },
+          {
             path: `${visualRoot}/stylesheet-metrics.json`,
             content: json(evidence.stylesheetMetrics),
           },
@@ -375,6 +399,22 @@ export async function runWebAppearanceDriver(
               client: "web",
               appearance: mode,
               value: delta.maxLongTaskDurationMs,
+              unit: "ms",
+              sampleIndex: index + 10_000,
+            },
+            {
+              kind: "compiler",
+              client: "web",
+              appearance: mode,
+              value: delta.compileDurationMs,
+              unit: "ms",
+              sampleIndex: index + 10_000,
+            },
+            {
+              kind: "stylesheet-replacement",
+              client: "web",
+              appearance: mode,
+              value: delta.stylesheetReplacementDurationMs,
               unit: "ms",
               sampleIndex: index + 10_000,
             },
