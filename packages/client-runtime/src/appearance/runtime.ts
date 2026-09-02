@@ -911,28 +911,37 @@ export async function createAppearanceRuntime(
     }
   };
 
+  const enqueueReconcile = (
+    external: AppearancePersistedState,
+    source: "storage" | "broadcast",
+  ): Promise<void> => {
+    const work = tail.then(
+      () => reconcile(external, source),
+      () => reconcile(external, source),
+    );
+    tail = work.then(
+      () => undefined,
+      () => undefined,
+    );
+    return work;
+  };
+
   if (!options.forceSafeMode) {
     options.storage.subscribe((external) => {
-      const work = tail.then(
-        () => reconcile(external, "storage"),
-        () => reconcile(external, "storage"),
-      );
-      tail = work.then(
-        () => undefined,
-        () => undefined,
-      );
+      void enqueueReconcile(external, "storage");
     });
     options.broadcast?.subscribe((event) => {
       if (event.revision <= state.revision) return;
-      const work = tail.then(
-        () => reconcile(event.state, "broadcast"),
-        () => reconcile(event.state, "broadcast"),
-      );
-      tail = work.then(
-        () => undefined,
-        () => undefined,
-      );
+      void enqueueReconcile(event.state, "broadcast");
     });
+    try {
+      // Subscribe before loading so a revision written during startup is
+      // observed either by the event or by this authoritative catch-up read.
+      await enqueueReconcile(await options.storage.load(), "storage");
+    } catch {
+      // Startup already applied the last valid snapshot; a failed catch-up
+      // must not turn a transient storage read into recovery mode.
+    }
   }
 
   const execute = (

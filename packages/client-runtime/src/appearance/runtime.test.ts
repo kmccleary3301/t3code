@@ -174,6 +174,29 @@ describe("desktop bridge appearance storage", () => {
 });
 
 describe("appearance runtime transactions", () => {
+  it("catches up a storage revision that changed before subscription", async () => {
+    const initial = createEmptyAppearanceState();
+    const latest: AppearancePersistedState = {
+      ...initial,
+      revision: 1,
+      preference: { mode: "dark" },
+    };
+    let loads = 0;
+    const storage: AppearanceStorageAdapter = {
+      load: async () => (++loads === 1 ? initial : latest),
+      commit: async () => undefined,
+      subscribe: () => () => undefined,
+    };
+    const runtime = await createAppearanceRuntime({
+      storage,
+      compiler: compilerThatNormalizes(),
+      apply: { apply: async () => undefined },
+    });
+    expect(loads).toBe(2);
+    expect(runtime.getSnapshot().revision).toBe(1);
+    expect(runtime.getSnapshot().preference.mode).toBe("dark");
+  });
+
   it("quarantines a package after initial compilation failure and does not retry it", async () => {
     const seed = await createAppearanceRuntime({
       storage: new MemoryStorage(),
