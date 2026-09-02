@@ -15,7 +15,7 @@ import {
   normalizeAppearance,
 } from "@t3tools/shared/appearance";
 import { T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
-import { compileWebAppearance } from "./appearanceRuntime";
+import { compileWebAppearance, deferredAppearanceStorage } from "./appearanceRuntime";
 
 class MemoryStorage implements AppearanceStorageAdapter {
   state: AppearancePersistedState = createEmptyAppearanceState();
@@ -37,7 +37,46 @@ const compiler: AppearanceCompilerAdapter = {
   compile: async (input) => compileWebAppearance(input),
 };
 
+class ReceiverAwareStorage implements AppearanceStorageAdapter {
+  readonly calls: string[] = [];
+  readonly state = createEmptyAppearanceState();
+
+  async load(): Promise<AppearancePersistedState> {
+    return this.state;
+  }
+
+  async commit(): Promise<void> {
+    this.calls.push("commit");
+  }
+
+  async recover(state: AppearancePersistedState): Promise<AppearancePersistedState> {
+    this.calls.push("recover");
+    return state;
+  }
+
+  async readQuarantinedState(): Promise<AppearancePersistedState | null> {
+    return this.state;
+  }
+
+  async restoreQuarantinedState(): Promise<AppearancePersistedState> {
+    this.calls.push("restore");
+    return this.state;
+  }
+
+  subscribe(): () => void {
+    return () => undefined;
+  }
+}
 describe("web appearance runtime adapter", () => {
+  it("preserves the storage receiver for deferred recovery operations", async () => {
+    const storage = new ReceiverAwareStorage();
+    const deferred = deferredAppearanceStorage(() => storage);
+
+    await expect(deferred.recover?.(storage.state)).resolves.toBe(storage.state);
+    await expect(deferred.restoreQuarantinedState?.()).resolves.toBe(storage.state);
+    expect(storage.calls).toEqual(["recover", "restore"]);
+  });
+
   it("compiles palette, typography, snippets, and overrides in precedence order", async () => {
     const artifacts: string[] = [];
     const runtime = await createAppearanceRuntime({

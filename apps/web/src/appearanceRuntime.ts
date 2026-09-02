@@ -974,7 +974,7 @@ async function syncEnvironmentPackages(runtime: AppearanceRuntime): Promise<void
   });
 }
 
-function deferredAppearanceStorage(
+export function deferredAppearanceStorage(
   create: () => AppearanceStorageAdapter,
 ): AppearanceStorageAdapter {
   let storage: AppearanceStorageAdapter | undefined;
@@ -986,15 +986,19 @@ function deferredAppearanceStorage(
     load: (signal) => get().load(signal),
     commit: (expectedRevision, state, signal) => get().commit(expectedRevision, state, signal),
     recover: (state, signal) => {
-      const recover = get().recover;
-      if (recover === undefined) throw new Error("Appearance storage recovery is unavailable.");
-      return recover(state, signal);
+      const resolved = get();
+      if (resolved.recover === undefined) {
+        throw new Error("Appearance storage recovery is unavailable.");
+      }
+      return resolved.recover(state, signal);
     },
     readQuarantinedState: () => get().readQuarantinedState?.() ?? Promise.resolve(null),
     restoreQuarantinedState: (signal) => {
-      const restore = get().restoreQuarantinedState;
-      if (restore === undefined) throw new Error("Appearance quarantine restore is unavailable.");
-      return restore(signal);
+      const resolved = get();
+      if (resolved.restoreQuarantinedState === undefined) {
+        throw new Error("Appearance quarantine restore is unavailable.");
+      }
+      return resolved.restoreQuarantinedState(signal);
     },
     subscribe: (listener) => get().subscribe(listener),
   };
