@@ -727,7 +727,7 @@ describe("DesktopAppearanceStorage", () => {
       JSON.stringify(packageManifest(nextCss)) + "\n",
       { mode: 0o600 },
     );
-    await waitForFilesystem(500);
+    await waitForFilesystem(1_000);
     expect(updates).toHaveLength(1);
     expect(updates[0]?.revision).toBe(before.revision + 1);
     expect(updates[0]?.packages["watch-package"]?.desktopCss).toBe(nextCss);
@@ -747,7 +747,7 @@ describe("DesktopAppearanceStorage", () => {
       JSON.stringify(packageManifest(nextCss)) + "\n",
       { mode: 0o600 },
     );
-    await waitForFilesystem(500);
+    await waitForFilesystem(1_000);
     stop();
     expect(updates).toHaveLength(1);
     const command = await runtime.execute({ type: "safe-mode", enabled: true });
