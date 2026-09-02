@@ -17,7 +17,6 @@ export type DesktopAppearanceStateBridge = Pick<
 
 /** Validated renderer-side adapter for the main-process desktop appearance store. */
 export class DesktopBridgeAppearanceStorage implements AppearanceStorageAdapter {
-  private checksum: string | null = null;
   private readonly bridge: DesktopAppearanceStateBridge;
 
   constructor(bridge: DesktopAppearanceStateBridge) {
@@ -36,7 +35,6 @@ export class DesktopBridgeAppearanceStorage implements AppearanceStorageAdapter 
     if (state === null || appearanceSha256(state) !== document.checksum) {
       throw new Error("Desktop appearance state failed schema or checksum validation.");
     }
-    this.checksum = document.checksum;
     return state;
   };
 
@@ -53,7 +51,6 @@ export class DesktopBridgeAppearanceStorage implements AppearanceStorageAdapter 
     if (summary.revision !== state.revision || summary.checksum !== checksum) {
       throw new Error("Desktop appearance commit acknowledgement does not match the state.");
     }
-    this.checksum = checksum;
   };
 
   readonly recover = async (
@@ -135,8 +132,8 @@ export class DesktopBridgeAppearanceStorage implements AppearanceStorageAdapter 
 
   readonly subscribe = (listener: (state: AppearancePersistedState) => void): (() => void) => {
     let active = true;
-    const unsubscribe = this.bridge.onAppearanceWatchEvent((event) => {
-      if (!active || event.state.checksum === this.checksum) return;
+    const unsubscribe = this.bridge.onAppearanceWatchEvent(() => {
+      if (!active) return;
       void this.load().then(
         (state) => {
           if (active) listener(state);

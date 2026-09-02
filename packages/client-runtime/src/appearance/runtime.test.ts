@@ -1,8 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
+import type { DesktopAppearanceWatchEvent } from "@t3tools/contracts";
 
 import { appearanceSha256, normalizeAppearance } from "@t3tools/shared/appearance";
 import { GROVE_THEME, T3_CHAT_THEME, type ThemeDefinition } from "@t3tools/shared/themePalettes";
 
+import { DesktopBridgeAppearanceStorage } from "./desktopBridgeStorage.ts";
 import { migrateAppearanceState, type AppearanceLegacyInputAdapter } from "./migration.ts";
 import { resolveAppearancePrecedence } from "./precedence.ts";
 import {
@@ -127,6 +129,47 @@ describe("appearance precedence", () => {
       color: "variant",
       base: "yes",
     });
+  });
+});
+
+describe("desktop bridge appearance storage", () => {
+  it("delivers a watch revision after another consumer has already loaded it", async () => {
+    let durable = createEmptyAppearanceState();
+    let emitWatch: ((event: DesktopAppearanceWatchEvent) => void) | undefined;
+    const storage = new DesktopBridgeAppearanceStorage({
+      readAppearanceState: async () => ({
+        stateJson: JSON.stringify(durable),
+        revision: durable.revision,
+        safeMode: durable.safeMode,
+        checksum: appearanceSha256(durable),
+      }),
+      commitAppearanceState: async () => ({
+        revision: durable.revision,
+        safeMode: durable.safeMode,
+        checksum: appearanceSha256(durable),
+      }),
+      onAppearanceWatchEvent: (listener) => {
+        emitWatch = listener;
+        return () => undefined;
+      },
+    });
+    await storage.load();
+    const observed: number[] = [];
+    storage.subscribe((next) => observed.push(next.revision));
+    durable = { ...durable, revision: 1 };
+    await storage.load();
+    if (emitWatch === undefined) throw new Error("appearance watch listener was not registered");
+    emitWatch({
+      reason: "external-change",
+      state: {
+        revision: durable.revision,
+        safeMode: durable.safeMode,
+        checksum: appearanceSha256(durable),
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observed).toEqual([1]);
   });
 });
 
