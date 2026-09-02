@@ -2,7 +2,7 @@ import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useCallback, useSyncExternalStore } from "react";
-import { applyAppearanceTheme } from "../appearanceRuntime";
+import { applyAppearanceTheme, setAppearanceModePreference } from "../appearanceRuntime";
 import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
@@ -327,10 +327,12 @@ function applyTheme(
   {
     suppressTransitions = false,
     preservePreview = true,
+    preserveRuntimeSelection = false,
     onRuntimeFailure,
   }: {
     suppressTransitions?: boolean;
     preservePreview?: boolean;
+    preserveRuntimeSelection?: boolean;
     onRuntimeFailure?: () => void;
   } = {},
 ) {
@@ -363,17 +365,22 @@ function applyTheme(
     appearanceMode,
     themeHalves,
   );
-  const selectedTheme = resolveThemeHalf(theme, themeHalves, resolvedAppearance);
-  applyThemePalette(selectedTheme, resolvedAppearance);
-  const definition = getThemeDefinition(selectedTheme) ?? T3_CHAT_THEME;
-  const lightDefinition =
-    getThemeDefinition(resolveThemeHalf(theme, themeHalves, "light")) ?? T3_CHAT_THEME;
-  const darkDefinition =
-    getThemeDefinition(resolveThemeHalf(theme, themeHalves, "dark")) ?? T3_CHAT_THEME;
-  void applyAppearanceTheme(definition, resolvedAppearance, appearanceMode, {
-    light: lightDefinition,
-    dark: darkDefinition,
-  }).catch((error: unknown) => {
+  const runtimeUpdate = preserveRuntimeSelection
+    ? setAppearanceModePreference(appearanceMode)
+    : (() => {
+        const selectedTheme = resolveThemeHalf(theme, themeHalves, resolvedAppearance);
+        applyThemePalette(selectedTheme, resolvedAppearance);
+        const definition = getThemeDefinition(selectedTheme) ?? T3_CHAT_THEME;
+        const lightDefinition =
+          getThemeDefinition(resolveThemeHalf(theme, themeHalves, "light")) ?? T3_CHAT_THEME;
+        const darkDefinition =
+          getThemeDefinition(resolveThemeHalf(theme, themeHalves, "dark")) ?? T3_CHAT_THEME;
+        return applyAppearanceTheme(definition, resolvedAppearance, appearanceMode, {
+          light: lightDefinition,
+          dark: darkDefinition,
+        });
+      })();
+  void runtimeUpdate.catch((error: unknown) => {
     onRuntimeFailure?.();
     console.error("Appearance runtime failed to apply the selected theme.", error);
   });
@@ -394,6 +401,7 @@ function applyTheme(
 function rollbackLegacyAppearance(
   theme: Theme,
   values: ReadonlyArray<readonly [key: string, value: string | null]>,
+  preserveRuntimeSelection = false,
 ): void {
   if (typeof window === "undefined") return;
   try {
@@ -403,7 +411,7 @@ function rollbackLegacyAppearance(
     }
     themeStorageReadFailure = null;
     lastAppliedTheme = null;
-    applyTheme(theme, { suppressTransitions: true });
+    applyTheme(theme, { suppressTransitions: true, preserveRuntimeSelection });
     emitChange();
   } catch (cause) {
     console.error("Appearance runtime rejected the theme and legacy rollback failed.", {
@@ -500,7 +508,7 @@ function getServerSnapshot() {
 function handleSystemAppearanceChange() {
   const storedTheme = getStored();
   if (readAppearanceModePreference(storedTheme) === "system") {
-    applyTheme(storedTheme, { suppressTransitions: true });
+    applyTheme(storedTheme, { suppressTransitions: true, preserveRuntimeSelection: true });
   }
   emitChange();
 }
@@ -513,7 +521,10 @@ function handleStorageChange(e: StorageEvent) {
   } else if (e.key === THEME_FOLLOW_SYSTEM_STORAGE_KEY) {
     applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
-  } else if (e.key === THEME_APPEARANCE_MODE_STORAGE_KEY || e.key === THEME_HALVES_STORAGE_KEY) {
+  } else if (e.key === THEME_APPEARANCE_MODE_STORAGE_KEY) {
+    applyTheme(getStored(), { suppressTransitions: true, preserveRuntimeSelection: true });
+    emitChange();
+  } else if (e.key === THEME_HALVES_STORAGE_KEY) {
     applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
   } else if (e.key === CUSTOM_THEMES_STORAGE_KEY || e.key === null) {
@@ -644,10 +655,13 @@ export function useTheme() {
     themeStorageReadFailure = null;
     applyTheme(selectedTheme, {
       suppressTransitions: true,
+      preserveRuntimeSelection: true,
       onRuntimeFailure: () =>
-        rollbackLegacyAppearance(previousTheme, [
-          [THEME_APPEARANCE_MODE_STORAGE_KEY, previousAppearanceRaw],
-        ]),
+        rollbackLegacyAppearance(
+          previousTheme,
+          [[THEME_APPEARANCE_MODE_STORAGE_KEY, previousAppearanceRaw]],
+          true,
+        ),
     });
     emitChange();
     return true;

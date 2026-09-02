@@ -1281,6 +1281,17 @@ export async function executeAppearanceRecoveryCommand(
   return next;
 }
 
+export async function setAppearanceModePreference(mode: "system" | ThemeAppearance): Promise<void> {
+  const runtime = await getAppearanceRuntime();
+  const current = runtime.getSnapshot().preference;
+  const preference = { ...current, mode };
+  if (current.mode !== mode) delete preference.variantId;
+  const result = await runtime.execute({ type: "preference", preference });
+  if (result.status === "rejected") {
+    throw new Error(result.diagnostics[0]?.message ?? "Appearance mode preference was rejected.");
+  }
+}
+
 export async function setAppearanceTypographyPreference(
   preference: AppearanceTypographyPreference,
 ): Promise<void> {

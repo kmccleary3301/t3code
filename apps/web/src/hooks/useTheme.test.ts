@@ -128,6 +128,60 @@ describe("theme failure handling", () => {
     expect(useEffect).not.toHaveBeenCalled();
   });
 
+  it("changes appearance mode without replacing the runtime package selection", async () => {
+    const applyAppearanceTheme = vi.fn(async () => undefined);
+    const setAppearanceModePreference = vi.fn(async () => undefined);
+    vi.doMock("../appearanceRuntime", () => ({
+      applyAppearanceTheme,
+      setAppearanceModePreference,
+    }));
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useSyncExternalStore: (
+        _subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => getSnapshot(),
+    }));
+    const storage = createStorage();
+    const themeColor = { setAttribute: vi.fn() };
+    vi.stubGlobal("window", {
+      addEventListener: () => undefined,
+      localStorage: storage,
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+      removeEventListener: () => undefined,
+    });
+    vi.stubGlobal("document", {
+      body: { style: {} },
+      documentElement: {
+        dataset: {},
+        classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn() },
+        offsetHeight: 0,
+        style: {},
+      },
+      querySelector: () => null,
+      querySelectorAll: () => [themeColor],
+    });
+    vi.stubGlobal("getComputedStyle", () => ({
+      backgroundColor: "#ffffff",
+      getPropertyValue: () => "",
+    }));
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    const { useTheme } = await import("./useTheme");
+    const theme = useTheme();
+
+    expect(theme.setAppearanceMode("dark")).toBe(true);
+    expect(setAppearanceModePreference).toHaveBeenCalledWith("dark");
+    expect(applyAppearanceTheme).not.toHaveBeenCalled();
+  });
+
   it("retries a failed storage read only after a relevant storage event", async () => {
     const cause = new Error("persistent storage failure");
     const themeGetItem = vi.fn((): string | null => {
