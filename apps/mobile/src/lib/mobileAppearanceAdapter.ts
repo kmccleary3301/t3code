@@ -1,11 +1,15 @@
 import { createMobileThemeVariables, themeColorToNativeColor } from "./mobileTheme";
-import type {
-  AppearanceAnsi,
-  AppearanceTypographyRole,
-  NormalizedAppearanceProfile,
-  NormalizedAppearanceVariant,
-  TypographyValue,
+import {
+  normalizeThemeDefinition,
+  type AppearanceAnsi,
+  type AppearanceTypographyRole,
+  type NormalizedAppearanceProfile,
+  type NormalizedAppearanceVariant,
+  type TypographyValue,
 } from "@t3tools/shared/appearance";
+import { T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
+
+const BUILT_IN_APPEARANCE_PROFILE = normalizeThemeDefinition(T3_CHAT_THEME);
 
 const TYPOGRAPHY_ROLES = [
   "interface",
@@ -178,15 +182,24 @@ export interface MobileAppearanceOutput {
 function variantForAppearance(
   profile: NormalizedAppearanceProfile,
   appearance: "light" | "dark",
-): NormalizedAppearanceVariant {
+): {
+  readonly profile: NormalizedAppearanceProfile;
+  readonly variant: NormalizedAppearanceVariant;
+} {
   const exact = profile.variants.find((variant) => variant.appearance === appearance);
-  if (exact !== undefined) return exact;
+  if (exact !== undefined) return { profile, variant: exact };
   const fallbackId =
     profile.fallback[appearance] === "default-variant" ? profile.defaultVariant : null;
   const fallback =
     fallbackId === null ? undefined : profile.variants.find((variant) => variant.id === fallbackId);
-  if (fallback !== undefined) return fallback;
-  return profile.variants[0]!;
+  if (fallback !== undefined) return { profile, variant: fallback };
+  if (profile.fallback[appearance] === "reject") {
+    const builtIn = BUILT_IN_APPEARANCE_PROFILE.variants.find(
+      (variant) => variant.appearance === appearance,
+    );
+    if (builtIn !== undefined) return { profile: BUILT_IN_APPEARANCE_PROFILE, variant: builtIn };
+  }
+  return { profile, variant: profile.variants[0]! };
 }
 
 function typographyRole(value: TypographyValue): MobileTypographyRole {
@@ -285,7 +298,7 @@ export function compileMobileAppearance(
   profile: NormalizedAppearanceProfile,
   appearance: "light" | "dark",
 ): MobileAppearanceOutput {
-  const variant = variantForAppearance(profile, appearance);
+  const { profile: resolvedProfile, variant } = variantForAppearance(profile, appearance);
   const colors = createMobileThemeVariables(variant.colors, appearance);
   const typography = typographyPreferences(variant);
   const c = variant.colors;
@@ -364,7 +377,7 @@ export function compileMobileAppearance(
   for (const [name, value] of Object.entries(variant.metrics.radius))
     uniwindVariables[`--t3-radius-${name}`] = value;
   return {
-    profileId: profile.metadata.id,
+    profileId: resolvedProfile.metadata.id,
     variantId: variant.id,
     appearance,
     uniwindVariables,

@@ -140,7 +140,7 @@ export type AppearanceCommand =
   | Readonly<{
       readonly type: "install";
       readonly package: AppearancePackageInput;
-      readonly activate?: boolean;
+      readonly activate: boolean;
     }>
   | Readonly<{
       readonly type: "update";

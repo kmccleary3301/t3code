@@ -140,6 +140,29 @@ describe("buildAppearanceCommandPaletteItem", () => {
     expect(item.groups[0]?.items[1]?.disabled).toBe(true);
     expect(item.groups[0]?.items[4]?.disabled).toBe(true);
   });
+  it("maps forced safe-mode exit to the confirmed reset command", async () => {
+    const run = vi.fn(async () => undefined);
+    const state = { ...createEmptyAppearanceState(), safeMode: true };
+    const item = buildAppearanceCommandPaletteItem({
+      snapshot: {
+        ...state,
+        preview: null,
+        resolved: resolveAppearanceState(state, null, () => "dark"),
+      },
+      icon: null,
+      addonIcon: null,
+      run,
+      openSettings: vi.fn(),
+      openAppearanceFolder: null,
+    });
+    const action = item.groups[0]?.items.find(
+      (candidate) => candidate.value === "appearance:safe-mode",
+    );
+    if (action === undefined) throw new Error("Expected the safe-mode action.");
+    await action.run();
+    expect(action.title).toBe("Reset appearance to leave safe mode");
+    expect(run).toHaveBeenCalledWith({ type: "reset" });
+  });
 
   it("includes installed profiles, variants, and snippet toggles", () => {
     const state = createEmptyAppearanceState();

@@ -660,6 +660,31 @@ function validateState(state: AppearancePersistedState): string {
   return encoded;
 }
 
+function bootVariantFor(
+  packageValue: AppearanceStoredPackage | undefined,
+  state: AppearancePersistedState,
+  systemAppearance: AppearanceVariant | undefined,
+) {
+  const requestedAppearance =
+    state.preference.mode === "system" ? systemAppearance : state.preference.mode;
+  if (requestedAppearance === undefined || packageValue === undefined) return undefined;
+  const exactVariant =
+    state.preference.variantId === undefined
+      ? undefined
+      : packageValue.profile.variants.find(
+          (candidate) => candidate.id === state.preference.variantId,
+        );
+  if (exactVariant !== undefined) return exactVariant;
+  const modeVariant = packageValue.profile.variants.find(
+    (candidate) => candidate.appearance === requestedAppearance,
+  );
+  if (modeVariant !== undefined) return modeVariant;
+  if (packageValue.profile.fallback[requestedAppearance] === "reject") return undefined;
+  return packageValue.profile.variants.find(
+    (candidate) => candidate.id === packageValue.profile.defaultVariant,
+  );
+}
+
 function selectBootPackage(
   state: AppearancePersistedState,
   systemAppearance: AppearanceVariant | undefined,
@@ -671,13 +696,15 @@ function selectBootPackage(
         ? state.preference.darkPackageId
         : undefined;
   const preferredId = halfId ?? state.preference.packageId;
+  const canBoot = (packageValue: AppearanceStoredPackage): boolean =>
+    packageValue.enabled && bootVariantFor(packageValue, state, systemAppearance) !== undefined;
   const preferred = preferredId === undefined ? undefined : state.packages[preferredId];
-  if (preferred?.enabled === true) return preferred;
+  if (preferred !== undefined && canBoot(preferred)) return preferred;
   for (const id of state.order) {
     const packageValue = state.packages[id];
-    if (packageValue?.enabled === true) return packageValue;
+    if (packageValue !== undefined && canBoot(packageValue)) return packageValue;
   }
-  return Object.values(state.packages).find((packageValue) => packageValue.enabled);
+  return Object.values(state.packages).find(canBoot);
 }
 
 function bootColorVariable(role: string): string {
@@ -700,29 +727,13 @@ function makeBootSnapshot(state: AppearancePersistedState): AppearanceBootSnapsh
     selected?.profile.compatibility.maximumAppVersion !== undefined
       ? undefined
       : selected;
-  const variables: Record<string, string> = {};
-  const exactVariant =
-    state.preference.variantId === undefined
-      ? undefined
-      : packageValue?.profile.variants.find(
-          (candidate) => candidate.id === state.preference.variantId,
-        );
   const requestedAppearance =
     state.preference.mode === "system" ? systemAppearance : state.preference.mode;
-  const modeVariant =
-    requestedAppearance === undefined
-      ? undefined
-      : packageValue?.profile.variants.find(
-          (candidate) => candidate.appearance === requestedAppearance,
-        );
   const variant =
     requestedAppearance === undefined
       ? undefined
-      : (exactVariant ??
-        modeVariant ??
-        packageValue?.profile.variants.find(
-          (candidate) => candidate.id === packageValue.profile.defaultVariant,
-        ));
+      : bootVariantFor(packageValue, state, systemAppearance);
+  const variables: Record<string, string> = {};
   const themeId =
     variant === undefined ? "builtin" : (packageValue?.manifest.metadata.id ?? "builtin");
   if (variant !== undefined) {
@@ -766,7 +777,6 @@ function makeBootSnapshot(state: AppearancePersistedState): AppearanceBootSnapsh
   } as const;
   return { ...body, checksum: checksum(body) };
 }
-
 export function readAppearanceBootSnapshot(
   storage?: BrowserLocalStorage | null,
 ): AppearanceBootSnapshot | null {

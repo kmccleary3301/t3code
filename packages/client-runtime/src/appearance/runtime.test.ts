@@ -98,7 +98,9 @@ class MemoryBroadcast implements AppearanceBroadcastAdapter {
 
 function packageCommand(type: "install" | "environment-packages"): AppearanceCommand {
   const packageInput = { input: T3_CHAT_THEME, sourceId: T3_CHAT_THEME.id };
-  return type === "install" ? { type, package: packageInput } : { type, packages: [packageInput] };
+  return type === "install"
+    ? { type, package: packageInput, activate: true }
+    : { type, packages: [packageInput] };
 }
 
 describe("appearance command contract", () => {
@@ -236,6 +238,7 @@ describe("appearance runtime transactions", () => {
         await runtime.execute({
           type: "install",
           package: { input: GROVE_THEME, sourceId: GROVE_THEME.id },
+          activate: true,
         })
       ).status,
     ).toBe("applied");
@@ -301,6 +304,41 @@ describe("appearance runtime transactions", () => {
       ).status,
     ).toBe("applied");
     expect(runtime.getSnapshot().resolved.variant?.appearance).toBe("light");
+  });
+  it("skips enabled packages that reject an unavailable appearance variant", async () => {
+    const runtime = await createAppearanceRuntime({
+      storage: new MemoryStorage(),
+      compiler: compilerThatNormalizes(),
+      apply: { apply: async () => undefined },
+    });
+    await runtime.execute(packageCommand("install"));
+    const installed = runtime.getSnapshot().packages[T3_CHAT_THEME.id];
+    if (installed === undefined) throw new Error("Expected the built-in appearance package.");
+    const lightVariant = installed.manifest.variants.find(
+      (variant) => variant.appearance === "light",
+    );
+    if (lightVariant === undefined) throw new Error("Expected a light appearance variant.");
+    const rejectManifest = {
+      ...installed.manifest,
+      metadata: { ...installed.manifest.metadata, id: "reject-package", name: "Reject Package" },
+      fallback: { light: "default-variant", dark: "reject" } as const,
+      defaultVariant: lightVariant.id,
+      variants: [lightVariant],
+    };
+    const installedReject = await runtime.execute({
+      type: "install",
+      package: { input: rejectManifest, sourceId: "reject-package" },
+      activate: true,
+    });
+    expect(installedReject.status).toBe("applied");
+
+    const selected = await runtime.execute({
+      type: "preference",
+      preference: { mode: "dark", packageId: "reject-package" },
+    });
+    expect(selected.status).toBe("applied");
+    expect(selected.snapshot.resolved.basePackageId).toBe(T3_CHAT_THEME.id);
+    expect(selected.snapshot.resolved.baseVariant?.appearance).toBe("dark");
   });
 
   it("normalizes installs and handles environment package disappearance", async () => {
@@ -443,6 +481,7 @@ describe("appearance runtime transactions", () => {
     await runtime.execute({
       type: "install",
       package: { input: GROVE_THEME, sourceId: GROVE_THEME.id },
+      activate: true,
     });
     await runtime.execute({
       type: "snippet-upsert",
@@ -633,6 +672,7 @@ describe("appearance runtime transactions", () => {
         await runtime.execute({
           type: "install",
           package: { input: GROVE_THEME, sourceId: GROVE_THEME.id },
+          activate: true,
         })
       ).status,
     ).toBe("applied");

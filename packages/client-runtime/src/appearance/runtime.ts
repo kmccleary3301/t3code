@@ -161,6 +161,7 @@ function variantFor(
   if (appearance !== "system") {
     const matching = profile.variants.find((variant) => variant.appearance === appearance);
     if (matching !== undefined) return matching;
+    if (profile.fallback[appearance] === "reject") return null;
   }
   return profile.variants.find((variant) => variant.id === profile.defaultVariant) ?? null;
 }
@@ -186,15 +187,19 @@ function selectedPackage(
         ? state.preference.darkPackageId
         : undefined;
   const preferredId = systemPackageId ?? state.preference.packageId;
+  const ignoreVariantId = state.preference.mode === "system" && appearance !== "system";
+  const canResolve = (candidate: AppearanceStoredPackage): boolean =>
+    candidate.enabled &&
+    variantFor(candidate.profile, state.preference.variantId, appearance, ignoreVariantId) !== null;
   if (preferredId !== undefined) {
     const preferred = packageById(state, preferredId);
-    if (preferred?.enabled === true) return preferred;
+    if (preferred !== undefined && canResolve(preferred)) return preferred;
   }
   for (const id of state.order) {
     const candidate = state.packages[id];
-    if (candidate?.enabled === true) return candidate;
+    if (candidate !== undefined && canResolve(candidate)) return candidate;
   }
-  return state.environmentPackages[0] ?? null;
+  return state.environmentPackages.find(canResolve) ?? null;
 }
 
 function colorsLayer(variant: NormalizedAppearanceVariant | null): AppearanceLayer {
@@ -458,8 +463,7 @@ async function candidateFor(
   let nextPreview = preview;
   if (command.type === "install" || command.type === "update") {
     const existing = next.packages[command.type === "update" ? command.id : ""];
-    const enabled =
-      command.type === "install" ? (command.activate ?? true) : (existing?.enabled ?? true);
+    const enabled = command.type === "install" ? command.activate : (existing?.enabled ?? true);
     const normalized = normalizePackage(compiler, command.package, enabled);
     if ("diagnostic" in normalized)
       return { status: "failure", diagnostics: [normalized.diagnostic] };

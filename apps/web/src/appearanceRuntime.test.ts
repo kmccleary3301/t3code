@@ -52,6 +52,7 @@ describe("web appearance runtime adapter", () => {
     await runtime.execute({
       type: "install",
       package: { input: T3_CHAT_THEME, sourceId: T3_CHAT_THEME.id },
+      activate: true,
     });
     await runtime.execute({
       type: "preference",
@@ -120,6 +121,7 @@ describe("web appearance runtime adapter", () => {
     await runtime.execute({
       type: "install",
       package: { input: T3_CHAT_THEME, sourceId: T3_CHAT_THEME.id },
+      activate: true,
     });
     await runtime.execute({
       type: "snippets",
@@ -159,6 +161,7 @@ describe("web appearance runtime adapter", () => {
         sharedCss: ":root{--shared-marker:#123456}",
         desktopCss: ":root{--desktop-marker:#654321}",
       },
+      activate: true,
     });
     const result = await runtime.execute({
       type: "snippets",
@@ -213,6 +216,7 @@ describe("web appearance runtime adapter", () => {
         },
         desktopCss: ":root{--desktop-marker:#654321}",
       },
+      activate: true,
     });
     const snapshot = runtime.getSnapshot();
     expect(
@@ -285,6 +289,7 @@ describe("web appearance runtime adapter", () => {
     await runtime.execute({
       type: "install",
       package: { input: T3_CHAT_THEME, sourceId: T3_CHAT_THEME.id },
+      activate: true,
     });
     const snapshot = runtime.getSnapshot();
     const artifact = compileWebAppearance({
@@ -307,6 +312,7 @@ describe("web appearance runtime adapter", () => {
     await runtime.execute({
       type: "install",
       package: { input: T3_CHAT_THEME, sourceId: T3_CHAT_THEME.id },
+      activate: true,
     });
     await runtime.execute({
       type: "snippet-upsert",

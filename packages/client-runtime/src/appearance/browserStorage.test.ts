@@ -469,6 +469,7 @@ describe("BrowserAppearanceStorage", () => {
         await runtime.execute({
           type: "install",
           package: { input: T3_CHAT_THEME, sourceId: T3_CHAT_THEME.id },
+          activate: true,
         })
       ).status,
     ).toBe("applied");
@@ -508,6 +509,37 @@ describe("BrowserAppearanceStorage", () => {
     expect(systemBoot?.colorVariables["--app-theme-canvas"]).toBe(
       T3_CHAT_THEME.variants?.dark?.canvas,
     );
+    const installed = runtime.getSnapshot().packages[T3_CHAT_THEME.id];
+    if (installed === undefined) throw new Error("Expected the built-in appearance package.");
+    const lightVariant = installed.manifest.variants.find(
+      (variant) => variant.appearance === "light",
+    );
+    if (lightVariant === undefined) throw new Error("Expected a light appearance variant.");
+    const rejectManifest = {
+      ...installed.manifest,
+      metadata: { ...installed.manifest.metadata, id: "reject-package", name: "Reject Package" },
+      fallback: { light: "default-variant", dark: "reject" } as const,
+      defaultVariant: lightVariant.id,
+      variants: [lightVariant],
+    };
+    expect(
+      (
+        await runtime.execute({
+          type: "install",
+          package: { input: rejectManifest, sourceId: "reject-package" },
+          activate: true,
+        })
+      ).status,
+    ).toBe("applied");
+    await runtime.execute({
+      type: "preference",
+      preference: { mode: "dark", packageId: "reject-package" },
+    });
+    expect(readAppearanceBootSnapshot(storage)).toMatchObject({
+      themeId: T3_CHAT_THEME.id,
+      mode: "dark",
+      colorVariables: { "--app-theme-canvas": T3_CHAT_THEME.variants?.dark?.canvas },
+    });
     adapter.close();
   });
 

@@ -452,14 +452,19 @@ export function buildAppearanceCommandPaletteItem(input: {
       searchTerms: ["appearance", "safe mode", "recovery", "disable customizations"],
       title:
         input.snapshot?.safeMode === true
-          ? "Leave appearance safe mode"
+          ? "Reset appearance to leave safe mode"
           : "Enter appearance safe mode",
       description:
         input.snapshot?.safeMode === true
-          ? "Re-enable appearance packages and snippets"
+          ? "Clear customizations and keep a recovery copy"
           : "Bypass package CSS and snippets",
       icon: input.icon,
-      run: () => input.run({ type: "safe-mode", enabled: input.snapshot?.safeMode !== true }),
+      run: () =>
+        input.run(
+          input.snapshot?.safeMode === true
+            ? { type: "reset" }
+            : { type: "safe-mode", enabled: true },
+        ),
     },
     {
       kind: "action",

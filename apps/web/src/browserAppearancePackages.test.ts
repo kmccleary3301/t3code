@@ -56,6 +56,7 @@ describe("browser appearance package workflows", () => {
     await sourceRuntime.execute({
       type: "install",
       package: { input: T3_CHAT_THEME, sourceId: T3_CHAT_THEME.id },
+      activate: true,
     });
     const stored = sourceStorage.state.packages[T3_CHAT_THEME.id];
     if (stored === undefined) throw new Error("missing fixture package");

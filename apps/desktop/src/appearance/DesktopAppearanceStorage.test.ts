@@ -600,6 +600,7 @@ describe("DesktopAppearanceStorage", () => {
             },
             desktopCss: firstCss,
           },
+          activate: true,
         })
       ).status,
     ).toBe("applied");

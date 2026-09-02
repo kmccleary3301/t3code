@@ -114,6 +114,23 @@ describe("compileMobileAppearance", () => {
     expect(output.variantId).toBe("light");
     expect(output.appearance).toBe("dark");
   });
+  it("uses the built-in profile when a requested appearance is rejected", () => {
+    const lightVariant = profile.variants.find((variant) => variant.appearance === "light");
+    const darkVariant = profile.variants.find((variant) => variant.appearance === "dark");
+    if (lightVariant === undefined || darkVariant === undefined) {
+      throw new Error("Expected the built-in profile to contain both appearances.");
+    }
+    const rejectProfile = {
+      ...profile,
+      metadata: { ...profile.metadata, id: "reject-package" },
+      variants: [lightVariant],
+      fallback: { light: "default-variant", dark: "reject" } as const,
+      defaultVariant: lightVariant.id,
+    };
+    const output = compileMobileAppearance(rejectProfile, "dark");
+    expect(output.profileId).toBe(profile.metadata.id);
+    expect(output.variantId).toBe(darkVariant.id);
+  });
 
   it("does not execute stylesheets or assets", () => {
     const output = compileMobileAppearance(profile, "light");

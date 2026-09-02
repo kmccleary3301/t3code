@@ -125,7 +125,7 @@ function selectedPackage(input: AppearanceCompilationInput): AppearanceStoredPac
 }
 
 function previewPackage(input: AppearanceCompilationInput): AppearanceStoredPackage | undefined {
-  if (input.state.safeMode) return undefined;
+  if (input.state.safeMode || input.resolved.previewVariant === null) return undefined;
   const fromPreview = input.state.preview?.package;
   if (fromPreview !== undefined) return fromPreview;
   const id = input.state.preview?.packageId;
@@ -1196,7 +1196,7 @@ async function ensureAppearanceThemePackage(
   }
   const result =
     existing === undefined
-      ? await runtime.execute({ type: "install", package: packageInput })
+      ? await runtime.execute({ type: "install", package: packageInput, activate: false })
       : await runtime.execute({ type: "update", id: theme.id, package: packageInput });
   if (result.status === "rejected") {
     throw new Error(result.diagnostics[0]?.message ?? "Appearance package update was rejected.");
