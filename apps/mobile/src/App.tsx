@@ -1,17 +1,33 @@
 import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
-import { StatusBar } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Button, SafeAreaView, StatusBar, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { createStaticNavigation } from "@react-navigation/native";
-
+import {
+  createStaticNavigation,
+  DarkTheme,
+  DefaultTheme,
+  type Theme,
+} from "@react-navigation/native";
 import { RegistryContext } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
+import * as Effect from "effect/Effect";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
+import { MobilePreferencesStore, type Preferences } from "./persistence/mobile-preferences";
+import { mobilePreferencesAtom } from "./state/preferences";
+import {
+  createMobileAppearanceResetPatch,
+  createMobileAppearanceRestorePatch,
+  parseMobileAppearanceRecoveryUrl,
+  type MobileAppearanceRecoveryAction,
+} from "./lib/mobileAppearanceRecovery";
+import { runtime } from "./lib/runtime";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
 import {
   AppearancePreferencesProvider,
@@ -21,8 +37,6 @@ import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
-import { useThemeColor } from "./lib/useThemeColor";
-import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
 
 import "../global.css";
 
@@ -43,7 +57,9 @@ const appLinking = {
   // expo-sharing uses a private lifecycle URL only to wake the app. The
   // persisted share inbox below owns navigation once the payload is durable.
   filter: (url: string) =>
-    !url.includes("expo-development-client") && !url.includes("://expo-sharing"),
+    !url.includes("expo-development-client") &&
+    !url.includes("://expo-sharing") &&
+    parseMobileAppearanceRecoveryUrl(url) === null,
 };
 
 const Navigation = createStaticNavigation(RootStack);
@@ -59,21 +75,180 @@ function SplashScreenCoordinator() {
 }
 
 export default function App() {
+  const [recoveryAction, setRecoveryAction] = useState<
+    MobileAppearanceRecoveryAction | "safe-continued" | "loading" | "normal"
+  >("loading");
+  useEffect(() => {
+    let active = true;
+    let receivedRecoveryUrl = false;
+    const openRecoveryUrl = (url: string | null | undefined) => {
+      const action = parseMobileAppearanceRecoveryUrl(url);
+      if (action === null) return false;
+      receivedRecoveryUrl = true;
+      setRecoveryAction(action);
+      return true;
+    };
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      if (active) openRecoveryUrl(url);
+    });
+    void Linking.getInitialURL()
+      .then((url) => {
+        if (active && !receivedRecoveryUrl && !openRecoveryUrl(url)) {
+          setRecoveryAction("normal");
+        }
+      })
+      .catch(() => {
+        if (active && !receivedRecoveryUrl) setRecoveryAction("normal");
+      });
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, []);
+
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
-      <CloudAuthProvider>
-        <AppearancePreferencesProvider>
-          <AppContent />
-        </AppearancePreferencesProvider>
-      </CloudAuthProvider>
+      {recoveryAction === "loading" ? null : recoveryAction === "safe" ? (
+        <AppearanceRecoverySurface
+          action="safe"
+          onComplete={() => setRecoveryAction("safe-continued")}
+        />
+      ) : recoveryAction === "reset" ? (
+        <AppearanceRecoverySurface
+          action="reset"
+          onComplete={() => setRecoveryAction("safe-continued")}
+          onCancel={() => setRecoveryAction("normal")}
+        />
+      ) : (
+        <CloudAuthProvider>
+          <AppearancePreferencesProvider skipPortableProfile={recoveryAction === "safe-continued"}>
+            <AppContent />
+          </AppearancePreferencesProvider>
+        </CloudAuthProvider>
+      )}
     </RegistryContext.Provider>
   );
 }
 
+function AppearanceRecoverySurface(props: {
+  readonly action: MobileAppearanceRecoveryAction;
+  readonly onComplete: () => void;
+  readonly onCancel?: () => void;
+}) {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [restoreConfirming, setRestoreConfirming] = useState(false);
+  const current: Preferences = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value
+    : {};
+
+  useEffect(() => {
+    void SplashScreen.hide();
+  }, []);
+
+  const persist = async (patch: Partial<Preferences>) => {
+    setIsSaving(true);
+    try {
+      await runtime.runPromise(
+        MobilePreferencesStore.pipe(Effect.flatMap((store) => store.savePatch(patch))),
+      );
+      setIsSaving(false);
+      return true;
+    } catch {
+      setIsSaving(false);
+      setSaveError("The appearance recovery change could not be saved. Try again.");
+      return false;
+    }
+  };
+
+  const confirm = async () => {
+    if (props.action === "reset") {
+      if (!(await persist(createMobileAppearanceResetPatch(current.appearanceProfile)))) return;
+    }
+    props.onComplete();
+  };
+
+  const restore = async () => {
+    const quarantinedProfile = current.quarantinedAppearanceProfile;
+    if (quarantinedProfile === undefined) return;
+    if (
+      !(await persist(
+        createMobileAppearanceRestorePatch(current.appearanceProfile, quarantinedProfile),
+      ))
+    ) {
+      return;
+    }
+    props.onComplete();
+  };
+
+  return (
+    <SafeAreaView style={recoveryStyles.container}>
+      <View style={recoveryStyles.card}>
+        <Text style={recoveryStyles.title}>
+          {props.action === "safe" ? "Appearance recovery" : "Reset appearance?"}
+        </Text>
+        <Text style={recoveryStyles.message}>
+          {props.action === "safe"
+            ? "Custom appearance is disabled for this launch. Continue with the built-in appearance."
+            : "Your current portable appearance will be moved to quarantine. You can restore it later."}
+        </Text>
+        <Button
+          title={props.action === "safe" ? "Continue with built-in appearance" : "Reset appearance"}
+          onPress={() => void confirm()}
+          disabled={
+            isSaving || (props.action === "reset" && !AsyncResult.isSuccess(preferencesResult))
+          }
+        />
+        {props.action === "safe" && current.quarantinedAppearanceProfile !== undefined ? (
+          <Button
+            title={
+              restoreConfirming
+                ? "Confirm restore quarantined appearance"
+                : "Restore quarantined appearance"
+            }
+            onPress={() => {
+              if (restoreConfirming) void restore();
+              else setRestoreConfirming(true);
+            }}
+            disabled={isSaving}
+          />
+        ) : null}
+        {saveError === null ? null : <Text style={recoveryStyles.error}>{saveError}</Text>}
+        {props.action === "reset" && props.onCancel !== undefined ? (
+          <Button title="Cancel" onPress={props.onCancel} disabled={isSaving} />
+        ) : null}
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const recoveryStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#f2f2f7" },
+  card: { flex: 1, justifyContent: "center", gap: 16, padding: 24 },
+  title: { color: "#1f1f21", fontSize: 24, fontWeight: "700" },
+  message: { color: "#4b4b50", fontSize: 16, lineHeight: 24 },
+  error: { color: "#b42318", fontSize: 15, lineHeight: 22 },
+});
+
 function AppContent() {
-  const { themeAppearance } = useAppearancePreferences();
-  const statusBarBg = useThemeColor("--color-status-bar");
-  const navigationTheme = useMobileNavigationTheme(themeAppearance);
+  const { themeAppearance, nativeAppearance } = useAppearancePreferences();
+  const navigationTheme = useMemo<Theme>(() => {
+    const base = themeAppearance === "dark" ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      dark: nativeAppearance.navigation.dark,
+      colors: {
+        ...base.colors,
+        primary: nativeAppearance.navigation.primary,
+        background: nativeAppearance.navigation.background,
+        card: nativeAppearance.navigation.card,
+        text: nativeAppearance.navigation.text,
+        border: nativeAppearance.navigation.border,
+        notification: nativeAppearance.navigation.notification,
+      },
+    };
+  }, [nativeAppearance, themeAppearance]);
 
   return (
     <>
@@ -83,23 +258,15 @@ function AppContent() {
           <SafeAreaProvider>
             <StatusBar
               barStyle={themeAppearance === "dark" ? "light-content" : "dark-content"}
-              backgroundColor={statusBarBg}
+              backgroundColor={nativeAppearance.navigation.background}
               translucent
             />
-            {/* The navigation theme drives the NATIVE header appearance: native-stack
-                forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
-                this, React Navigation defaults to its light theme and every native
-                header (glass buttons, title, materials) is forced light even when
-                the system is in dark mode. */}
-            {/* Blur target for Android dropdown backdrops — see appBlurTarget.ts. */}
             <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>
               <IncomingShareProvider>
                 <Navigation linking={appLinking} theme={navigationTheme} />
               </IncomingShareProvider>
               <ConfirmDialogHost />
             </BlurTargetView>
-            {/* Anchored-menu overlays render here — in-window, so the
-                keyboard stays up while a dropdown is open. */}
             <OverlayPortalHost />
           </SafeAreaProvider>
         </KeyboardProvider>

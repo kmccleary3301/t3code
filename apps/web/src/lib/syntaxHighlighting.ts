@@ -1,30 +1,88 @@
 import {
   getSharedHighlighter,
+  registerCustomTheme,
   type DiffsHighlighter,
   type SupportedLanguages,
 } from "@pierre/diffs";
-
-import { resolveDiffThemeName } from "./diffRendering";
+import {
+  hashNormalizedAppearanceProfile,
+  type NormalizedAppearanceProfile,
+  type NormalizedAppearanceVariant,
+} from "@t3tools/shared/appearance";
+import { setActiveAppearanceDiffTheme } from "./diffRendering";
 
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
+const registeredSyntaxThemeNames = new Set<string>();
+let activeSyntaxThemeName: string | null = null;
+let activeSyntaxThemeKey: string | null = null;
 
-export function getSyntaxHighlighterPromise(language: string): Promise<DiffsHighlighter> {
-  const cached = highlighterPromiseCache.get(language);
+function syntaxThemeRegistration(name: string, variant: NormalizedAppearanceVariant) {
+  return {
+    name,
+    type: variant.appearance,
+    colors: {
+      "editor.background": variant.diff.background,
+      "editor.foreground": variant.diff.foreground,
+    },
+    tokenColors: variant.syntax.tokens.map((token) => ({
+      scope: [...token.scopes],
+      settings: {
+        foreground: token.foreground,
+        ...(token.background === undefined ? {} : { background: token.background }),
+        ...(token.fontStyle.length === 0 ? {} : { fontStyle: token.fontStyle.join(" ") }),
+      },
+    })),
+  };
+}
+export function registerNormalizedSyntaxTheme(
+  profile: NormalizedAppearanceProfile,
+  variant: NormalizedAppearanceVariant,
+): string {
+  const profileHash = hashNormalizedAppearanceProfile(profile);
+  const key = `${profileHash}:${variant.id}`;
+  const name = `t3-appearance-${profileHash.slice(0, 16)}-${variant.id}`;
+  if (activeSyntaxThemeKey === key && activeSyntaxThemeName === name) return name;
+  if (!registeredSyntaxThemeNames.has(name)) {
+    registerCustomTheme(name, () => Promise.resolve(syntaxThemeRegistration(name, variant)));
+    registeredSyntaxThemeNames.add(name);
+  }
+  activeSyntaxThemeKey = key;
+  activeSyntaxThemeName = name;
+  highlighterPromiseCache.clear();
+  setActiveAppearanceDiffTheme(name);
+  return name;
+}
+
+export function clearNormalizedSyntaxTheme(): void {
+  activeSyntaxThemeKey = null;
+  activeSyntaxThemeName = null;
+  highlighterPromiseCache.clear();
+  setActiveAppearanceDiffTheme(null);
+}
+
+export function activeSyntaxTheme(fallback: string): string {
+  return activeSyntaxThemeName ?? fallback;
+}
+
+export function getSyntaxHighlighterPromise(
+  language: string,
+  themeName = activeSyntaxTheme("pierre-dark"),
+): Promise<DiffsHighlighter> {
+  const cacheKey = `${themeName}:${language}`;
+  const cached = highlighterPromiseCache.get(cacheKey);
   if (cached) return cached;
 
   const promise = getSharedHighlighter({
-    themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
+    themes: [themeName],
     langs: [language as SupportedLanguages],
     preferredHighlighter: "shiki-js",
   }).catch((error) => {
     if (language === "text") {
-      highlighterPromiseCache.delete(language);
-      // "text" itself failed — Shiki cannot initialize at all, surface the error
+      highlighterPromiseCache.delete(cacheKey);
       throw error;
     }
-    // Language not supported by Shiki — fall back to "text"
-    return getSyntaxHighlighterPromise("text");
+    return getSyntaxHighlighterPromise("text", themeName);
   });
-  highlighterPromiseCache.set(language, promise);
+  highlighterPromiseCache.set(cacheKey, promise);
   return promise;
 }

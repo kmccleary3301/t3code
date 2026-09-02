@@ -22,6 +22,8 @@ export function WorkspacePageHeader({
         COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         className,
       )}
+      data-t3-surface="title-area"
+      data-t3-part="drag-region"
       {...props}
     />
   );

@@ -14,6 +14,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { ProviderApprovalOption } from "./orchestration.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -140,6 +141,7 @@ export const CanonicalRequestType = Schema.Literals([
   "file_change_approval",
   "apply_patch_approval",
   "exec_command_approval",
+  "mcp_elicitation_approval",
   "tool_user_input",
   "dynamic_tool_call",
   "auth_tokens_refresh",
@@ -172,6 +174,8 @@ const ProviderRuntimeEventType = Schema.Literals([
   "item.updated",
   "item.completed",
   "content.delta",
+  "ui.status.updated",
+  "ui.widget.updated",
   "request.opened",
   "request.resolved",
   "user-input.requested",
@@ -223,6 +227,8 @@ const ItemStartedType = Schema.Literal("item.started");
 const ItemUpdatedType = Schema.Literal("item.updated");
 const ItemCompletedType = Schema.Literal("item.completed");
 const ContentDeltaType = Schema.Literal("content.delta");
+const UiStatusUpdatedType = Schema.Literal("ui.status.updated");
+const UiWidgetUpdatedType = Schema.Literal("ui.widget.updated");
 const RequestOpenedType = Schema.Literal("request.opened");
 const RequestResolvedType = Schema.Literal("request.resolved");
 const UserInputRequestedType = Schema.Literal("user-input.requested");
@@ -324,6 +330,7 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
   toolUses: Schema.optional(NonNegativeInt),
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
+  autoCompactThreshold: Schema.optional(PositiveInt),
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 
@@ -421,6 +428,19 @@ export const ItemLifecyclePayload = Schema.Struct({
 });
 export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
 
+const UiStatusUpdatedPayload = Schema.Struct({
+  key: TrimmedNonEmptyStringSchema,
+  value: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type UiStatusUpdatedPayload = typeof UiStatusUpdatedPayload.Type;
+
+const UiWidgetUpdatedPayload = Schema.Struct({
+  key: TrimmedNonEmptyStringSchema,
+  content: Schema.optional(TrimmedNonEmptyStringSchema),
+  placement: Schema.Literals(["above", "below"]),
+});
+export type UiWidgetUpdatedPayload = typeof UiWidgetUpdatedPayload.Type;
+
 const ContentDeltaPayload = Schema.Struct({
   streamKind: RuntimeContentStreamKind,
   delta: Schema.String,
@@ -432,6 +452,8 @@ export type ContentDeltaPayload = typeof ContentDeltaPayload.Type;
 const RequestOpenedPayload = Schema.Struct({
   requestType: CanonicalRequestType,
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  appName: Schema.optional(TrimmedNonEmptyStringSchema),
+  options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   args: Schema.optional(Schema.Unknown),
 });
 export type RequestOpenedPayload = typeof RequestOpenedPayload.Type;
@@ -952,6 +974,20 @@ const ProviderRuntimeItemCompletedEvent = Schema.Struct({
 });
 export type ProviderRuntimeItemCompletedEvent = typeof ProviderRuntimeItemCompletedEvent.Type;
 
+const ProviderRuntimeUiStatusUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: UiStatusUpdatedType,
+  payload: UiStatusUpdatedPayload,
+});
+export type ProviderRuntimeUiStatusUpdatedEvent = typeof ProviderRuntimeUiStatusUpdatedEvent.Type;
+
+const ProviderRuntimeUiWidgetUpdatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: UiWidgetUpdatedType,
+  payload: UiWidgetUpdatedPayload,
+});
+export type ProviderRuntimeUiWidgetUpdatedEvent = typeof ProviderRuntimeUiWidgetUpdatedEvent.Type;
+
 const ProviderRuntimeContentDeltaEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ContentDeltaType,
@@ -1164,6 +1200,8 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeItemUpdatedEvent,
   ProviderRuntimeItemCompletedEvent,
   ProviderRuntimeContentDeltaEvent,
+  ProviderRuntimeUiStatusUpdatedEvent,
+  ProviderRuntimeUiWidgetUpdatedEvent,
   ProviderRuntimeRequestOpenedEvent,
   ProviderRuntimeRequestResolvedEvent,
   ProviderRuntimeUserInputRequestedEvent,

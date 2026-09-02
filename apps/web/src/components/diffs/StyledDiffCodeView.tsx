@@ -23,12 +23,12 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
     color-mix(
       in lab,
       var(--code-background) 88%,
-      color-mix(in srgb, var(--code-background) 50%, var(--diffs-modified-base))
+      var(--diffs-bg-modification, var(--diffs-modified-base))
     ),
     color-mix(
       in lab,
       var(--code-background) 80%,
-      color-mix(in srgb, var(--code-background) 70%, var(--diffs-modified-base))
+      var(--diffs-bg-modification, var(--diffs-modified-base))
     )
   ) !important;
 }
@@ -38,12 +38,12 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
     color-mix(
       in lab,
       var(--code-background) 91%,
-      color-mix(in srgb, var(--code-background) 35%, var(--diffs-modified-base))
+      var(--diffs-bg-modification, var(--diffs-modified-base))
     ),
     color-mix(
       in lab,
       var(--code-background) 85%,
-      color-mix(in srgb, var(--code-background) 60%, var(--diffs-modified-base))
+      var(--diffs-bg-modification, var(--diffs-modified-base))
     )
   ) !important;
 }
@@ -79,7 +79,7 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   position: sticky !important;
   top: 0;
   z-index: 4;
-  background-color: var(--code-background) !important;
+  background-color: var(--diffs-header-bg, var(--code-background)) !important;
   border-bottom-color: transparent !important;
   align-items: center !important;
   font-family: var(--font-sans) !important;
@@ -93,14 +93,14 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 [data-diffs-header]:hover {
   /* A native scrollbar gutter cannot be painted by descendants. Use an inset edge cue instead
      of a full-width band that would look accidentally clipped at the gutter. */
-  background-color: var(--code-background) !important;
+  background-color: var(--diffs-header-bg, var(--code-background)) !important;
   box-shadow: inset 3px 0 color-mix(in srgb, var(--code-foreground) 24%, transparent);
 }
 
 :is([data-separator="line-info"], [data-separator="line-info-basic"]) {
   height: 24px !important;
   margin-block: 0 !important;
-  background-color: var(--code-background) !important;
+  background-color: var(--diffs-bg-separator, var(--code-background)) !important;
 }
 
 :is([data-separator="line-info"], [data-separator="line-info-basic"])
@@ -114,7 +114,7 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   gap: 8px;
   padding-inline: 0 !important;
   background-color: transparent !important;
-  color: color-mix(in srgb, var(--code-foreground) 52%, var(--code-background)) !important;
+  color: color-mix(in srgb, var(--diffs-fg-hunk, var(--code-foreground)) 52%, var(--code-background)) !important;
   font-family: var(--font-sans) !important;
   font-size: 11px !important;
   text-decoration: none !important;
@@ -180,7 +180,7 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
     [data-expand-button]
   ):is(:hover, :focus-within)
   [data-separator-content] {
-  color: color-mix(in srgb, var(--code-foreground) 76%, var(--code-background)) !important;
+  color: color-mix(in srgb, var(--diffs-fg-hunk, var(--code-foreground)) 76%, var(--code-background)) !important;
 }
 
 :is([data-separator="line-info"], [data-separator="line-info-basic"]):has(

@@ -50,7 +50,6 @@ import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
-import { useLoadingProgress } from "./useLoadingProgress";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
 import { AgentBrowserCursor } from "./AgentBrowserCursor";
@@ -142,7 +141,6 @@ export function PreviewView({
   const isUnreachable = navStatus._tag === "LoadFailed";
   const showEmptyState = shouldShowPreviewEmptyState(snapshot);
   const controller = desktopOverlay?.controller ?? "none";
-  const loadProgress = useLoadingProgress(loading);
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
   const panelRect = useBrowserSurfaceStore((state) =>
@@ -657,11 +655,11 @@ export function PreviewView({
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
+      data-t3-surface="preview"
     >
       <PreviewChromeRow
         url={url}
         loading={loading}
-        loadProgress={loadProgress}
         canGoBack={canGoBack}
         canGoForward={canGoForward}
         refreshDisabled={refreshDisabled}
@@ -702,7 +700,7 @@ export function PreviewView({
         }
       />
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden" data-t3-surface="preview-viewport">
         {runtimeTabId && snapshot && !showEmptyState ? (
           <BrowserSurfaceSlot
             key={runtimeTabId}
@@ -737,7 +735,7 @@ export function PreviewView({
           </div>
         ) : null}
         {navStatus._tag === "LoadFailed" ? (
-          <div className="absolute inset-0 z-10 bg-background">
+          <div className="absolute inset-0 z-10 bg-background" data-t3-surface="preview-error">
             <PreviewUnreachable
               url={navStatus.url}
               code={navStatus.code}

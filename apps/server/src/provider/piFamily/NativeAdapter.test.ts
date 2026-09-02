@@ -77,7 +77,7 @@ const capabilities = (runtime: Runtime, modelSwitch = true) => ({
   tasks: {
     lifecycle: true,
     nested: runtime === "omp",
-    childTranscript: false,
+    childTranscript: runtime === "omp",
     workflows: runtime === "omp",
     background: runtime === "omp",
     targetedCancellation: false,
@@ -148,6 +148,7 @@ const makeNativeScript = (
           '  if (command.type === "rewind") out({ id: command.id, type: "response", command: "rewind", success: true, data: { checkpointId: command.checkpointId, rewound: true } });',
           '  if (command.type === "get_branch_messages") out({ id: command.id, type: "response", command: "get_branch_messages", success: true, data: { messages: [{ entryId: "message-1", text: "prompt" }] } });',
           '  if (command.type === "branch") { sessionId = "forked-session"; out({ id: command.id, type: "response", command: "branch", success: true, data: { text: "prompt", cancelled: false } }); }',
+          '  if (command.type === "get_subagent_messages") { const first = command.fromByte === 0; out({ id: command.id, type: "response", command: "get_subagent_messages", success: true, data: { sessionFile: "/tmp/child.jsonl", fromByte: command.fromByte, nextByte: first ? 128 : command.fromByte, reset: false, entries: first ? [{ type: "message", id: "child-user", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "Inspect the module" } }, { type: "message", id: "child-assistant", parentId: "child-user", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "thinking", thinking: "Checking state" }, { type: "toolCall", name: "read", arguments: { path: "src/index.ts" } }, { type: "text", text: "Found it" }] } }] : [], messages: [] } }); }',
         ]
       : [
           '  if (command.type === "capture_checkpoint") out({ id: command.id, type: "response", command: "capture_checkpoint", success: true, data: { runtime: "pi", sessionId, leafEntryId: "leaf-1" } });',
@@ -202,6 +203,8 @@ const makeNativeScript = (
     ...(runtime === "omp"
       ? ['      out({ type: "agent_start" });']
       : ['      out({ type: "turn_start", id: command.id });']),
+    '      out({ type: "extension_ui_request", id: "ui-status", method: "setStatus", statusKey: "main", statusText: "Working" });',
+    '      out({ type: "extension_ui_request", id: "ui-widget", method: "setWidget", widgetKey: "main", widgetLines: ["2 agents", "sonic · read"], widgetPlacement: "aboveEditor" });',
     '      out({ type: "extension_ui_request", id: "ui-confirm", method: "confirm", title: "Confirm", message: "Continue?" });',
     '      out({ type: "extension_ui_request", id: "ui-select", method: "select", title: "Choose", options: [{ id: "alpha", label: "Alpha" }, { id: "beta", label: "Beta" }] });',
     '      out({ type: "extension_ui_request", id: "ui-input", method: "input", title: "Name", placeholder: "value" });',
@@ -873,6 +876,27 @@ describe("Pi-family native adapter", () => {
             sessionId: "test-session",
           });
         }
+        if (runtime === "omp") {
+          const readSubagentTranscript = adapter.readSubagentTranscript;
+          assert.isDefined(readSubagentTranscript);
+          if (!readSubagentTranscript) return;
+          const transcript = yield* readSubagentTranscript(threadId, "child-1");
+          assert.equal(transcript.nextCursor, "128");
+          assert.deepEqual(
+            transcript.entries.map((entry) => [entry.kind, entry.text, entry.toolName]),
+            [
+              ["user", "Inspect the module", undefined],
+              ["reasoning", "Checking state", undefined],
+              ["tool", 'Called read\n{\n  "path": "src/index.ts"\n}', "read"],
+              ["assistant", "Found it", undefined],
+            ],
+          );
+          assert.deepEqual(yield* readSubagentTranscript(threadId, "child-1", "128"), {
+            entries: [],
+            nextCursor: "128",
+            reset: false,
+          });
+        }
 
         const started = yield* nextEvent(adapter.streamEvents);
         assert.equal(Option.isSome(started), true);
@@ -1290,7 +1314,7 @@ describe("Pi-family native adapter", () => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.effect("redacts and bounds unknown native event details before persistence", () =>
+  it.effect("drops unknown native events instead of persisting warnings", () =>
     Effect.gen(function* () {
       const runtime = "pi" as const;
       const provider = ProviderDriverKind.make(runtime);
@@ -1318,20 +1342,11 @@ describe("Pi-family native adapter", () => {
       yield* nextEvent(adapter.streamEvents);
       yield* adapter.sendTurn({ threadId, input: "unknown-events" });
 
-      const redacted = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
-      const bounded = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
-      assert.equal(redacted?.type, "runtime.warning");
-      assert.equal(bounded?.type, "runtime.warning");
-      const redactedDetail =
-        redacted?.type === "runtime.warning" && typeof redacted.payload.detail === "object"
-          ? (redacted.payload.detail as Record<string, unknown>)
-          : undefined;
-      const boundedDetail =
-        bounded?.type === "runtime.warning" && typeof bounded.payload.detail === "object"
-          ? (bounded.payload.detail as Record<string, unknown>)
-          : undefined;
-      assert.deepEqual(redactedDetail, { type: "unknown", redacted: true });
-      assert.deepEqual(boundedDetail, { type: "unknown", redacted: true });
+      const events = yield* adapter.streamEvents.pipe(Stream.take(1), Stream.runCollect);
+      assert.deepEqual(
+        Array.from(events, (event) => event.type),
+        ["turn.completed"],
+      );
       for (const canary of [
         "opaque-id-canary",
         "opaque-env-canary",
@@ -1339,11 +1354,8 @@ describe("Pi-family native adapter", () => {
         "opaque-value-canary",
         "future_native_event",
       ]) {
-        assert.notInclude(encodeUnknownJson(redacted), canary);
-        assert.notInclude(encodeUnknownJson(bounded), canary);
+        assert.notInclude(encodeUnknownJson(events), canary);
       }
-      assert.equal(redacted?.raw, undefined);
-      assert.equal(bounded?.raw, undefined);
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -1378,12 +1390,22 @@ describe("Pi-family native adapter", () => {
       yield* adapter.sendTurn({ threadId, input: "portable-ui" });
 
       const turnStarted = yield* nextEvent(adapter.streamEvents);
+      const status = yield* nextEvent(adapter.streamEvents);
+      const widget = yield* nextEvent(adapter.streamEvents);
       const confirm = yield* nextEvent(adapter.streamEvents);
       const select = yield* nextEvent(adapter.streamEvents);
       const input = yield* nextEvent(adapter.streamEvents);
       const editor = yield* nextEvent(adapter.streamEvents);
       const turnCompleted = yield* nextEvent(adapter.streamEvents);
       assert.equal(Option.getOrUndefined(turnStarted)?.type, "turn.started");
+      assert.deepInclude(Option.getOrUndefined(status), {
+        type: "ui.status.updated",
+        payload: { key: "main", value: "Working" },
+      });
+      assert.deepInclude(Option.getOrUndefined(widget), {
+        type: "ui.widget.updated",
+        payload: { key: "main", content: "2 agents\nsonic · read", placement: "above" },
+      });
       assert.equal(Option.getOrUndefined(confirm)?.type, "request.opened");
       assert.equal(Option.getOrUndefined(select)?.type, "user-input.requested");
       assert.equal(Option.getOrUndefined(input)?.type, "request.opened");

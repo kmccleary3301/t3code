@@ -186,6 +186,7 @@ describe("ProviderSessionReaper", () => {
       rollbackConversation: () => unsupported(),
       captureNativeCheckpoint: () => Effect.succeed(undefined),
       restoreNativeCheckpoint: () => Effect.void,
+      uploadFeedback: () => unsupported(),
       streamEvents: Stream.empty,
     };
 

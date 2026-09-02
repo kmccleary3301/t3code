@@ -44,7 +44,7 @@ import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { TerminalSurface } from "./NativeTerminalSurface";
-import { getMobileTerminalTheme } from "./terminalTheme";
+import { getProfileTerminalTheme } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
 import {
   getTerminalBufferReplayKey,
@@ -185,11 +185,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const {
     isReady: hasResolvedFontPreference,
     appearance,
+    appearanceOutput,
     themeAppearance: appearanceScheme,
-    themeId,
+    profile,
     setTerminalFontSize,
   } = useAppearancePreferences();
-  const fontSize = appearance.terminalFontSize;
+  const fontSize = appearance.isTerminalFontSizeCustom
+    ? appearance.terminalFontSize
+    : appearanceOutput.rendererPalettes.terminal.fontSize;
   const cachedRouteGridSize =
     routeEnvironmentId && routeThreadId
       ? getCachedTerminalGridSize({
@@ -467,7 +470,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     [selectedEnvironmentConnection?.environmentLabel],
   );
 
-  const terminalTheme = getMobileTerminalTheme(themeId, appearanceScheme);
+  const terminalTheme = getProfileTerminalTheme(profile, appearanceScheme);
   const usesNativeHeaderGlass = Platform.OS === "ios";
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;

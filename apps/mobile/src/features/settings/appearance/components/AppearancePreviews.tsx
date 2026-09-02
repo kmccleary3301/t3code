@@ -1,19 +1,13 @@
-import { Platform, ScrollView, type StyleProp, type TextStyle, View } from "react-native";
+import { ScrollView, type StyleProp, type TextStyle, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/AppText";
 import {
   resolveMarkdownFontSizes,
   resolveMobileCodeSurface,
 } from "../../../../lib/appearancePreferences";
-import { useThemeColor } from "../../../../lib/useThemeColor";
-import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
+import { useUniwindTheme } from "../../../../lib/useUniwindTheme";
+import { getProfileTerminalTheme } from "../../../terminal/terminalTheme";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
-
-const CODE_FONT_FAMILY = Platform.select({
-  ios: "ui-monospace",
-  android: "monospace",
-  default: "monospace",
-});
 
 /** Hairline between a section's preview surface and its control rows. */
 export function AppearancePreviewSeparator() {
@@ -22,19 +16,32 @@ export function AppearancePreviewSeparator() {
 
 /** Live sample of body text rendered at the chosen base font size. */
 export function TextAppearancePreview(props: { readonly fontSize: number }) {
+  const { appearanceOutput } = useAppearancePreferences();
   const sizes = resolveMarkdownFontSizes(props.fontSize);
+  const bodyTypography = appearanceOutput.typographyPreferences.markdown;
+  const labelTypography = appearanceOutput.typographyPreferences.label;
 
   return (
     <View className="gap-1 p-4">
       <Text
         className="text-foreground"
-        style={{ fontSize: sizes.m, lineHeight: sizes.bodyLineHeight }}
+        style={{
+          fontFamily: bodyTypography.family,
+          fontSize: sizes.m,
+          letterSpacing: sizes.m * bodyTypography.letterSpacingEm,
+          lineHeight: Math.round(sizes.m * bodyTypography.lineHeight),
+        }}
       >
         The quick brown fox jumps over the lazy dog.
       </Text>
       <Text
         className="text-foreground-muted"
-        style={{ fontSize: sizes.s, lineHeight: Math.round(sizes.s * 1.4) }}
+        style={{
+          fontFamily: labelTypography.family,
+          fontSize: sizes.s,
+          letterSpacing: sizes.s * labelTypography.letterSpacingEm,
+          lineHeight: Math.round(sizes.s * labelTypography.lineHeight),
+        }}
       >
         Messages, labels, and headings scale with this size.
       </Text>
@@ -47,12 +54,18 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
  * on the shared card background so it reads like the other previews.
  */
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
-  const { themeAppearance: scheme, themeId } = useAppearancePreferences();
-  const theme = getMobileTerminalTheme(themeId, scheme);
-  const lineHeight = Math.round(props.fontSize * 1.6);
+  const { themeAppearance: scheme, profile, appearanceOutput } = useAppearancePreferences();
+  const theme = getProfileTerminalTheme(profile, scheme);
+  const terminalTypography = appearanceOutput.typographyPreferences.terminal;
+  const lineHeight = Math.round(
+    props.fontSize * (theme.lineHeight ?? terminalTypography.lineHeight),
+  );
+  const letterSpacing =
+    props.fontSize * (theme.letterSpacingEm ?? terminalTypography.letterSpacingEm);
   const lineStyle = {
-    fontFamily: "Menlo",
+    fontFamily: theme.fontFamily ?? terminalTypography.family,
     fontSize: props.fontSize,
+    letterSpacing,
     lineHeight,
   } as const;
   // AppText stamps the sans font on every node, so nested spans must
@@ -138,8 +151,13 @@ export function CodeAppearancePreview(props: {
   readonly wordBreak: boolean;
 }) {
   const surface = resolveMobileCodeSurface(props.fontSize);
-  const lineNumberColor = useThemeColor("--color-icon-subtle");
-  const keywordColor = useThemeColor("--color-md-link");
+  const { appearanceOutput } = useAppearancePreferences();
+  const codeTypography = appearanceOutput.typographyPreferences.code;
+  const theme = useUniwindTheme();
+  const lineNumberColor = theme["--color-icon-subtle"];
+  const keywordColor = theme["--color-md-link"];
+  const codeFontFamily = codeTypography.family;
+  const codeLetterSpacing = surface.fontSize * codeTypography.letterSpacingEm;
 
   const lineNumber = (line: CodePreviewLine, index: number) => (
     <Text
@@ -147,8 +165,9 @@ export function CodeAppearancePreview(props: {
       key={line.id}
       style={{
         color: lineNumberColor,
-        fontFamily: CODE_FONT_FAMILY,
+        fontFamily: codeFontFamily,
         fontSize: surface.lineNumberFontSize,
+        letterSpacing: codeLetterSpacing,
         lineHeight: surface.rowHeight,
         width: 22,
       }}
@@ -163,8 +182,9 @@ export function CodeAppearancePreview(props: {
       key={line.id}
       numberOfLines={wrap ? undefined : 1}
       style={{
-        fontFamily: CODE_FONT_FAMILY,
+        fontFamily: codeFontFamily,
         fontSize: surface.fontSize,
+        letterSpacing: codeLetterSpacing,
         lineHeight: surface.rowHeight,
       }}
     >
@@ -173,8 +193,9 @@ export function CodeAppearancePreview(props: {
           key={token.text}
           style={{
             color: token.keyword ? keywordColor : undefined,
-            fontFamily: CODE_FONT_FAMILY,
+            fontFamily: codeFontFamily,
             fontSize: surface.fontSize,
+            letterSpacing: codeLetterSpacing,
             lineHeight: surface.rowHeight,
           }}
         >

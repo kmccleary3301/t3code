@@ -584,6 +584,12 @@ export const DesktopPreviewTabIdSchema = Schema.String.check(Schema.isTrimmed())
   Schema.isNonEmpty(),
 );
 
+export const DesktopPreviewAutomationStatusSchema = Schema.Struct({
+  ...PreviewAutomationStatus.fields,
+  tabId: Schema.NullOr(DesktopPreviewTabIdSchema),
+});
+export type DesktopPreviewAutomationStatus = typeof DesktopPreviewAutomationStatusSchema.Type;
+
 export const DesktopPreviewNavStatusSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("Idle") }),
   Schema.Struct({
@@ -726,6 +732,19 @@ export const DesktopPreviewRecordingFrameSchema: Schema.Codec<DesktopPreviewReco
     width: Schema.Number,
     height: Schema.Number,
     receivedAt: Schema.String,
+  });
+
+export interface DesktopPreviewRecordingSource {
+  sourceId: string;
+  width: number;
+  height: number;
+}
+
+export const DesktopPreviewRecordingSourceSchema: Schema.Codec<DesktopPreviewRecordingSource> =
+  Schema.Struct({
+    sourceId: Schema.String,
+    width: Schema.Int.check(Schema.isGreaterThan(0)),
+    height: Schema.Int.check(Schema.isGreaterThan(0)),
   });
 
 export interface DesktopPreviewRecordingArtifact {
@@ -1061,8 +1080,96 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+export const DesktopAppearancePackageIdSchema = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9](?:[a-z0-9.-]{0,63})(?![\s\S])/u),
+);
+export const DesktopAppearanceSha256Schema = Schema.String.check(
+  Schema.isPattern(/^[a-f0-9]{64}(?![\s\S])/u),
+);
+export const DESKTOP_APPEARANCE_STATE_JSON_MAX_LENGTH = 256 * 1024 * 1024;
+export const DesktopAppearanceStateJsonSchema = Schema.String.check(
+  Schema.isMaxLength(DESKTOP_APPEARANCE_STATE_JSON_MAX_LENGTH),
+);
+export const DesktopAppearanceStateDocumentSchema = Schema.Struct({
+  stateJson: DesktopAppearanceStateJsonSchema,
+  checksum: DesktopAppearanceSha256Schema,
+});
+export type DesktopAppearanceStateDocument = typeof DesktopAppearanceStateDocumentSchema.Type;
+
+export const DesktopAppearanceCommitInputSchema = Schema.Struct({
+  expectedRevision: Schema.Int.check(
+    Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  ),
+  stateJson: DesktopAppearanceStateJsonSchema,
+  checksum: DesktopAppearanceSha256Schema,
+});
+export type DesktopAppearanceCommitInput = typeof DesktopAppearanceCommitInputSchema.Type;
+
+export const DesktopAppearancePackageSummarySchema = Schema.Struct({
+  id: DesktopAppearancePackageIdSchema,
+  name: Schema.String.check(Schema.isPattern(/\S/u), Schema.isMaxLength(128)),
+  version: Schema.String.check(Schema.isPattern(/\S/u), Schema.isMaxLength(128)),
+  enabled: Schema.Boolean,
+  order: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  manifestHash: DesktopAppearanceSha256Schema,
+  diagnosticCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  quarantined: Schema.Boolean,
+});
+export type DesktopAppearancePackageSummary = typeof DesktopAppearancePackageSummarySchema.Type;
+
+export const DesktopAppearanceAssetSummarySchema = Schema.Struct({
+  id: DesktopAppearancePackageIdSchema,
+  path: Schema.String.check(Schema.isPattern(/\S/u), Schema.isMaxLength(240)),
+  sha256: DesktopAppearanceSha256Schema,
+  mimeType: Schema.Literals(["image/png", "image/jpeg", "image/webp", "image/avif", "font/woff2"]),
+  sizeBytes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 * 1024 * 1024 })),
+});
+export type DesktopAppearanceAssetSummary = typeof DesktopAppearanceAssetSummarySchema.Type;
+
+export const DesktopAppearancePackageDocumentSchema = Schema.Struct({
+  summary: DesktopAppearancePackageSummarySchema,
+  capabilities: Schema.Array(
+    Schema.String.check(Schema.isPattern(/\S/u), Schema.isMaxLength(64)),
+  ).check(Schema.isMaxLength(32)),
+  manifestJson: Schema.String.check(Schema.isMaxLength(256 * 1024)),
+  sharedCss: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1024 * 1024))),
+  desktopCss: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1024 * 1024))),
+  assets: Schema.Array(DesktopAppearanceAssetSummarySchema).check(Schema.isMaxLength(256)),
+});
+export type DesktopAppearancePackageDocument = typeof DesktopAppearancePackageDocumentSchema.Type;
+
+export const DesktopAppearanceExportInputSchema = Schema.Struct({
+  id: DesktopAppearancePackageIdSchema,
+});
+export type DesktopAppearanceExportInput = typeof DesktopAppearanceExportInputSchema.Type;
+
+export const DesktopAppearanceStateSummarySchema = Schema.Struct({
+  revision: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+  safeMode: Schema.Boolean,
+  checksum: DesktopAppearanceSha256Schema,
+});
+export type DesktopAppearanceStateSummary = typeof DesktopAppearanceStateSummarySchema.Type;
+
+export const DesktopAppearanceWatchEventSchema = Schema.Struct({
+  reason: Schema.Literals(["external-change", "safe-mode", "reset", "install", "transaction"]),
+  state: DesktopAppearanceStateSummarySchema,
+});
+export type DesktopAppearanceWatchEvent = typeof DesktopAppearanceWatchEventSchema.Type;
+
+export const DesktopAppearanceSafeModeInputSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+});
+export type DesktopAppearanceSafeModeInput = typeof DesktopAppearanceSafeModeInputSchema.Type;
+
+export const DesktopAppearanceReadInputSchema = Schema.Struct({
+  id: DesktopAppearancePackageIdSchema,
+});
+export type DesktopAppearanceReadInput = typeof DesktopAppearanceReadInputSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  /** The desktop client's OS platform, read from Electron's preload process. */
+  getClientPlatform?: () => string;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so
@@ -1110,6 +1217,8 @@ export interface DesktopBridge {
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
+  /** Optional while older desktop shells can host a newer web client. */
+  pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and
@@ -1117,6 +1226,25 @@ export interface DesktopBridge {
    */
   pickThemeFiles?: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  readAppearanceState: () => Promise<DesktopAppearanceStateDocument>;
+  commitAppearanceState: (
+    input: DesktopAppearanceCommitInput,
+  ) => Promise<DesktopAppearanceStateSummary>;
+  listAppearancePackages: () => Promise<readonly DesktopAppearancePackageSummary[]>;
+  readAppearancePackage: (
+    input: DesktopAppearanceReadInput,
+  ) => Promise<DesktopAppearancePackageDocument | null>;
+  installAppearancePackage: () => Promise<DesktopAppearancePackageSummary | null>;
+  exportAppearancePackage: (input: DesktopAppearanceExportInput) => Promise<string | null>;
+  startAppearanceWatch: () => Promise<DesktopAppearanceStateSummary>;
+  onAppearanceWatchEvent: (listener: (event: DesktopAppearanceWatchEvent) => void) => () => void;
+  revealAppearanceFolder: () => Promise<void>;
+  setAppearanceSafeMode: (
+    input: DesktopAppearanceSafeModeInput,
+  ) => Promise<DesktopAppearanceStateSummary>;
+  resetAppearance: () => Promise<DesktopAppearanceStateSummary>;
+  readAppearanceQuarantine?: () => Promise<DesktopAppearanceStateDocument | null>;
+  restoreAppearanceQuarantine?: () => Promise<DesktopAppearanceStateSummary>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
@@ -1205,7 +1333,7 @@ export interface DesktopPreviewBridge {
     close: (tabId: string) => Promise<void>;
   };
   recording: {
-    startScreencast: (tabId: string) => Promise<void>;
+    startScreencast: (tabId: string) => Promise<DesktopPreviewRecordingSource>;
     stopScreencast: (tabId: string) => Promise<void>;
     save: (
       tabId: string,
@@ -1215,7 +1343,7 @@ export interface DesktopPreviewBridge {
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
   };
   automation: {
-    status: (tabId: string) => Promise<PreviewAutomationStatus>;
+    status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;

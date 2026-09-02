@@ -65,6 +65,26 @@ describe("buildGhosttyThemeConfig", () => {
     expect(config).toContain("cursor-color = #009fff");
     expect(config).toContain("palette = 0=#141415");
     expect(config).toContain("palette = 15=#c6c6c8");
+    expect(config).not.toContain("scrollbar-color = ");
     expect(config.endsWith("\n")).toBe(true);
+  });
+
+  it("serializes supported Ghostty typography settings deterministically", () => {
+    const config = buildGhosttyThemeConfig({
+      ...getPierreTerminalTheme("dark"),
+      fontFamily: "Fixture Mono",
+      fontSize: 14,
+      ligatures: false,
+      featureSettings: { ss01: 1, liga: 0 },
+      variableAxes: { wght: 650, opsz: 13 },
+    });
+
+    expect(config).toContain("font-family = Fixture Mono");
+    expect(config).toContain("font-size = 14");
+    expect(config).toContain("font-feature = -calt,-liga,-dlig");
+    expect(config).toContain('font-feature = "liga" 0');
+    expect(config).toContain('font-feature = "ss01" 1');
+    expect(config).toContain('font-variation = "opsz"=13');
+    expect(config).toContain('font-variation = "wght"=650');
   });
 });

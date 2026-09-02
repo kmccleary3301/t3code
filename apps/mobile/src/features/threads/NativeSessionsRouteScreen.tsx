@@ -18,7 +18,6 @@ import {
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { useServerConfigs } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -38,8 +37,6 @@ function errorMessage(error: unknown): string {
 
 export function NativeSessionsRouteScreen() {
   const navigation = useNavigation();
-  const iconColor = useThemeColor("--color-icon");
-  const mutedColor = useThemeColor("--color-foreground-muted");
   const serverConfigs = useServerConfigs();
   const { environments } = useWorkspaceState();
   const loadNativeSessions = useAtomQueryRunner(serverEnvironment.nativeSessions, {
@@ -254,7 +251,12 @@ export function NativeSessionsRouteScreen() {
     <View className="flex-1 bg-screen">
       <View className="border-b border-border px-4 py-3">
         <View className="min-h-12 flex-row items-center gap-2 rounded-2xl border border-input-border bg-input px-3.5">
-          <SymbolView name="magnifyingglass" size={17} tintColor={mutedColor} type="monochrome" />
+          <SymbolView
+            name="magnifyingglass"
+            size={17}
+            tintColorClassName={"accent-icon-muted"}
+            type="monochrome"
+          />
           <TextInput
             accessibilityLabel="Search native sessions"
             autoCapitalize="none"
@@ -280,7 +282,7 @@ export function NativeSessionsRouteScreen() {
             <SymbolView
               name="exclamationmark.triangle"
               size={28}
-              tintColor={mutedColor}
+              tintColorClassName={"accent-icon-muted"}
               type="monochrome"
             />
             <Text className="text-center text-base font-t3-medium text-foreground-muted">
@@ -293,7 +295,7 @@ export function NativeSessionsRouteScreen() {
             <SymbolView
               name="clock.arrow.circlepath"
               size={28}
-              tintColor={mutedColor}
+              tintColorClassName={"accent-icon-muted"}
               type="monochrome"
             />
             <Text className="text-center text-base font-t3-medium text-foreground-muted">
@@ -313,7 +315,7 @@ export function NativeSessionsRouteScreen() {
                     <SymbolView
                       name="clock.arrow.circlepath"
                       size={20}
-                      tintColor={iconColor}
+                      tintColorClassName={"accent-icon"}
                       type="monochrome"
                     />
                     <View className="flex-1 gap-1">

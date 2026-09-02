@@ -570,6 +570,7 @@ function Toasts({ position }: { position: ToastPosition }) {
         )}
         data-position={position}
         data-slot="toast-viewport"
+        data-t3-surface="toast"
         style={
           {
             "--toast-frontmost-height": `${visibleToastLayout.frontmostHeight}px`,
@@ -743,6 +744,7 @@ function AnchoredToasts() {
                     tooltipStyle ? "rounded-md" : "rounded-lg",
                   )}
                   data-slot="toast-popup"
+                  data-t3-part="toast"
                   toast={toast}
                 >
                   {tooltipStyle ? (

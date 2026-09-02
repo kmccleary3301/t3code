@@ -171,6 +171,91 @@ describe("Pi/OMP native event projection", () => {
     );
   });
 
+  it("preserves keyed OMP widget content and clear operations", () => {
+    const projector = new PiFamilyEventProjector("omp");
+    const update = {
+      type: "extension_ui_request",
+      id: "widget-1",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["\u001b[32m2 running\u001b[0m", "sonic · read"],
+      widgetPlacement: "aboveEditor",
+    };
+    assert.deepEqual(projector.project(update), [
+      {
+        kind: "ui.request",
+        request: {
+          kind: "widget",
+          requestId: "widget-1",
+          key: "subagents",
+          placement: "above",
+          content: "2 running\nsonic · read",
+        },
+        raw: update,
+      },
+    ]);
+    const clear = {
+      type: "extension_ui_request",
+      id: "widget-2",
+      method: "setWidget",
+      widgetKey: "subagents",
+    };
+    assert.deepEqual(projector.project(clear)[0], {
+      kind: "ui.request",
+      request: {
+        kind: "widget",
+        requestId: "widget-2",
+        key: "subagents",
+        placement: "below",
+      },
+      raw: clear,
+    });
+  });
+
+  it("projects successful OMP todo snapshots as canonical plans", () => {
+    const projector = new PiFamilyEventProjector("omp");
+    const event = {
+      type: "tool_execution_end",
+      toolCallId: "todo-1",
+      toolName: "todo",
+      isError: false,
+      result: {
+        details: {
+          phases: [
+            {
+              name: "Build",
+              tasks: [
+                { content: "Inspect seams", status: "completed" },
+                { content: "Wire UI", status: "in_progress" },
+              ],
+            },
+            {
+              name: "Verify",
+              tasks: [
+                { content: "Run tests", status: "blocked", blocker: "implementation" },
+                { content: "Old task", status: "abandoned" },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const projected = projector.project(event);
+    assert.deepEqual(
+      projected.map((item) => item.kind),
+      ["tool.completed", "plan.updated"],
+    );
+    assert.deepEqual(projected[1], {
+      kind: "plan.updated",
+      plan: [
+        { step: "Build · Inspect seams", status: "completed" },
+        { step: "Build · Wire UI", status: "inProgress" },
+        { step: "Verify · Run tests — blocked: implementation", status: "pending" },
+      ],
+      raw: event,
+    });
+  });
+
   it("projects OMP automatic compaction and retry lifecycle without settling a turn", () => {
     const projector = new PiFamilyEventProjector("omp");
     const events = [

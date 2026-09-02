@@ -3,9 +3,23 @@ import { THEME_COLOR_ROLES, getThemeColorVariable, type ThemeColorRole } from ".
 export type ThemePaintKind = "background" | "border" | "foreground";
 
 export type ThemePaintSnapshot = Readonly<Record<ThemePaintKind, string>>;
+export type ThemeInspectorReport = Readonly<{
+  /** The app token that this inspector can edit; null means the source is not known. */
+  readonly supportedToken: string | null;
+  /** A stable app surface/part hook, when the inspected DOM exposes one. */
+  readonly stableSurfaceSelector: string | null;
+  /** The stylesheet containing the matching source candidate, when readable. */
+  readonly matchedStylesheet: string | null;
+  /** A matching declaration candidate; browser internals do not expose a portable winner API. */
+  readonly cascadeWinnerCandidate: string | null;
+  /** Adapter ownership marker, when a renderer publishes one. */
+  readonly adapterOwnership: string | null;
+}>;
+
 export type ThemeElementInspection = Readonly<{
   element: Element;
   role: ThemeColorRole;
+  report: ThemeInspectorReport;
 }>;
 
 const THEME_PAINT_KIND_ORDER: ReadonlyArray<ThemePaintKind> = [
@@ -92,6 +106,93 @@ export function clearThemeInspectorHighlights(): void {
 
 export function clearThemeInspectorHover(): void {
   document.getElementById(THEME_HOVER_ID)?.remove();
+}
+const STABLE_SURFACE_ATTRIBUTES = [
+  "data-t3-surface",
+  "data-theme-surface",
+  "data-theme-part",
+  "data-part",
+  "data-slot",
+] as const;
+
+function selectorAttributeValue(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+function closestStableSurfaceSelector(element: Element): string | null {
+  let candidate: Element | null = element;
+  while (candidate && candidate !== document.documentElement) {
+    for (const attribute of STABLE_SURFACE_ATTRIBUTES) {
+      const value = candidate.getAttribute(attribute)?.trim();
+      if (value) return `[${attribute}="${selectorAttributeValue(value)}"]`;
+    }
+    candidate = candidate.parentElement;
+  }
+  return null;
+}
+
+function adapterOwnershipFor(element: Element): string | null {
+  const owner =
+    element.closest("[data-renderer-owner]")?.getAttribute("data-renderer-owner") ??
+    element.closest("[data-appearance-owner]")?.getAttribute("data-appearance-owner");
+  return owner?.trim() || null;
+}
+
+function sourceStylesheetFor(
+  element: Element,
+  variable: string,
+): Pick<ThemeInspectorReport, "matchedStylesheet" | "cascadeWinnerCandidate"> {
+  const matches: Array<{ source: string; candidate: string }> = [];
+  const styleAttribute = element.getAttribute("style") ?? "";
+  if (styleAttribute.includes(variable)) {
+    matches.push({ source: "inline style attribute", candidate: styleAttribute });
+  }
+  const visitRules = (rules: CSSRuleList, source: string): void => {
+    for (const rule of Array.from(rules)) {
+      if ("cssRules" in rule && rule.cssRules instanceof CSSRuleList) {
+        visitRules(rule.cssRules, source);
+      }
+      if (
+        !("selectorText" in rule) ||
+        typeof rule.selectorText !== "string" ||
+        !("style" in rule) ||
+        !(rule.style instanceof CSSStyleDeclaration) ||
+        !element.matches(rule.selectorText) ||
+        !rule.style.cssText.includes(variable)
+      ) {
+        continue;
+      }
+      matches.push({
+        source,
+        candidate: `${rule.selectorText} { ${rule.style.cssText} }`,
+      });
+    }
+  };
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      const source =
+        sheet.href ??
+        (sheet.ownerNode instanceof HTMLStyleElement ? "inline <style>" : "inline stylesheet");
+      visitRules(sheet.cssRules, source);
+    } catch {
+      // Cross-origin stylesheets intentionally remain an honest unknown.
+    }
+  }
+  const winner = matches.at(-1);
+  return {
+    matchedStylesheet: winner?.source ?? null,
+    cascadeWinnerCandidate: winner?.candidate ?? null,
+  };
+}
+
+function themeInspectorReport(element: Element, role: ThemeColorRole): ThemeInspectorReport {
+  const variable = getThemeColorVariable(role);
+  return {
+    supportedToken: variable,
+    stableSurfaceSelector: closestStableSurfaceSelector(element),
+    ...sourceStylesheetFor(element, variable),
+    adapterOwnership: adapterOwnershipFor(element),
+  };
 }
 
 function svgElement<Name extends keyof SVGElementTagNameMap>(
@@ -392,7 +493,7 @@ export function inspectThemeRoleFromUtilitiesAtElement(
   if (initialElement.closest("[data-theme-editor-panel]")) return null;
   for (const candidate of themeInspectionCandidates(initialElement)) {
     const role = themeRoleFromUtilities(candidate);
-    if (role) return { element: candidate, role };
+    if (role) return { element: candidate, role, report: themeInspectorReport(candidate, role) };
   }
   return null;
 }
@@ -494,7 +595,7 @@ export function inspectThemeRoleAtElement(initialElement: Element): ThemeElement
     if (!roles) continue;
     for (const kind of THEME_PAINT_KIND_ORDER) {
       const role = roles[kind];
-      if (role) return { element: candidate, role };
+      if (role) return { element: candidate, role, report: themeInspectorReport(candidate, role) };
     }
   }
   return null;

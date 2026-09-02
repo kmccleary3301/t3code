@@ -71,6 +71,19 @@ writes are upserts, so reopening imports newly appended history without duplicat
 records. Native tool records remain owned by the native runtime; later live events use the normal
 canonical thread pipeline.
 
+For attached OMP threads, the web **Agents** panel can select a discovered child agent and tail its
+read-only transcript with an incremental cursor; selecting a child never switches or mutates the
+parent native session. OMP `setStatus` and string-array `setWidget` updates are folded into a keyed
+native UI shelf instead of appended to the work log. Successful OMP `todo` tool results project into
+the canonical plan activity used by the existing todo UI. Mobile keeps the canonical parent thread
+and plan activities, but does not expose the web-only child transcript or native widget shelf.
+
+Provider health discovery also reads Pi `get_commands` and OMP `get_available_commands`. Primary
+command names, OMP aliases, descriptions, input hints, subcommands, and usage syntax populate the
+web, desktop, and mobile composers’ slash suggestions. Static alternatives and flags in native usage
+syntax are suggested for later arguments; selecting any provider suggestion leaves it in the prompt
+for native dispatch.
+
 Rename and fork use each runtime's RPC lifecycle commands. Forking rebinds the native process, so the
 coordinator stops the source attachment before opening the returned session ID as its own T3 thread.
 Stop terminates only the T3-owned live process. **Archive thread** rejects an active turn, then stops
@@ -81,6 +94,90 @@ All six RPCs—list, open, rename, fork, stop, and archive—live in the shared 
 attached, a native session is an ordinary canonical thread: mobile can send turns, interrupt work,
 answer approvals and user-input requests, change supported runtime/model settings, and receive the
 existing thread push notifications without a provider-specific notification path.
+
+## OpenCode server ownership and catalog
+
+Each OpenCode provider instance owns one lazy local server for catalog discovery and
+text-generation helpers through [`OpenCodeServerOwner.ts`][opencode-server-owner]. Concurrent
+borrowers share startup. The server closes 30 seconds after the last borrower releases it, or
+when the provider instance closes. A failed or exited process can be started again on the next
+use. An externally configured OpenCode server remains externally owned.
+
+The local server and its SDK clients use one resolved password. An explicit provider password
+overrides `OPENCODE_SERVER_PASSWORD` in the spawned environment. Without an explicit password,
+the client uses the password from the environment that the process inherits. External servers use
+only their explicit provider password and never inherit the host's local password.
+
+Every server connection must pass the authenticated `/global/health` check before inventory or
+session operations start. The response must contain a valid version at or above 1.14.19. Local
+owners cache this result for the lifetime of the spawned process. External actions check once when
+they create their server connection, not for each model or SDK request.
+
+Chat adapters keep their own server per thread. They register a thread-specific `t3-code` MCP
+connection, while OpenCode stores MCP connections by directory. Sharing these chat servers
+without changing MCP routing would let two threads in one directory replace each other's
+connection.
+
+OpenCode loads its catalog through the HTTP API when an enabled provider instance starts. The
+provider registry keeps the snapshot in memory and persists it in the existing per-instance cache.
+Each `subscribeServerConfig` connection refreshes all providers, so a client reconnect reloads the
+OpenCode catalog from the current helper. The `serverRefreshProviders` request also refreshes it.
+Periodic OpenCode probes remain disabled. OpenCode reads credentials for each inventory request,
+but its native configuration files can remain cached for the lifetime of the helper process. The
+helper closes 30 seconds after its last inventory or text-generation borrower releases it. A
+refresh after that idle period starts a new helper and reads file changes. Repeated refreshes and
+active text-generation work can extend process reuse. Changes to the provider configuration or
+environment replace the instance and start a new discovery. Changes to unrelated settings only
+update snapshot enrichment. Other providers retain their existing refresh policy.
+
+T3 Code does not own an external OpenCode process. Native configuration changes there can require
+an external reload or restart before T3 Code's next refresh sees them.
+
+The shared server's idle shutdown does not clear the catalog. Failed discovery keeps the last
+known models, slash commands, and skills through the registry's existing merge rules. A successful
+empty inventory is authoritative. Existing threads keep their explicit model identifier and
+options when catalog metadata is missing; the catalog is not permission to choose a different
+model for a thread.
+
+## Model manifest
+
+The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which
+lists the current (non-legacy) model slugs per driver kind. The `ModelManifest` service
+(`apps/server/src/provider/ModelManifest.ts`) refreshes that data from the same file on `main` via
+raw.githubusercontent.com, so moving a model in or out of the legacy section is a commit, not a
+release. Preference order is remote fetch, then the on-disk copy of the last successful fetch (in
+the state directory), then the bundled copy. Fetches are TTL-gated, run concurrently with provider
+probes, respect the `enableProviderUpdateChecks` setting, and never fail a provider check. The
+Codex and Claude drivers apply the classification to every snapshot with `applyModelManifest`;
+driver kinds absent from the manifest have no legacy concept.
+
+## Attachment access
+
+The server stores uploaded attachments in its attachment directory, outside the project workspace.
+`ProviderService` adds the absolute path of each attachment to the turn text, then passes every
+attachment to the provider adapter. Each adapter decides what its provider ingests natively:
+
+- Codex, Claude, Cursor, and Grok send images as native image inputs and skip generic files. For
+  these providers, generic files reach the agent only as file paths in the turn text.
+- OpenCode sends PNG/JPEG/GIF/WebP images, text files, and PDFs up to 20 MB as native file parts
+  with their real mime type. Everything else (ZIP and other binaries, image formats model APIs
+  reject, oversized files) falls back to the file path in the turn text, like the other providers.
+
+Claude receives the attachment directory as an allowed additional directory. Codex keeps its
+configured sandbox policy, so access depends on that policy and the selected runtime mode. OpenCode
+allows all paths in full-access mode and requests approval for directories outside the workspace in
+restricted modes. Cursor and Grok use their own provider permission rules.
+
+The server does not copy attachments into a project or bypass provider approval rules. If an agent
+cannot read an attachment, the user must approve the access or select a runtime mode that permits it.
+
+Updated attachment schemas tolerate unknown attachment members, but old image-only clients still
+cannot decode messages that contain file attachments. Client file-picking rollouts must account for
+this limit.
+
+Do not run an old image-only server against state that contains file attachments. Replay decodes
+each persisted event before projection. A file-bearing event can make `ProjectionPipeline` bootstrap
+and `OrchestrationEngine` startup fail for the entire environment, not only the affected thread.
 
 ## How provider work is requested
 
@@ -126,6 +223,7 @@ when a request opens (approval) or user input is requested, via
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [pi]: ../../apps/server/src/provider/Drivers/PiDriver.ts
 [omp]: ../../apps/server/src/provider/Drivers/OmpDriver.ts
+[opencode-server-owner]: ../../apps/server/src/provider/OpenCodeServerOwner.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts

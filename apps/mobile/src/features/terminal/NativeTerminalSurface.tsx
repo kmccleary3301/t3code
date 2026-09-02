@@ -6,11 +6,10 @@ import {
   View,
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
+  type TextStyle,
   type ViewProps,
 } from "react-native";
-
 import { AppText as Text } from "../../components/AppText";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   getNativeTerminalHardwareKeyRevision,
@@ -18,7 +17,7 @@ import {
 } from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
-  getMobileTerminalTheme,
+  getProfileTerminalTheme,
   type TerminalTheme,
 } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
@@ -48,27 +47,54 @@ function estimateGridSize(input: {
   readonly width: number;
   readonly height: number;
   readonly fontSize: number;
+  readonly lineHeight: number;
 }): { readonly cols: number; readonly rows: number } {
   const cellWidth = input.fontSize * 0.62;
-  const cellHeight = input.fontSize * 1.35;
+  const cellHeight = input.fontSize * input.lineHeight;
   return {
     cols: Math.max(20, Math.min(400, Math.floor(input.width / cellWidth))),
     rows: Math.max(5, Math.min(200, Math.floor(input.height / cellHeight))),
   };
 }
 
+const NATIVE_FONT_WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900] as const;
+
+function nativeFontWeight(weight: number): TextStyle["fontWeight"] {
+  let closest: (typeof NATIVE_FONT_WEIGHTS)[number] = NATIVE_FONT_WEIGHTS[0];
+  for (const candidate of NATIVE_FONT_WEIGHTS) {
+    if (Math.abs(candidate - weight) < Math.abs(closest - weight)) closest = candidate;
+  }
+  return closest;
+}
+
+function nativeLigatureVariant(enabled: boolean): NonNullable<TextStyle["fontVariant"]> {
+  return [enabled ? "common-ligatures" : "no-common-ligatures"];
+}
+
 const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: TerminalSurfaceProps) {
-  const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
+  const { themeAppearance, profile, appearanceOutput } = useAppearancePreferences();
+  const fontSize = props.fontSize ?? appearanceOutput.rendererPalettes.terminal.fontSize;
+  const theme = props.theme ?? getProfileTerminalTheme(profile, themeAppearance);
+  const terminalTypography = appearanceOutput.typographyPreferences.terminal;
+  const terminalLineHeight = theme.lineHeight ?? terminalTypography.lineHeight ?? 1.35;
+  const terminalLetterSpacing =
+    fontSize * (theme.letterSpacingEm ?? terminalTypography.letterSpacingEm ?? 0);
+  const terminalTextStyle = {
+    fontFamily: theme.fontFamily ?? terminalTypography.family,
+    fontSize,
+    fontWeight: nativeFontWeight(theme.fontWeight ?? terminalTypography.weight),
+    lineHeight: Math.round(fontSize * terminalLineHeight),
+    letterSpacing: terminalLetterSpacing,
+    fontVariant: nativeLigatureVariant(theme.ligatures ?? terminalTypography.ligatures),
+  } satisfies TextStyle;
   const inputRef = useRef<TextInput>(null);
-  const { themeAppearance, themeId } = useAppearancePreferences();
-  const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const statusLabel = props.isRunning
     ? "Native terminal unavailable. Using text fallback."
     : "Open terminal to start a shell.";
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
-    props.onResize(estimateGridSize({ width, height, fontSize }));
+    props.onResize(estimateGridSize({ width, height, fontSize, lineHeight: terminalLineHeight }));
   };
 
   useEffect(() => {
@@ -108,15 +134,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
           contentContainerClassName="pb-3"
           showsVerticalScrollIndicator={false}
         >
-          <Text
-            selectable
-            style={{
-              color: theme.foreground,
-              fontFamily: "Menlo",
-              fontSize,
-              lineHeight: Math.round(fontSize * 1.35),
-            }}
-          >
+          <Text selectable style={[terminalTextStyle, { color: theme.foreground }]}>
             {props.buffer || "$ "}
           </Text>
         </ScrollView>
@@ -137,12 +155,14 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
           placeholderTextColor={theme.mutedForeground}
           returnKeyType="send"
           className="text-sm"
-          style={{
-            color: theme.foreground,
-            flex: 1,
-            fontFamily: "Menlo",
-            padding: 0,
-          }}
+          style={[
+            terminalTextStyle,
+            {
+              color: theme.foreground,
+              flex: 1,
+              padding: 0,
+            },
+          ]}
           onSubmitEditing={(event) => {
             const text = event.nativeEvent.text;
             if (text.length > 0) {
@@ -170,11 +190,10 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
     </View>
   );
 });
-
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
-  const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
-  const { themeAppearance, themeId } = useAppearancePreferences();
-  const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
+  const { themeAppearance, profile, appearanceOutput } = useAppearancePreferences();
+  const fontSize = props.fontSize ?? appearanceOutput.rendererPalettes.terminal.fontSize;
+  const theme = props.theme ?? getProfileTerminalTheme(profile, themeAppearance);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
   const hasNativeSurface = Boolean(NativeTerminalSurfaceView);

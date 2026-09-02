@@ -18,7 +18,10 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderSubagentTranscriptReadResult,
   ProviderSessionStartInput,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
@@ -142,6 +145,16 @@ export interface ProviderAdapterShape<TError> {
     cursor?: string,
   ) => Effect.Effect<ProviderNativeHistoryPage, TError | ProviderNativeSessionError>;
   /**
+   * Read an incremental transcript page for one provider-native subagent.
+   *
+   * Adapters omit this method when their runtime cannot expose child sessions.
+   */
+  readonly readSubagentTranscript?: (
+    threadId: ThreadId,
+    subagentId: string,
+    cursor?: string,
+  ) => Effect.Effect<ProviderSubagentTranscriptReadResult, TError | ProviderNativeSessionError>;
+  /**
    * Rename the durable native session currently attached to a thread.
    */
   readonly renameNativeSession?: (
@@ -187,6 +200,13 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     checkpoint: unknown,
   ) => Effect.Effect<void, TError>;
+
+  /**
+   * Upload a thread to the provider when the adapter supports feedback.
+   */
+  readonly uploadFeedback?: (
+    input: ProviderUploadFeedbackInput,
+  ) => Effect.Effect<ProviderUploadFeedbackResult, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

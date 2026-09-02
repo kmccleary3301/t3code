@@ -22,7 +22,6 @@ describe("ElectronProtocol", () => {
     netFetchMock.mockReset();
     unhandleMock.mockReset();
   });
-
   it.effect("proxies the stable renderer origin to the current app server", () =>
     Effect.gen(function* () {
       let handler: ((request: Request) => Promise<Response>) | undefined;
@@ -69,7 +68,7 @@ describe("ElectronProtocol", () => {
           );
           assert.include(
             response.headers.get("content-security-policy") ?? "",
-            "font-src 'self' t3code-dev: data:",
+            "font-src 'self' t3code-dev: blob: data:",
           );
         }),
       );
@@ -225,6 +224,7 @@ describe("ElectronProtocol", () => {
       "http:",
       "https:",
     ]);
-    assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
+    assert.deepEqual(directives["media-src"], ["'self'", "t3code:", "blob:"]);
+    assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "blob:", "data:"]);
   });
 });

@@ -7,6 +7,8 @@ import {
   type ComponentType,
   type KeyboardEvent,
 } from "react";
+import { useEnvironmentQuery } from "~/state/query";
+import { desktopWslStateAtom } from "~/state/desktopWslState";
 import {
   ArchiveIcon,
   BlocksIcon,
@@ -21,6 +23,8 @@ import {
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
+import { isElectron } from "~/env";
+import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
@@ -38,6 +42,7 @@ import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
+  SETTINGS_SEARCH_ITEMS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
@@ -78,9 +83,25 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const results = useMemo(() => searchSettings(query), [query]);
+  const desktopWsl = useEnvironmentQuery(isElectron ? desktopWslStateAtom : null);
+  const searchableItems = useMemo(() => {
+    const wslState = desktopWsl.data;
+    const rowRenders = isWslSettingsRowVisible({
+      state: wslState,
+      error: desktopWsl.error,
+    });
+    if (rowRenders) {
+      return SETTINGS_SEARCH_ITEMS;
+    }
+    return SETTINGS_SEARCH_ITEMS.filter((item) => item.id !== "wsl-backend");
+  }, [desktopWsl.data, desktopWsl.error]);
+  const results = useMemo(() => searchSettings(query, searchableItems), [query, searchableItems]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
+
+  useEffect(() => {
+    setActiveResultIndex((index) => Math.min(index, Math.max(results.length - 1, 0)));
+  }, [results.length]);
 
   useEffect(() => {
     const result = results[activeResultIndex];
@@ -179,7 +200,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   );
   return (
     <>
-      <SidebarContent className="overflow-x-hidden">
+      <SidebarContent className="overflow-x-hidden" data-t3-surface="settings-nav">
         <SidebarGroup className="gap-2 p-[var(--sidebar-content-inset)]">
           <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
             <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />

@@ -2,7 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
-import { searchSlashCommandItems } from "./composerSlashCommandSearch";
+import {
+  buildProviderSlashArgumentItems,
+  mergeSlashCommandItems,
+  searchSlashCommandItems,
+  slashCommandItemsForPromptPosition,
+} from "./composerSlashCommandSearch";
 
 describe("searchSlashCommandItems", () => {
   const claudeDriver = ProviderDriverKind.make("claudeAgent");
@@ -33,7 +38,7 @@ describe("searchSlashCommandItems", () => {
         description: "Create distinctive, production-grade frontend interfaces",
       },
     ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
     >;
 
     expect(searchSlashCommandItems(items, "ui").map((item) => item.id)).toEqual([
@@ -61,11 +66,216 @@ describe("searchSlashCommandItems", () => {
         description: "General GitHub help",
       },
     ] satisfies Array<
-      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
     >;
 
     expect(searchSlashCommandItems(items, "gfc").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:gh-fix-ci",
     ]);
+  });
+
+  it("includes skills by name and description", () => {
+    const items = [
+      {
+        id: "skill:claudeAgent:browser",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "browser",
+          path: "/skills/browser/SKILL.md",
+          enabled: true,
+          shortDescription: "Open and control the in-app browser",
+        },
+        label: "/skill:browser",
+        description: "Open and control the in-app browser",
+      },
+    ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
+
+    expect(searchSlashCommandItems(items, "browser").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:browser",
+    ]);
+    expect(searchSlashCommandItems(items, "control").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:browser",
+    ]);
+  });
+
+  it("matches skills by display name", () => {
+    const items = [
+      {
+        id: "skill:claudeAgent:ask-matt",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "ask-matt",
+          displayName: "Ask Matt",
+          path: "/skills/ask-matt/SKILL.md",
+          enabled: true,
+          shortDescription: "Find the right skill or workflow",
+        },
+        label: "/skill:ask-matt",
+        description: "Find the right skill or workflow",
+      },
+    ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
+
+    expect(searchSlashCommandItems(items, "ask matt").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:ask-matt",
+    ]);
+    expect(searchSlashCommandItems(items, "/skill:ask-matt").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:ask-matt",
+    ]);
+  });
+
+  it("matches skills by their rendered prefix", () => {
+    const items = [
+      {
+        id: "skill:claudeAgent:browser",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "browser",
+          path: "/skills/browser/SKILL.md",
+          enabled: true,
+        },
+        label: "/skill:browser",
+        description: "Open and control the in-app browser",
+      },
+    ] satisfies Array<Extract<ComposerCommandItem, { type: "skill" }>>;
+
+    expect(searchSlashCommandItems(items, "/skill:brow").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:browser",
+    ]);
+    expect(searchSlashCommandItems(items, "/sk").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:browser",
+    ]);
+    expect(searchSlashCommandItems(items, "/ill")).toEqual([]);
+  });
+
+  it("keeps skills alongside commands for an empty slash query", () => {
+    const items = [
+      {
+        id: "slash:model",
+        type: "slash-command",
+        command: "model",
+        label: "/model",
+        description: "Switch model",
+      },
+      {
+        id: "skill:claudeAgent:unslop",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "unslop",
+          path: "/skills/unslop/SKILL.md",
+          enabled: true,
+        },
+        label: "/skill:unslop",
+        description: "Cut AI tells from writing",
+      },
+    ] satisfies Array<Extract<ComposerCommandItem, { type: "slash-command" | "skill" }>>;
+
+    expect(searchSlashCommandItems(items, "").map((item) => item.id)).toEqual([
+      "slash:model",
+      "skill:claudeAgent:unslop",
+    ]);
+  });
+
+  it("hides skills from slash completion after the first message line", () => {
+    const items = [
+      {
+        id: "slash:model",
+        type: "slash-command",
+        command: "model",
+        label: "/model",
+        description: "Switch model",
+      },
+      {
+        id: "skill:claudeAgent:unslop",
+        type: "skill",
+        provider: claudeDriver,
+        skill: {
+          name: "unslop",
+          path: "/skills/unslop/SKILL.md",
+          enabled: true,
+        },
+        label: "/skill:unslop",
+        description: "Cut AI tells from writing",
+      },
+    ] satisfies Array<
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" | "skill" }>
+    >;
+
+    expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
+      "slash:model",
+    ]);
+    expect(slashCommandItemsForPromptPosition(items, true).map((item) => item.id)).toEqual([
+      "slash:model",
+      "skill:claudeAgent:unslop",
+    ]);
+  });
+
+  it("keeps native aliases while removing built-in name collisions", () => {
+    const builtIn = [
+      {
+        id: "slash:model",
+        type: "slash-command",
+        command: "model",
+        label: "/model",
+        description: "Switch response model",
+      },
+    ] satisfies Array<
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+    >;
+    const provider = ["model", "models"].map(
+      (name) =>
+        ({
+          id: `provider-slash-command:omp:${name}`,
+          type: "provider-slash-command",
+          provider: ProviderDriverKind.make("omp"),
+          command: { name },
+          label: `/${name}`,
+          description: "OMP command",
+        }) satisfies Extract<ComposerCommandItem, { type: "provider-slash-command" }>,
+    );
+
+    expect(mergeSlashCommandItems(builtIn, provider).map((item) => item.label)).toEqual([
+      "/model",
+      "/models",
+    ]);
+  });
+
+  it("completes native subcommands and later arguments", () => {
+    const completion = buildProviderSlashArgumentItems({
+      provider: ProviderDriverKind.make("omp"),
+      commands: [
+        {
+          name: "goal",
+          subcommands: [
+            { name: "set", usage: "<objective>" },
+            { name: "budget", description: "Adjust token budget", usage: "<N|off>" },
+          ],
+        },
+      ],
+      query: "goal bud",
+    });
+    expect(
+      completion
+        ? searchSlashCommandItems(completion.items, completion.searchQuery).map(
+            (item) => item.label,
+          )
+        : [],
+    ).toEqual(["/goal budget"]);
+
+    expect(
+      buildProviderSlashArgumentItems({
+        provider: ProviderDriverKind.make("omp"),
+        commands: [
+          {
+            name: "goal",
+            subcommands: [{ name: "budget", usage: "<N|off>" }],
+          },
+        ],
+        query: "goal budget o",
+      })?.items,
+    ).toMatchObject([{ label: "off", insertText: "/goal budget off " }]);
   });
 });

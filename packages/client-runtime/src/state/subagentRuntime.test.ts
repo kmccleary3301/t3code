@@ -3,6 +3,7 @@ import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tool
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
+  foldNativeUiActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
   isAgentAttributedToolActivity,
@@ -603,6 +604,43 @@ describe("model and effort attribution", () => {
     expect(agents[0]!.effort).toBe("high");
   });
 
+  it("applies metadata-only updates without changing the current status", () => {
+    const waitingRows = [
+      activity("task.updated", {
+        taskId: "task-metadata",
+        title: "Check metadata",
+        status: "waiting",
+      }),
+      activity("task.updated", {
+        taskId: "task-metadata",
+        model: "gpt-5.6-sol",
+        effort: "high",
+      }),
+    ];
+    const waitingAgent = fold(waitingRows)[0]!;
+    expect(waitingAgent.status).toBe("waiting");
+    expect(formatSubagentModelLabel(waitingAgent.model, waitingAgent.effort)).toBe(
+      "gpt-5.6-sol · high",
+    );
+
+    const idleRows = [
+      ...waitingRows,
+      activity("task.updated", { taskId: "task-metadata", status: "idle" }),
+      activity("task.updated", { taskId: "task-metadata", model: "gpt-5.6-sol" }),
+    ];
+    expect(fold(idleRows)[0]!.status).toBe("idle");
+
+    const completedAgent = fold([
+      ...idleRows,
+      activity("task.progress", { taskId: "task-metadata", typedUsage: { totalTokens: 42 } }),
+      activity("task.completed", { taskId: "task-metadata", status: "completed" }),
+      activity("task.updated", { taskId: "task-metadata", effort: "high" }),
+    ])[0]!;
+    expect(completedAgent.status).toBe("completed");
+    expect(completedAgent.model).toBe("gpt-5.6-sol");
+    expect(completedAgent.effort).toBe("high");
+  });
+
   it("formatSubagentModelLabel compacts ids and appends effort", () => {
     expect(formatSubagentModelLabel("claude-sonnet-5[1m]", "high")).toBe("sonnet-5[1m] · high");
     expect(formatSubagentModelLabel("claude-opus-4-20250514", null)).toBe("opus-4");
@@ -875,5 +913,46 @@ describe("nested agents vs subagent shells", () => {
       }),
     ]);
     expect(agents.map((agent) => agent.id)).toEqual(["nested-1"]);
+  });
+});
+
+describe("foldNativeUiActivities", () => {
+  it("replaces and clears keyed statuses and widgets", () => {
+    const state = foldNativeUiActivities([
+      activity("ui.status.updated", { key: "work", value: "Starting" }),
+      activity("ui.widget.updated", {
+        key: "agents",
+        content: "2 running",
+        placement: "above",
+      }),
+      activity("ui.status.updated", { key: "work", value: "Ready" }),
+      activity("ui.widget.updated", { key: "agents", placement: "above" }),
+      activity("ui.widget.updated", {
+        key: "todos",
+        content: "● Implement\n○ Verify",
+        placement: "below",
+      }),
+    ]);
+
+    expect(state).toEqual({
+      statuses: [{ key: "work", value: "Ready" }],
+      widgets: [
+        {
+          key: "todos",
+          content: "● Implement\n○ Verify",
+          placement: "below",
+        },
+      ],
+    });
+  });
+
+  it("clears transient native UI state when the provider session exits", () => {
+    expect(
+      foldNativeUiActivities([
+        activity("ui.status.updated", { key: "work", value: "Running" }),
+        activity("ui.widget.updated", { key: "agents", content: "1 running" }),
+        activity("session.exited", {}),
+      ]),
+    ).toEqual({ statuses: [], widgets: [] });
   });
 });

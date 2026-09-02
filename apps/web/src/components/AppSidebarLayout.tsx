@@ -102,6 +102,7 @@ function SidebarControl() {
     <div
       className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center"
       data-sidebar-control=""
+      data-t3-part="toolbar"
     >
       <Tooltip>
         <TooltipTrigger
@@ -209,12 +210,18 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate, pathname]);
 
   return (
-    <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
+    <SidebarProvider
+      className="h-dvh! min-h-0!"
+      defaultOpen
+      style={sidebarProviderStyle}
+      data-t3-surface="app-shell"
+    >
       <ProjectProjectionRetention />
       <Sidebar
         side="left"
         collapsible="offcanvas"
         data-app-sidebar=""
+        data-t3-surface="sidebar"
         className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
         resizable={{
           maxWidth: sidebarMaximumWidth,
@@ -236,7 +243,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         ) : (
           <ThreadSidebar />
         )}
-        <SidebarRail onDoubleClick={resetSidebarWidth} />
+        <SidebarRail onDoubleClick={resetSidebarWidth} data-t3-part="resize-handle" />
       </Sidebar>
       {children}
       <SidebarControl />

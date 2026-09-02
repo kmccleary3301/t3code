@@ -17,7 +17,7 @@ Environments screen. The local environment cards always come from real paired se
 
 From the repository root:
 
-    pnpm screenshots:mobile
+    pnpm screenshots:mobile --disposable-device
 
 The command:
 
@@ -99,6 +99,11 @@ delay, Android ABI, or viewport. The selectable palette ids come from `MOBILE_TH
 [themePalettes.ts](../../packages/shared/src/themePalettes.ts), so the harness and the app's
 appearance settings can never drift apart.
 
+`--disposable-device` is mandatory for capture. It confirms that every selected simulator or
+emulator may be cleared, reconfigured, and stopped. Never point the command at a developer device
+that contains state you need to preserve. To select a dedicated Android AVD, set
+`T3_SHOWCASE_ANDROID_AVD` to its exact name.
+
 ## Capture in GitHub Actions
 
 Run the `Mobile Showcase Screenshots` workflow from GitHub's Actions tab, choose `all`, `ios`, or
@@ -122,24 +127,24 @@ debug APK matches its accelerated emulator.
 
 Capture one scene or device:
 
-    pnpm screenshots:mobile --device iphone-6.9 --scene thread
-    pnpm screenshots:mobile --platform android --scene review
+    pnpm screenshots:mobile --disposable-device --device iphone-6.9 --scene thread
+    pnpm screenshots:mobile --disposable-device --platform android --scene review
 
 Override the configured appearance or capture both variants:
 
-    pnpm screenshots:mobile --appearance light
-    pnpm screenshots:mobile --appearance dark
-    pnpm screenshots:mobile --appearance both
+    pnpm screenshots:mobile --disposable-device --appearance light
+    pnpm screenshots:mobile --disposable-device --appearance dark
+    pnpm screenshots:mobile --disposable-device --appearance both
 
 Capture other palettes:
 
-    pnpm screenshots:mobile --device iphone-6.9 --theme ocean
-    pnpm screenshots:mobile --device iphone-6.9 --theme ocean --theme ember
-    pnpm screenshots:mobile --device iphone-6.9 --theme all
+    pnpm screenshots:mobile --disposable-device --device iphone-6.9 --theme ocean
+    pnpm screenshots:mobile --disposable-device --device iphone-6.9 --theme ocean --theme ember
+    pnpm screenshots:mobile --disposable-device --device iphone-6.9 --theme all
 
 Reuse the native build and retain the disposable environment:
 
-    pnpm screenshots:mobile --device ipad-13 --skip-build --keep-running
+    pnpm screenshots:mobile --disposable-device --device ipad-13 --skip-build --keep-running
 
 By default, let the screenshot runner start Metro on port `8199`. To keep Metro in a separate
 terminal, start it with the same showcase environment and explicit harness port:
@@ -149,7 +154,7 @@ terminal, start it with the same showcase environment and explicit harness port:
 
 Then run the capture from the repository root:
 
-    pnpm screenshots:mobile --skip-build --skip-metro --device iphone-6.9
+    pnpm screenshots:mobile --disposable-device --skip-build --skip-metro --device iphone-6.9
 
 `pnpm --filter @t3tools/mobile showcase` starts Expo on its normal port, so it is not compatible with
 the harness's `--skip-metro` mode.

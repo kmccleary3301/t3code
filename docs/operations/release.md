@@ -11,7 +11,7 @@ This document covers the unified release workflow for stable and nightly desktop
   - push tag matching `v*.*.*` (upstream) or `fork-v*.*.*` (Pi + OMP) for stable releases
   - scheduled nightly check every three hours
   - manual `workflow_dispatch` for either channel
-- Runs quality gates first: lint, typecheck, test.
+- Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration for the upstream
   profile. The fork profile uses the isolated `fork-release` environment and does not deploy shared
   relay or hosted-web infrastructure.
@@ -55,6 +55,34 @@ directories, or release tags.
 The automated workflow also publishes `install.sh`, `RELEASE-MANIFEST.json`, and `SHA256SUMS`.
 Desktop assets are signed when platform credentials are configured. GitHub release assets receive
 build provenance attestations. Fork npm publication is an explicit opt-in.
+
+### Appearance version 2 migration note
+
+The first release containing appearance version 2 must include these user-facing
+notes:
+
+- Existing version 1 palettes and saved preferences normalize into the version 2
+  profile on load; built-in light and dark defaults remain the fallback.
+- Browser and desktop can install local appearance packages, package-contained
+  WOFF2 fonts and images, and explicitly enabled CSS snippets. Packages do not
+  execute JavaScript or load remote assets.
+- Mobile accepts the portable profile only. Package CSS, snippets, browser font
+  assets, and web motion effects are intentionally excluded.
+- Browser package state is client-local in IndexedDB. Desktop package state and
+  quarantine data are client-local in the desktop appearance directory. Neither
+  is synchronized through a connected environment.
+- Recovery entries are `?t3-appearance=safe` and
+  `?t3-appearance=reset` in the browser, `--safe-appearance` and
+  `--reset-appearance` on desktop, and `t3code://appearance/safe` and
+  `t3code://appearance/reset` on mobile. Reset requires confirmation and retains
+  recoverable quarantine data.
+
+Before publication, attach current-artifact evidence for every client in the
+appearance release matrix: both macOS architectures, Windows x64, Linux x64 and
+arm64, supported Chromium browser modes, iOS, and Android. Build success alone
+is not appearance smoke evidence. Missing client, visual, accessibility,
+recovery, or performance evidence blocks release rather than becoming an
+exclusion.
 
 ### Published private release
 
@@ -317,9 +345,11 @@ For an upstream or npm-enabled fork smoke test, confirm
 download the matching tarball, `RELEASE-MANIFEST.json`, and `SHA256SUMS`; verify both recorded
 digests, then exercise installation from the verified local archive. Connect the new client to a
 server on the previous version and verify that the update action reconnects to the exact server.
-Use releases with identical migration manifests for the automatic path. When the manifest changed,
-verify that the remote action stops before restart and shows the exact local package command. Also
-test the manual or desktop-managed guidance when those environments are available.
+When the release adds database migrations, verify that the remote update applies them and reconnects;
+a failed trial must restore the database snapshot and restart the previous server. If the installed
+launcher does not support the target protocol, verify that the update stops before restart and shows
+the exact local package command. Also test the manual or desktop-managed guidance when those
+environments are available.
 
 ## Desktop auto-update notes
 
@@ -348,10 +378,12 @@ Windows packages the bundled server and only its runtime-external/native
 dependency closure in `resources/server.asar`. Native modules and helper
 executables declared as unpacked by that archive must be present at the matching
 paths below `resources/server.asar.unpacked`. The Windows-native backend reads
-the archive in place through Electron. WSL cannot read ASAR files, so enabling
-the WSL backend extracts the server tree once into the desktop state directory
-under `wsl-server-tree/<version>` and reuses the completed version until the app
-is updated.
+the archive in place through Electron. Packaged Windows builds also ship a
+Linux-only `resources/wsl-runtime.tar.gz` plus its SHA-256 sidecar. WSL verifies
+and extracts that archive into `~/.t3/wsl-runtime/sha256-<archive-digest>` inside
+the selected distro, then reuses it for later launches of the same update. The
+Windows-side `wsl-server-tree/<version>` extraction remains a fallback and is
+removed after the distro-local runtime passes preflight.
 
 The artifact builder rejects a Windows package when any of these invariants
 break:
@@ -362,6 +394,11 @@ break:
 - On same-architecture Windows builds, the packaged primary cannot load the fff
   native library from inside `server.asar` through its `.unpacked` sibling.
 - The isolated, extracted sidecar cannot load the server entry with plain Node.
+- A Windows build with a WSL node-pty prebuild omits the WSL archive or SHA-256
+  sidecar, the sidecar digest does not match the emitted archive, or required
+  Linux runtime members are absent.
+- The emitted WSL archive contains Windows/Darwin node-pty payloads, ConPTY,
+  pnpm install metadata, or Windows-only FFF, ffi-rs, or msgpackr bindings.
 - The external Windows resource monitor is absent.
 - The unpacked Windows application contains more than 80 files.
 
@@ -498,6 +535,7 @@ Checklist:
 4. Push tag.
 5. Verify workflow steps:
    - preflight passes
+   - release quality checks pass
    - all matrix builds pass
    - `publish_cli` produces the exact release-version tarball and publishes npm only when configured
    - release job uploads expected files

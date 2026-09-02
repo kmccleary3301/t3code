@@ -12,6 +12,8 @@ import {
   type ProviderNativeSessionRenameResult,
   type ProviderNativeSessionStopInput,
   type ProviderNativeSessionStopResult,
+  type ProviderSubagentTranscriptReadInput,
+  type ProviderSubagentTranscriptReadResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -35,6 +37,9 @@ export interface NativeSessionCoordinatorShape {
   readonly archive: (
     input: ProviderNativeSessionArchiveInput,
   ) => Effect.Effect<ProviderNativeSessionArchiveResult, ProviderNativeSessionError>;
+  readonly readSubagentTranscript: (
+    input: ProviderSubagentTranscriptReadInput,
+  ) => Effect.Effect<ProviderSubagentTranscriptReadResult, ProviderNativeSessionError>;
 }
 
 export class NativeSessionCoordinator extends Context.Reference<NativeSessionCoordinatorShape>(
@@ -81,6 +86,13 @@ export class NativeSessionCoordinator extends Context.Reference<NativeSessionCoo
           new ProviderNativeSessionError({
             code: "unsupported",
             message: "Native session coordination is unavailable.",
+          }),
+        ),
+      readSubagentTranscript: () =>
+        Effect.fail(
+          new ProviderNativeSessionError({
+            code: "unsupported",
+            message: "Subagent transcripts are unavailable.",
           }),
         ),
     }),

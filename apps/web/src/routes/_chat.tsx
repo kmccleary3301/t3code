@@ -176,10 +176,10 @@ function ChatRouteGlobalShortcuts() {
 
 function ChatRouteLayout() {
   return (
-    <>
+    <div data-t3-surface="route-chat">
       <ChatRouteGlobalShortcuts />
       <Outlet />
-    </>
+    </div>
   );
 }
 

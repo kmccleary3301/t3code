@@ -2,6 +2,7 @@ import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { applyAppearanceTheme } from "../appearanceRuntime";
 import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
@@ -12,10 +13,13 @@ import {
   parseThemeHalves,
   resolveDesktopTheme,
   resolveThemeAppearance,
+  getThemeDefinition,
   resolveThemeHalf,
+  THEME_PREVIEW_ID,
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
   THEME_HALVES_STORAGE_KEY,
+  T3_CHAT_THEME,
   ThemePreference,
   type ThemeAppearance,
   type ThemeHalves,
@@ -25,6 +29,7 @@ import {
 type Theme = ThemePreference;
 type ThemeSnapshot = {
   theme: Theme;
+  resolvedTheme: ThemeAppearance;
   systemDark: boolean;
   followSystem: boolean;
   appearanceMode: ThemePreferenceMode;
@@ -37,6 +42,7 @@ const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   theme: "system",
+  resolvedTheme: "light",
   systemDark: false,
   followSystem: true,
   appearanceMode: "system",
@@ -49,12 +55,46 @@ export function readThemeHalves(): ThemeHalves | null {
   return readStoredThemeHalves();
 }
 
+/**
+ * The stored mix as written, without resolvability pruning. Flows that
+ * rebuild the whole mix must capture this before a `setTheme` clears it: a
+ * published id resolves only once its set has streamed in, and treating "not
+ * resolvable yet" as "absent" silently rewrites that half.
+ */
+export function readThemeHalvesRaw(): { light?: string; dark?: string } {
+  if (typeof window === "undefined") return {};
+  return readStoredThemeHalvesRaw();
+}
+
 function readStoredThemeHalves(): ThemeHalves | null {
   if (typeof window === "undefined") return null;
   try {
     return parseThemeHalves(window.localStorage.getItem(THEME_HALVES_STORAGE_KEY));
   } catch {
     return null;
+  }
+}
+
+/**
+ * The stored mix as written, without resolvability pruning. An environment
+ * published id resolves only once its set has streamed in, so a write that
+ * merged over the pruned parse would silently erase that half whenever the
+ * other one changed before the set arrived.
+ */
+function readStoredThemeHalvesRaw(): { light?: string; dark?: string } {
+  try {
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem(THEME_HALVES_STORAGE_KEY) ?? "null",
+    );
+    if (value === null || typeof value !== "object") return {};
+    const halves: { light?: string; dark?: string } = {};
+    for (const appearance of ["light", "dark"] as const) {
+      const themeId = (value as Record<string, unknown>)[appearance];
+      if (typeof themeId === "string") halves[appearance] = themeId;
+    }
+    return halves;
+  } catch {
+    return {};
   }
 }
 
@@ -98,7 +138,7 @@ let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let snapshotStale = true;
 let lastDesktopTheme: "light" | "dark" | "system" | null = null;
-let lastAppliedTheme: ThemeSnapshot | null = null;
+let lastAppliedTheme: Omit<ThemeSnapshot, "resolvedTheme"> | null = null;
 let themeStorageReadFailure: ThemeStorageError | null = null;
 
 function emitChange() {
@@ -282,8 +322,22 @@ export function syncBrowserChromeTheme() {
   }
 }
 
-function applyTheme(theme: Theme, suppressTransitions = false) {
+function applyTheme(
+  theme: Theme,
+  {
+    suppressTransitions = false,
+    preservePreview = true,
+    onRuntimeFailure,
+  }: {
+    suppressTransitions?: boolean;
+    preservePreview?: boolean;
+    onRuntimeFailure?: () => void;
+  } = {},
+) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
+  if (document.documentElement.dataset?.appearanceSafeMode === "true") return;
+  // Keep the editor's draft visible until an explicit refresh restores the selection.
+  if (preservePreview && document.documentElement.dataset?.themeId === THEME_PREVIEW_ID) return;
   const appearanceMode = readAppearanceModePreference(theme);
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
@@ -309,7 +363,20 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
     appearanceMode,
     themeHalves,
   );
-  applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
+  const selectedTheme = resolveThemeHalf(theme, themeHalves, resolvedAppearance);
+  applyThemePalette(selectedTheme, resolvedAppearance);
+  const definition = getThemeDefinition(selectedTheme) ?? T3_CHAT_THEME;
+  const lightDefinition =
+    getThemeDefinition(resolveThemeHalf(theme, themeHalves, "light")) ?? T3_CHAT_THEME;
+  const darkDefinition =
+    getThemeDefinition(resolveThemeHalf(theme, themeHalves, "dark")) ?? T3_CHAT_THEME;
+  void applyAppearanceTheme(definition, resolvedAppearance, appearanceMode, {
+    light: lightDefinition,
+    dark: darkDefinition,
+  }).catch((error: unknown) => {
+    onRuntimeFailure?.();
+    console.error("Appearance runtime failed to apply the selected theme.", error);
+  });
   const isDark = resolvedAppearance === "dark";
   document.documentElement.classList.toggle("dark", isDark);
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
@@ -321,6 +388,28 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
     document.documentElement.offsetHeight;
     requestAnimationFrame(() => {
       document.documentElement.classList.remove("no-transitions");
+    });
+  }
+}
+function rollbackLegacyAppearance(
+  theme: Theme,
+  values: ReadonlyArray<readonly [key: string, value: string | null]>,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    for (const [key, value] of values) {
+      if (value === null) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, value);
+    }
+    themeStorageReadFailure = null;
+    lastAppliedTheme = null;
+    applyTheme(theme, { suppressTransitions: true });
+    emitChange();
+  } catch (cause) {
+    console.error("Appearance runtime rejected the theme and legacy rollback failed.", {
+      operation: "rollback",
+      storageKey: STORAGE_KEY,
+      ...safeErrorLogAttributes(cause),
     });
   }
 }
@@ -369,11 +458,6 @@ export function syncDesktopTheme(
   );
 }
 
-// Apply immediately on module load to prevent flash
-if (typeof document !== "undefined" && typeof window !== "undefined") {
-  applyTheme(getStored());
-}
-
 function getSnapshot(): ThemeSnapshot {
   if (typeof window === "undefined") return DEFAULT_THEME_SNAPSHOT;
   // Reading the preference hits localStorage, so only recompute after a
@@ -386,9 +470,17 @@ function getSnapshot(): ThemeSnapshot {
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
 
+  const resolvedTheme = resolveThemeAppearance(
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+  );
   if (
     lastSnapshot &&
     lastSnapshot.theme === theme &&
+    lastSnapshot.resolvedTheme === resolvedTheme &&
     lastSnapshot.systemDark === systemDark &&
     lastSnapshot.followSystem === followSystem &&
     lastSnapshot.appearanceMode === appearanceMode &&
@@ -397,7 +489,7 @@ function getSnapshot(): ThemeSnapshot {
     return lastSnapshot;
   }
 
-  lastSnapshot = { theme, systemDark, followSystem, appearanceMode, themeHalves };
+  lastSnapshot = { theme, resolvedTheme, systemDark, followSystem, appearanceMode, themeHalves };
   return lastSnapshot;
 }
 
@@ -407,26 +499,28 @@ function getServerSnapshot() {
 
 function handleSystemAppearanceChange() {
   const storedTheme = getStored();
-  if (readAppearanceModePreference(storedTheme) === "system") applyTheme(storedTheme, true);
+  if (readAppearanceModePreference(storedTheme) === "system") {
+    applyTheme(storedTheme, { suppressTransitions: true });
+  }
   emitChange();
 }
 
 function handleStorageChange(e: StorageEvent) {
   if (e.key === STORAGE_KEY) {
     themeStorageReadFailure = null;
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
   } else if (e.key === THEME_FOLLOW_SYSTEM_STORAGE_KEY) {
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
   } else if (e.key === THEME_APPEARANCE_MODE_STORAGE_KEY || e.key === THEME_HALVES_STORAGE_KEY) {
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
   } else if (e.key === CUSTOM_THEMES_STORAGE_KEY || e.key === null) {
     if (e.key === null) themeStorageReadFailure = null;
     invalidateCustomThemes();
     lastAppliedTheme = null;
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), { suppressTransitions: true });
     emitChange();
   }
 }
@@ -460,27 +554,25 @@ function subscribe(listener: () => void): () => void {
 
 export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const theme = snapshot.theme;
-
-  const resolvedTheme: "light" | "dark" = resolveThemeAppearance(
-    theme,
-    snapshot.systemDark,
-    snapshot.followSystem,
-    snapshot.appearanceMode,
-    snapshot.themeHalves,
-  );
+  const { theme, resolvedTheme } = snapshot;
 
   const setTheme = useCallback((next: Theme): boolean => {
     if (typeof window === "undefined") return false;
+    let previousTheme: Theme;
+    let previousHalvesRaw: string | null;
+    let previousAppearanceRaw: string | null;
     try {
+      previousTheme = getStored();
+      previousHalvesRaw = window.localStorage.getItem(THEME_HALVES_STORAGE_KEY);
+      previousAppearanceRaw = window.localStorage.getItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
       // Preserve the current mode before replacing a legacy or inferred theme
       // preference. Otherwise a fresh System preference is re-inferred from
       // the new theme's base appearance, which can switch a dark UI to light.
-      writeAppearanceModePreference(readAppearanceModePreference(getStored()));
+      writeAppearanceModePreference(readAppearanceModePreference(previousTheme));
       // Choosing a whole theme replaces any automatic-mode mix. The mix is
       // captured first so a failed preference write can put it back instead
       // of erasing it or leaving it attached to the new theme.
-      const previousHalvesRaw = window.localStorage.getItem(THEME_HALVES_STORAGE_KEY);
+      // Captured above so both synchronous and runtime failures can restore it.
       window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
       try {
         writeThemePreference(next);
@@ -511,15 +603,29 @@ export function useTheme() {
       });
       return false;
     }
-    applyTheme(next, true);
+    applyTheme(next, {
+      suppressTransitions: true,
+      onRuntimeFailure: () =>
+        rollbackLegacyAppearance(previousTheme, [
+          [STORAGE_KEY, previousTheme],
+          [THEME_HALVES_STORAGE_KEY, previousHalvesRaw],
+          [THEME_APPEARANCE_MODE_STORAGE_KEY, previousAppearanceRaw],
+        ]),
+    });
     emitChange();
     return true;
   }, []);
 
   const setAppearanceMode = useCallback((nextAppearanceMode: ThemePreferenceMode): boolean => {
     if (typeof window === "undefined") return false;
+    let previousTheme: Theme;
+    let previousAppearanceRaw: string | null;
+    let selectedTheme: Theme;
     try {
+      previousTheme = getStored();
+      previousAppearanceRaw = window.localStorage.getItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
       writeAppearanceModePreference(nextAppearanceMode);
+      selectedTheme = getStored();
     } catch (cause) {
       const error = isThemeStorageError(cause)
         ? cause
@@ -536,7 +642,13 @@ export function useTheme() {
       return false;
     }
     themeStorageReadFailure = null;
-    applyTheme(getStored(), true);
+    applyTheme(selectedTheme, {
+      suppressTransitions: true,
+      onRuntimeFailure: () =>
+        rollbackLegacyAppearance(previousTheme, [
+          [THEME_APPEARANCE_MODE_STORAGE_KEY, previousAppearanceRaw],
+        ]),
+    });
     emitChange();
     return true;
   }, []);
@@ -557,8 +669,11 @@ export function useTheme() {
   const setThemeHalf = useCallback(
     (appearance: ThemeAppearance, themeId: string | null): boolean => {
       if (typeof window === "undefined") return false;
+      let previousHalvesRaw: string | null;
+      let selectedTheme: Theme;
       try {
-        const current = readStoredThemeHalves() ?? {};
+        previousHalvesRaw = window.localStorage.getItem(THEME_HALVES_STORAGE_KEY);
+        const current = readStoredThemeHalvesRaw();
         const next: { light?: string; dark?: string } = { ...current };
         if (themeId === null) delete next[appearance];
         else next[appearance] = themeId;
@@ -567,6 +682,7 @@ export function useTheme() {
         } else {
           window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, JSON.stringify(next));
         }
+        selectedTheme = getStored();
       } catch (cause) {
         const error = new ThemeStorageError({
           operation: "write",
@@ -580,17 +696,25 @@ export function useTheme() {
         });
         return false;
       }
-      applyTheme(getStored(), true);
+      applyTheme(selectedTheme, {
+        suppressTransitions: true,
+        onRuntimeFailure: () =>
+          rollbackLegacyAppearance(theme, [[THEME_HALVES_STORAGE_KEY, previousHalvesRaw]]),
+      });
       emitChange();
       return true;
     },
-    [],
+    [theme],
   );
 
   const clearThemeHalves = useCallback((): boolean => {
     if (typeof window === "undefined") return false;
+    let previousHalvesRaw: string | null;
+    let selectedTheme: Theme;
     try {
+      previousHalvesRaw = window.localStorage.getItem(THEME_HALVES_STORAGE_KEY);
       window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
+      selectedTheme = getStored();
     } catch (cause) {
       const error = new ThemeStorageError({
         operation: "write",
@@ -604,15 +728,19 @@ export function useTheme() {
       });
       return false;
     }
-    applyTheme(getStored(), true);
+    applyTheme(selectedTheme, {
+      suppressTransitions: true,
+      onRuntimeFailure: () =>
+        rollbackLegacyAppearance(theme, [[THEME_HALVES_STORAGE_KEY, previousHalvesRaw]]),
+    });
     emitChange();
     return true;
-  }, []);
+  }, [theme]);
 
-  const refreshTheme = useCallback(() => {
+  const refreshTheme = useCallback(({ preservePreview = false } = {}) => {
     if (typeof window === "undefined") return;
     lastAppliedTheme = null;
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), { suppressTransitions: true, preservePreview });
     emitChange();
   }, []);
 

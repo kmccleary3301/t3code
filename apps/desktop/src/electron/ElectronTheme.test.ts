@@ -1,3 +1,4 @@
+import type { AppearanceResolved } from "@t3tools/client-runtime/appearance";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
@@ -37,6 +38,28 @@ describe("ElectronTheme", () => {
     themeState.shouldUseDarkColors = true;
     themeState.themeSource = "system";
     themeState.setSourceError = null;
+  });
+  it("maps resolved semantic colors to native-safe sRGB and rejects variable references", () => {
+    const resolved = {
+      variant: null,
+      baseVariant: null,
+      previewVariant: null,
+      basePackageId: null,
+      previewPackageId: null,
+      values: {
+        canvas: "#123456",
+        toolbarForeground: "oklch(0.9 0.02 240)",
+      },
+      css: "",
+    } satisfies AppearanceResolved;
+
+    assert.deepEqual(ElectronTheme.resolveNativeAppearance(resolved, "dark"), {
+      appearance: "dark",
+      backgroundColor: "#123456",
+      symbolColor: "#d3e0ea",
+    });
+    assert.isTrue(ElectronTheme.isSupportedElectronColor("rgba(1, 2, 3, 0.5)"));
+    assert.isFalse(ElectronTheme.isSupportedElectronColor("var(--app-theme-canvas)"));
   });
 
   it.effect("scopes native theme update listeners", () =>

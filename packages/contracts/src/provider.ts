@@ -173,6 +173,39 @@ export const ProviderNativeSessionResumeCursor = Schema.Struct({
 });
 export type ProviderNativeSessionResumeCursor = typeof ProviderNativeSessionResumeCursor.Type;
 
+export const ProviderSubagentTranscriptEntryKind = Schema.Literals([
+  "user",
+  "assistant",
+  "reasoning",
+  "tool",
+  "system",
+]);
+export type ProviderSubagentTranscriptEntryKind = typeof ProviderSubagentTranscriptEntryKind.Type;
+
+export const ProviderSubagentTranscriptEntry = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: ProviderSubagentTranscriptEntryKind,
+  text: TrimmedNonEmptyString,
+  timestamp: IsoDateTime,
+  toolName: Schema.optional(TrimmedNonEmptyString),
+  isError: Schema.optional(Schema.Boolean),
+});
+export type ProviderSubagentTranscriptEntry = typeof ProviderSubagentTranscriptEntry.Type;
+
+export const ProviderSubagentTranscriptReadInput = Schema.Struct({
+  threadId: ThreadId,
+  subagentId: TrimmedNonEmptyString,
+  cursor: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderSubagentTranscriptReadInput = typeof ProviderSubagentTranscriptReadInput.Type;
+
+export const ProviderSubagentTranscriptReadResult = Schema.Struct({
+  entries: Schema.Array(ProviderSubagentTranscriptEntry),
+  nextCursor: TrimmedNonEmptyString,
+  reset: Schema.Boolean,
+});
+export type ProviderSubagentTranscriptReadResult = typeof ProviderSubagentTranscriptReadResult.Type;
+
 export class ProviderNativeSessionError extends Schema.TaggedErrorClass<ProviderNativeSessionError>()(
   "ProviderNativeSessionError",
   {
@@ -225,6 +258,29 @@ export const ProviderRespondToUserInputInput = Schema.Struct({
   answers: ProviderUserInputAnswers,
 });
 export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
+
+export const ProviderUploadFeedbackInput = Schema.Struct({
+  threadId: ThreadId,
+  reason: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderUploadFeedbackInput = typeof ProviderUploadFeedbackInput.Type;
+
+export const ProviderUploadFeedbackResult = Schema.Struct({
+  feedbackId: TrimmedNonEmptyString,
+});
+export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.Type;
+
+export class ProviderUploadFeedbackError extends Schema.TaggedErrorClass<ProviderUploadFeedbackError>()(
+  "ProviderUploadFeedbackError",
+  {
+    threadId: ThreadId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Failed to upload feedback for thread ${this.threadId}.`;
+  }
+}
 
 const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
 

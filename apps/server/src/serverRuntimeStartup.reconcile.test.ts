@@ -57,6 +57,7 @@ const makeProviderService = (liveThreadIds: ReadonlyArray<ThreadId> = []) =>
     rollbackConversation: () => Effect.die("unused"),
     captureNativeCheckpoint: () => Effect.succeed(undefined),
     restoreNativeCheckpoint: () => Effect.void,
+    uploadFeedback: () => Effect.die("unused"),
     streamEvents: Stream.empty,
   }) satisfies ProviderService.ProviderService["Service"];
 

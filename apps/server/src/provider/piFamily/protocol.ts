@@ -357,6 +357,11 @@ export interface NativeTaskSnapshot extends NativeTaskIdentity {
   readonly metadata?: JsonRecord;
 }
 
+export interface PiFamilyPlanStep {
+  readonly step: string;
+  readonly status: "pending" | "inProgress" | "completed";
+}
+
 export type PiFamilyProjectedEvent =
   | { readonly kind: "runtime.ready"; readonly ready: OmpReadyFrame }
   | {
@@ -385,6 +390,12 @@ export type PiFamilyProjectedEvent =
   | {
       readonly kind: "task.started" | "task.progress" | "task.completed";
       readonly task: NativeTaskSnapshot;
+      readonly raw: RpcEnvelope;
+    }
+  | {
+      readonly kind: "plan.updated";
+      readonly plan: readonly PiFamilyPlanStep[];
+      readonly requestId?: string;
       readonly raw: RpcEnvelope;
     }
   | { readonly kind: "ui.request"; readonly request: PortableUiRequest; readonly raw: RpcEnvelope }

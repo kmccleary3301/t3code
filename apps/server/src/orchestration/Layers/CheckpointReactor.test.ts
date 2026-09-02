@@ -145,6 +145,7 @@ function createProviderServiceHarness(
     rollbackConversation,
     captureNativeCheckpoint,
     restoreNativeCheckpoint,
+    uploadFeedback: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },

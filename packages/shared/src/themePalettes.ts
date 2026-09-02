@@ -1,3 +1,36 @@
+const OKLCH_PATTERN = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/u;
+
+function linearToSrgb(value: number): number {
+  const converted = value <= 0.0031308 ? 12.92 * value : 1.055 * value ** (1 / 2.4) - 0.055;
+  return Math.round(Math.min(1, Math.max(0, converted)) * 255);
+}
+
+/** Convert the shared OKLCH palette form for native APIs that require sRGB. */
+export function themeColorToNativeColor(value: string): string {
+  const match = OKLCH_PATTERN.exec(value);
+  if (!match) return value;
+
+  const lightness = Number(match[1]);
+  const chroma = Number(match[2]);
+  const hue = (Number(match[3]) * Math.PI) / 180;
+  const alpha = match[4] === undefined ? 1 : Number(match[4]);
+  const a = chroma * Math.cos(hue);
+  const b = chroma * Math.sin(hue);
+  const lPrime = lightness + 0.3963377774 * a + 0.2158037573 * b;
+  const mPrime = lightness - 0.1055613458 * a - 0.0638541728 * b;
+  const sPrime = lightness - 0.0894841775 * a - 1.291485548 * b;
+  const l = lPrime ** 3;
+  const m = mPrime ** 3;
+  const s = sPrime ** 3;
+  const red = linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s);
+  const green = linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s);
+  const blue = linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s);
+
+  return alpha < 1
+    ? `rgba(${red}, ${green}, ${blue}, ${Number(alpha.toFixed(4))})`
+    : `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
 export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
 
 /** The mobile app's own hand-tuned palette, which is not part of the built-in library. */
@@ -9,6 +42,35 @@ export const MOBILE_DEFAULT_THEME_ID = "t3-code";
  * importing React Native application code.
  */
 export const MOBILE_THEME_IDS = [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS] as const;
+
+/**
+ * Ids a theme may not take: the appearance keywords a stored preference uses,
+ * every built-in, and the legacy aliases older saves still carry. Taking one
+ * would either be shadowed by the built-in or capture clients that never chose
+ * it, so the client library and the publish path both consult this set.
+ */
+export const RESERVED_THEME_IDS: ReadonlySet<string> = new Set([
+  "system",
+  "light",
+  "dark",
+  ...BUILT_IN_THEME_IDS,
+  "t3-chat-dark",
+  "t3-grove",
+  "t3-ocean",
+  "t3-ember",
+  "t3-iris",
+]);
+
+/**
+ * Additionally closed to a machine publishing a theme: the mobile default is
+ * not a web or desktop built-in, so a saved theme may legitimately carry that
+ * id, but no client that follows published themes can resolve it -- publishing
+ * it would report success and change nothing.
+ */
+export const UNPUBLISHABLE_THEME_IDS: ReadonlySet<string> = new Set([
+  ...RESERVED_THEME_IDS,
+  MOBILE_DEFAULT_THEME_ID,
+]);
 
 export type BuiltInThemeId = (typeof BUILT_IN_THEME_IDS)[number];
 export type MobileThemeId = (typeof MOBILE_THEME_IDS)[number];

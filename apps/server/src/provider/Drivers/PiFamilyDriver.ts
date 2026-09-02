@@ -210,6 +210,7 @@ function makeSnapshot(
     return {
       ...base,
       models: discovery.success.models,
+      slashCommands: discovery.success.slashCommands,
       installed: true,
       version,
       status: "ready" as const,

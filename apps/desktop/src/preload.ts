@@ -1,4 +1,5 @@
 import type {
+  DesktopAppearanceWatchEvent,
   DesktopBridge,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
@@ -8,8 +9,42 @@ import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
+function isDesktopAppearanceWatchReason(
+  reason: unknown,
+): reason is DesktopAppearanceWatchEvent["reason"] {
+  return (
+    reason === "external-change" ||
+    reason === "safe-mode" ||
+    reason === "reset" ||
+    reason === "install" ||
+    reason === "transaction"
+  );
+}
+
+function isDesktopAppearanceWatchEvent(value: unknown): value is DesktopAppearanceWatchEvent {
+  if (typeof value !== "object" || value === null) return false;
+  const event = value as { readonly reason?: unknown; readonly state?: unknown };
+  if (!isDesktopAppearanceWatchReason(event.reason)) return false;
+  if (typeof event.state !== "object" || event.state === null) return false;
+  const state = event.state as {
+    readonly revision?: unknown;
+    readonly safeMode?: unknown;
+    readonly checksum?: unknown;
+  };
+  return (
+    typeof state.revision === "number" &&
+    Number.isSafeInteger(state.revision) &&
+    state.revision >= 0 &&
+    typeof state.safeMode === "boolean" &&
+    typeof state.checksum === "string" &&
+    /^[0-9a-f]{64}$/u.test(state.checksum)
+  );
+}
 
 exposeClerkBridge({ passkeys: true });
+
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
+const clientPlatform = process.platform;
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -35,6 +70,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
+  getClientPlatform: () => clientPlatform,
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;
@@ -51,6 +87,39 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
+  readAppearanceState: () =>
+    ipcRenderer.invoke(IpcChannels.READ_APPEARANCE_STATE_CHANNEL, undefined),
+  commitAppearanceState: (input) =>
+    ipcRenderer.invoke(IpcChannels.COMMIT_APPEARANCE_STATE_CHANNEL, input),
+  listAppearancePackages: () => ipcRenderer.invoke(IpcChannels.LIST_APPEARANCE_PACKAGES_CHANNEL),
+  readAppearancePackage: (input) =>
+    ipcRenderer.invoke(IpcChannels.READ_APPEARANCE_PACKAGE_CHANNEL, input),
+  installAppearancePackage: () =>
+    ipcRenderer.invoke(IpcChannels.INSTALL_APPEARANCE_PACKAGE_CHANNEL),
+  exportAppearancePackage: (input) =>
+    ipcRenderer.invoke(IpcChannels.EXPORT_APPEARANCE_PACKAGE_CHANNEL, input),
+  startAppearanceWatch: () => ipcRenderer.invoke(IpcChannels.START_APPEARANCE_WATCH_CHANNEL),
+  onAppearanceWatchEvent: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, raw: unknown) => {
+      try {
+        if (isDesktopAppearanceWatchEvent(raw)) listener(raw);
+      } catch {
+        // Main-process payloads still cross an untrusted serialization boundary.
+      }
+    };
+    ipcRenderer.on(IpcChannels.APPEARANCE_WATCH_EVENT_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.APPEARANCE_WATCH_EVENT_CHANNEL, wrappedListener);
+    };
+  },
+  revealAppearanceFolder: () => ipcRenderer.invoke(IpcChannels.REVEAL_APPEARANCE_FOLDER_CHANNEL),
+  setAppearanceSafeMode: (input) =>
+    ipcRenderer.invoke(IpcChannels.SET_APPEARANCE_SAFE_MODE_CHANNEL, input),
+  resetAppearance: () => ipcRenderer.invoke(IpcChannels.RESET_APPEARANCE_CHANNEL),
+  readAppearanceQuarantine: () =>
+    ipcRenderer.invoke(IpcChannels.READ_APPEARANCE_QUARANTINE_CHANNEL),
+  restoreAppearanceQuarantine: () =>
+    ipcRenderer.invoke(IpcChannels.RESTORE_APPEARANCE_QUARANTINE_CHANNEL),
   getConnectionCatalog: () => ipcRenderer.invoke(IpcChannels.GET_CONNECTION_CATALOG_CHANNEL),
   setConnectionCatalog: (catalog) =>
     ipcRenderer.invoke(IpcChannels.SET_CONNECTION_CATALOG_CHANNEL, catalog),
@@ -101,6 +170,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setWslDistro: (distro) => ipcRenderer.invoke(IpcChannels.SET_WSL_DISTRO_CHANNEL, distro),
   setWslOnly: (enabled) => ipcRenderer.invoke(IpcChannels.SET_WSL_ONLY_CHANNEL, enabled),
   pickFolder: (options) => ipcRenderer.invoke(IpcChannels.PICK_FOLDER_CHANNEL, options),
+  pickProjectFavicon: (initialPath) =>
+    ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
   showContextMenu: (items, position) =>

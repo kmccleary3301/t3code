@@ -18,7 +18,7 @@ export function ClerkUserProfilePage({
   readonly title: ReactNode;
 }) {
   return (
-    <div className={cn("w-full min-w-0 text-foreground", className)}>
+    <div className={cn("w-full min-w-0 text-foreground", className)} data-t3-surface="profile">
       <header className="flex flex-col gap-3 pb-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4 sm:pr-8">
         <div className="min-w-0">
           <h2 className="text-[1.0625rem] leading-6 font-semibold">{title}</h2>

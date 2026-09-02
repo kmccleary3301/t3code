@@ -50,7 +50,11 @@ export function ConnectionStatusDot({
 
   if (!tooltipText) {
     return (
-      <span className="relative flex size-3 shrink-0 items-center justify-center">
+      <span
+        className="relative flex size-3 shrink-0 items-center justify-center"
+        data-t3-surface="reconnect"
+        data-t3-part="reconnect"
+      >
         {dotContent}
       </span>
     );
@@ -61,6 +65,8 @@ export function ConnectionStatusDot({
       type="button"
       aria-label={tooltipText}
       className="relative flex size-3 shrink-0 cursor-help items-center justify-center rounded-full outline-hidden"
+      data-t3-surface="reconnect"
+      data-t3-part="reconnect"
     >
       {dotContent}
     </button>

@@ -5,7 +5,11 @@ import {
   themeColorToNativeColor,
   type MobileThemeId,
 } from "../../lib/mobileTheme";
-
+import type { NormalizedAppearanceProfile } from "@t3tools/shared/appearance";
+import {
+  buildGhosttyTypographyConfig,
+  compileMobileAppearance,
+} from "../../lib/mobileAppearanceAdapter";
 export type TerminalAppearanceScheme = "light" | "dark";
 
 export interface TerminalTheme {
@@ -15,6 +19,17 @@ export interface TerminalTheme {
   readonly border: string;
   readonly cursorForeground: string;
   readonly cursorBackground: string;
+  readonly selection?: string;
+  readonly scrollbar?: string;
+  readonly scrollbarHover?: string;
+  readonly fontFamily?: string;
+  readonly fontSize?: number;
+  readonly fontWeight?: number;
+  readonly lineHeight?: number;
+  readonly letterSpacingEm?: number;
+  readonly ligatures?: boolean;
+  readonly featureSettings?: Readonly<Record<string, number>>;
+  readonly variableAxes?: Readonly<Record<string, number>>;
   readonly palette: readonly string[];
 }
 
@@ -100,6 +115,33 @@ export function getMobileTerminalTheme(
   };
 }
 
+export function getProfileTerminalTheme(
+  profile: NormalizedAppearanceProfile,
+  scheme: TerminalAppearanceScheme,
+): TerminalTheme {
+  const theme = compileMobileAppearance(profile, scheme).rendererPalettes.terminal;
+  return {
+    background: theme.background,
+    foreground: theme.foreground,
+    mutedForeground: theme.foreground,
+    border: theme.scrollbar,
+    cursorForeground: theme.cursor,
+    cursorBackground: theme.background,
+    selection: theme.selection,
+    scrollbar: theme.scrollbar,
+    scrollbarHover: theme.scrollbarHover,
+    fontFamily: theme.fontFamily,
+    fontSize: theme.fontSize,
+    fontWeight: theme.fontWeight,
+    lineHeight: theme.lineHeight,
+    letterSpacingEm: theme.letterSpacingEm,
+    ligatures: theme.ligatures,
+    featureSettings: theme.featureSettings,
+    variableAxes: theme.variableAxes,
+    palette: theme.palette,
+  };
+}
+
 export function buildGhosttyThemeConfig(theme: TerminalTheme): string {
   const lines = [
     `background = ${theme.background}`,
@@ -107,7 +149,16 @@ export function buildGhosttyThemeConfig(theme: TerminalTheme): string {
     `cursor-color = ${theme.cursorForeground}`,
     `cursor-text = ${theme.cursorBackground}`,
   ];
-
+  if (theme.selection !== undefined) lines.push(`selection-background = ${theme.selection}`);
+  lines.push(
+    ...buildGhosttyTypographyConfig({
+      fontFamily: theme.fontFamily,
+      fontSize: theme.fontSize,
+      ligatures: theme.ligatures,
+      featureSettings: theme.featureSettings,
+      variableAxes: theme.variableAxes,
+    }),
+  );
   for (const [index, color] of theme.palette.entries()) {
     lines.push(`palette = ${index}=${color}`);
   }
