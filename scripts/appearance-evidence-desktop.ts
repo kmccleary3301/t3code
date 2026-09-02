@@ -46,6 +46,7 @@ export interface DesktopDriverOptions {
   readonly pairCount: number;
 }
 const GRACEFUL_ELECTRON_SHUTDOWN_TIMEOUT_MS = 15_000;
+const PROCESS_TABLE_TIMEOUT_MS = 2_000;
 
 function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -59,19 +60,27 @@ interface ProcessIdentity {
   readonly pid: number;
   readonly parentPid: number;
   readonly command: string;
+  readonly startedAt: string;
 }
 
 async function captureProcessTable(): Promise<ReadonlyArray<ProcessIdentity>> {
   if (NodeProcess.platform === "win32") return [];
-  const output = await commandOutput("ps", ["-ww", "-axo", "pid=,ppid=,command="]);
+  const output = await commandOutput("ps", ["-ww", "-axo", "pid=,ppid=,lstart=,command="], {
+    killSignal: "SIGKILL",
+    timeout: PROCESS_TABLE_TIMEOUT_MS,
+  });
   return output.split("\n").flatMap((line): ReadonlyArray<ProcessIdentity> => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
+    const match =
+      /^\s*(\d+)\s+(\d+)\s+(\S{3}\s+\S{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/u.exec(
+        line,
+      );
     if (!match) return [];
     return [
       {
         pid: Number(match[1]),
         parentPid: Number(match[2]),
-        command: match[3]!.trim(),
+        startedAt: match[3]!,
+        command: match[4]!.trim(),
       },
     ];
   });
@@ -95,24 +104,49 @@ async function captureOwnedDescendants(
   return descendants;
 }
 
-async function stopCapturedProcesses(processes: ReadonlyArray<ProcessIdentity>): Promise<void> {
-  if (processes.length === 0) return;
-  const stop = async (signal: NodeJS.Signals): Promise<void> => {
-    const current = new Map(
-      (await captureProcessTable()).map((process) => [process.pid, process.command] as const),
-    );
-    for (const process of [...processes].reverse()) {
-      if (current.get(process.pid) !== process.command) continue;
-      try {
-        NodeProcess.kill(process.pid, signal);
-      } catch {
-        // The exact captured descendant exited after identity revalidation.
-      }
+function mergeProcessIdentities(
+  current: ReadonlyArray<ProcessIdentity>,
+  captured: ReadonlyArray<ProcessIdentity>,
+): ReadonlyArray<ProcessIdentity> {
+  const byPid = new Map(current.map((process) => [process.pid, process] as const));
+  for (const process of captured) byPid.set(process.pid, process);
+  return [...byPid.values()];
+}
+async function stopCapturedProcesses(
+  processes: ReadonlyArray<ProcessIdentity>,
+  rootPid: number | undefined,
+): Promise<void> {
+  if (processes.length === 0 || rootPid === undefined) return;
+  const current = new Map(
+    (await captureProcessTable()).map((process) => [process.pid, process] as const),
+  );
+  const belongsToRoot = (process: ProcessIdentity): boolean => {
+    const visited = new Set<number>();
+    let parentPid = process.parentPid;
+    while (!visited.has(parentPid)) {
+      if (parentPid === rootPid) return true;
+      visited.add(parentPid);
+      const parent = current.get(parentPid);
+      if (!parent) return false;
+      parentPid = parent.parentPid;
     }
+    return false;
   };
-  await stop("SIGTERM");
-  await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
-  await stop("SIGKILL");
+  for (const process of [...processes].reverse()) {
+    const currentProcess = current.get(process.pid);
+    if (
+      currentProcess?.startedAt !== process.startedAt ||
+      currentProcess.command !== process.command ||
+      !belongsToRoot(currentProcess)
+    ) {
+      continue;
+    }
+    try {
+      NodeProcess.kill(process.pid, "SIGKILL");
+    } catch {
+      // The exact captured descendant exited after ownership revalidation.
+    }
+  }
 }
 
 async function stopWindowsProcessTree(child: NodeChildProcess.ChildProcess): Promise<void> {
@@ -126,29 +160,66 @@ async function stopWindowsProcessTree(child: NodeChildProcess.ChildProcess): Pro
   }
 }
 
-async function closeElectronApplication(application: ElectronApplication): Promise<void> {
+async function closeElectronApplication(
+  application: ElectronApplication,
+  previouslyCaptured: ReadonlyArray<ProcessIdentity>,
+): Promise<void> {
   const child = application.process();
-  const ownedDescendants = await captureOwnedDescendants(child);
-  if (child.exitCode === null && child.signalCode === null) {
-    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    await Promise.race([
-      application.evaluate(({ app }) => app.quit()).catch(() => undefined),
-      new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-    ]);
-    await Promise.race([
-      exited,
-      new Promise<void>((resolve) => setTimeout(resolve, GRACEFUL_ELECTRON_SHUTDOWN_TIMEOUT_MS)),
-    ]);
-    if (child.exitCode === null && child.signalCode === null) {
-      if (NodeProcess.platform === "win32") await stopWindowsProcessTree(child);
-      else await stopActualSurfaceProcess(child);
+  const failures: unknown[] = [];
+  let ownedDescendants = previouslyCaptured;
+  try {
+    ownedDescendants = mergeProcessIdentities(
+      ownedDescendants,
+      await captureOwnedDescendants(child),
+    );
+  } catch (cause) {
+    failures.push(cause);
+  }
+  if (NodeProcess.platform === "win32") {
+    try {
+      if (child.exitCode === null && child.signalCode === null) {
+        await stopWindowsProcessTree(child);
+      }
+    } catch (cause) {
+      failures.push(cause);
+    }
+  } else {
+    try {
+      await stopCapturedProcesses(ownedDescendants, child.pid);
+    } catch (cause) {
+      failures.push(cause);
+    }
+    try {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+        await Promise.race([
+          application.evaluate(({ app }) => app.quit()).catch(() => undefined),
+          new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+        ]);
+        await Promise.race([
+          exited,
+          new Promise<void>((resolve) =>
+            setTimeout(resolve, GRACEFUL_ELECTRON_SHUTDOWN_TIMEOUT_MS),
+          ),
+        ]);
+        if (child.exitCode === null && child.signalCode === null) {
+          await stopActualSurfaceProcess(child);
+        }
+      }
+    } catch (cause) {
+      failures.push(cause);
     }
   }
   await Promise.race([
     application.close().catch(() => undefined),
     new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
   ]);
-  await stopCapturedProcesses(ownedDescendants);
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      "Electron application resources could not be fully stopped.",
+    );
+  }
 }
 interface DesktopRouterBlockerObservation {
   readonly stage:
@@ -698,12 +769,21 @@ async function preflightDesktopRouter(
   );
   let browser: Browser | undefined;
   let blocker: DesktopAppearanceBlockedError | null = null;
+  let ownedDescendants: ReadonlyArray<ProcessIdentity> = [];
   try {
     const connected = await connectToElectronRenderer(port, child);
     browser = connected.browser;
+    ownedDescendants = mergeProcessIdentities(
+      ownedDescendants,
+      await captureOwnedDescendants(child),
+    );
     const deadline = performance.now() + 12_000;
     let settingsVisible = false;
     while (performance.now() < deadline) {
+      ownedDescendants = mergeProcessIdentities(
+        ownedDescendants,
+        await captureOwnedDescendants(child),
+      );
       settingsVisible = await Promise.race([
         connected.page
           .evaluate<boolean>(`document.querySelectorAll('[aria-label="Settings"]').length > 0`)
@@ -755,19 +835,22 @@ async function preflightDesktopRouter(
     );
   }
   const cleanupFailures: unknown[] = [];
-  let ownedDescendants: ReadonlyArray<ProcessIdentity> = [];
   try {
-    ownedDescendants = await captureOwnedDescendants(child);
+    ownedDescendants = mergeProcessIdentities(
+      ownedDescendants,
+      await captureOwnedDescendants(child),
+    );
   } catch (cause) {
     cleanupFailures.push(cause);
   }
   try {
-    await stopActualSurfaceProcess(child, { processGroup: true });
+    await stopCapturedProcesses(ownedDescendants, child.pid);
   } catch (cause) {
     cleanupFailures.push(cause);
   }
   try {
-    await stopCapturedProcesses(ownedDescendants);
+    if (NodeProcess.platform === "win32") await stopWindowsProcessTree(child);
+    else await stopActualSurfaceProcess(child, { processGroup: true });
   } catch (cause) {
     cleanupFailures.push(cause);
   }
@@ -796,11 +879,12 @@ async function launchDesktop(appearance: AppearanceMode): Promise<{
   let environment: Awaited<ReturnType<typeof createActualSurfaceEnvironment>> | undefined;
   let app: ElectronApplication | undefined;
   let runtimeVersion = "Electron unknown";
+  let ownedDesktopDescendants: ReadonlyArray<ProcessIdentity> = [];
   const dispose = async (): Promise<void> => {
     const failures: unknown[] = [];
     if (app) {
       try {
-        await closeElectronApplication(app);
+        await closeElectronApplication(app, ownedDesktopDescendants);
       } catch (cause) {
         failures.push(cause);
       }
@@ -867,6 +951,7 @@ async function launchDesktop(appearance: AppearanceMode): Promise<{
       env: childEnv,
       timeout: 15_000,
     });
+    ownedDesktopDescendants = await captureOwnedDescendants(app.process());
     runtimeVersion = `Electron ${await app.evaluate(() => process.versions.electron ?? "unknown")}`;
     try {
       await waitForDesktopRenderer(
