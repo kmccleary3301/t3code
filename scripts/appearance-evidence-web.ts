@@ -524,6 +524,14 @@ export async function runWebAppearanceDriver(
           );
         }
       }
+      if (session.networkRequests.dropped > 0) {
+        throw new WebAppearanceBlockedError(
+          "network-request-capture-overflow",
+          "BLOCKED_PRODUCT",
+          "network-inventory",
+          `Network request inventory dropped ${session.networkRequests.dropped} earlier entries.`,
+        );
+      }
     } finally {
       await session.dispose();
     }
