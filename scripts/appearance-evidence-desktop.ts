@@ -1,7 +1,6 @@
 /// <reference lib="dom" />
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - Evidence drivers own disposable host processes and filesystem state.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -56,35 +55,64 @@ interface ElectronLaunchCommand {
   readonly args: ReadonlyArray<string>;
 }
 
-async function captureMarkedProcessIds(processTitle: string): Promise<ReadonlyArray<number>> {
-  if (NodeProcess.platform === "win32") return [];
-  const output = await commandOutput("ps", ["-ww", "-axo", "pid=,command="]).catch(() => "");
-  const processIds: number[] = [];
-  for (const line of output.split("\n")) {
-    const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
-    if (match?.[2]?.trim() === processTitle) processIds.push(Number(match[1]));
-  }
-  return processIds;
+interface ProcessIdentity {
+  readonly pid: number;
+  readonly parentPid: number;
+  readonly command: string;
 }
 
-async function stopMarkedProcesses(processTitle: string): Promise<void> {
-  const processIds = await captureMarkedProcessIds(processTitle);
-  for (const pid of processIds) {
-    try {
-      NodeProcess.kill(pid, "SIGTERM");
-    } catch {
-      // A gracefully stopped evidence process is already gone.
+async function captureProcessTable(): Promise<ReadonlyArray<ProcessIdentity>> {
+  if (NodeProcess.platform === "win32") return [];
+  const output = await commandOutput("ps", ["-ww", "-axo", "pid=,ppid=,command="]);
+  return output.split("\n").flatMap((line): ReadonlyArray<ProcessIdentity> => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
+    if (!match) return [];
+    return [
+      {
+        pid: Number(match[1]),
+        parentPid: Number(match[2]),
+        command: match[3]!.trim(),
+      },
+    ];
+  });
+}
+
+async function captureOwnedDescendants(
+  child: NodeChildProcess.ChildProcess,
+): Promise<ReadonlyArray<ProcessIdentity>> {
+  if (child.pid === undefined || NodeProcess.platform === "win32") return [];
+  const table = await captureProcessTable();
+  const descendants: ProcessIdentity[] = [];
+  const pendingParents = [child.pid];
+  while (pendingParents.length > 0) {
+    const parentPid = pendingParents.pop()!;
+    for (const process of table) {
+      if (process.parentPid !== parentPid) continue;
+      descendants.push(process);
+      pendingParents.push(process.pid);
     }
   }
-  if (processIds.length === 0) return;
+  return descendants;
+}
+
+async function stopCapturedProcesses(processes: ReadonlyArray<ProcessIdentity>): Promise<void> {
+  if (processes.length === 0) return;
+  const stop = async (signal: NodeJS.Signals): Promise<void> => {
+    const current = new Map(
+      (await captureProcessTable()).map((process) => [process.pid, process.command] as const),
+    );
+    for (const process of [...processes].reverse()) {
+      if (current.get(process.pid) !== process.command) continue;
+      try {
+        NodeProcess.kill(process.pid, signal);
+      } catch {
+        // The exact captured descendant exited after identity revalidation.
+      }
+    }
+  };
+  await stop("SIGTERM");
   await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
-  for (const pid of await captureMarkedProcessIds(processTitle)) {
-    try {
-      NodeProcess.kill(pid, "SIGKILL");
-    } catch {
-      // The exact marked process exited after the second identity check.
-    }
-  }
+  await stop("SIGKILL");
 }
 
 async function stopWindowsProcessTree(child: NodeChildProcess.ChildProcess): Promise<void> {
@@ -100,6 +128,7 @@ async function stopWindowsProcessTree(child: NodeChildProcess.ChildProcess): Pro
 
 async function closeElectronApplication(application: ElectronApplication): Promise<void> {
   const child = application.process();
+  const ownedDescendants = await captureOwnedDescendants(child);
   if (child.exitCode === null && child.signalCode === null) {
     const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
     await Promise.race([
@@ -119,6 +148,7 @@ async function closeElectronApplication(application: ElectronApplication): Promi
     application.close().catch(() => undefined),
     new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
   ]);
+  await stopCapturedProcesses(ownedDescendants);
 }
 interface DesktopRouterBlockerObservation {
   readonly stage:
@@ -652,10 +682,13 @@ async function preflightDesktopRouter(
       runtimeVersion,
       cause === undefined ? undefined : { cause },
     );
+  const preflightArgs = launchCommand.args.map((argument) =>
+    argument.startsWith("--user-data-dir=") ? `${argument}-preflight` : argument,
+  );
   const port = await reserveAvailablePort();
   const child = NodeChildProcess.spawn(
     launchCommand.electronPath,
-    [`--remote-debugging-port=${port}`, ...launchCommand.args],
+    [`--remote-debugging-port=${port}`, ...preflightArgs],
     {
       cwd,
       env,
@@ -722,8 +755,19 @@ async function preflightDesktopRouter(
     );
   }
   const cleanupFailures: unknown[] = [];
+  let ownedDescendants: ReadonlyArray<ProcessIdentity> = [];
+  try {
+    ownedDescendants = await captureOwnedDescendants(child);
+  } catch (cause) {
+    cleanupFailures.push(cause);
+  }
   try {
     await stopActualSurfaceProcess(child, { processGroup: true });
+  } catch (cause) {
+    cleanupFailures.push(cause);
+  }
+  try {
+    await stopCapturedProcesses(ownedDescendants);
   } catch (cause) {
     cleanupFailures.push(cause);
   }
@@ -749,7 +793,6 @@ async function launchDesktop(appearance: AppearanceMode): Promise<{
   readonly dispose: () => Promise<void>;
 }> {
   const baseDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "appearance-desktop-"));
-  const backendProcessTitle = `t3code-evidence-${NodeCrypto.randomUUID()}`;
   let environment: Awaited<ReturnType<typeof createActualSurfaceEnvironment>> | undefined;
   let app: ElectronApplication | undefined;
   let runtimeVersion = "Electron unknown";
@@ -761,11 +804,6 @@ async function launchDesktop(appearance: AppearanceMode): Promise<{
       } catch (cause) {
         failures.push(cause);
       }
-    }
-    try {
-      await stopMarkedProcesses(backendProcessTitle);
-    } catch (cause) {
-      failures.push(cause);
     }
     if (environment) {
       try {
@@ -803,7 +841,6 @@ async function launchDesktop(appearance: AppearanceMode): Promise<{
         NODE_ENV: "production",
         NO_COLOR: "1",
       }),
-      NODE_OPTIONS: `--title=${backendProcessTitle}`,
       T3CODE_HOME: environment.baseDir,
       T3CODE_NO_BROWSER: "1",
     };
