@@ -556,6 +556,30 @@ describe("DesktopAppearanceStorage", () => {
     expect(await recoverable.readSafeModeForBoot()).toBe(true);
   });
 
+  it("does not reinterpret its own package transaction as an external change", async () => {
+    const root = await makeRoot();
+    const storage = new DesktopAppearanceStorage(root, undefined, "darwin");
+    await storage.load();
+    const updates: AppearancePersistedState[] = [];
+    const stop = storage.watch((next) => updates.push(next));
+    const css = "body { color: red; }\n";
+    await storage.install({
+      input: packageManifest(css),
+      trust: {
+        class: "local-package",
+        allowSharedCss: false,
+        allowDesktopCss: true,
+        allowAdvancedSnippet: false,
+      },
+      desktopCss: css,
+    });
+    const committed = await storage.load();
+    await waitForFilesystem(220);
+    stop();
+    expect((await storage.load()).revision).toBe(committed.revision);
+    expect(updates).toEqual([]);
+  });
+
   it("debounces stable external revisions and suppresses duplicates", async () => {
     const root = await makeRoot();
     const first = new DesktopAppearanceStorage(root, undefined, "darwin");

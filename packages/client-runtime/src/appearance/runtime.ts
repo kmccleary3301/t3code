@@ -948,7 +948,7 @@ export async function createAppearanceRuntime(
     command: AppearanceCommand,
     signal?: AbortSignal,
   ): Promise<AppearanceCommandResult> => {
-    const run = async (): Promise<AppearanceCommandResult> => {
+    const run = async (retryConflict = true): Promise<AppearanceCommandResult> => {
       const commandType = command.type;
       if (cancellation(signal))
         return { status: "cancelled", command: commandType, snapshot: currentSnapshot };
@@ -1130,11 +1130,25 @@ export async function createAppearanceRuntime(
             compiled.dispose?.();
             compiled = recoveredCompiled;
           } else {
-            await internals.storage.commit(
-              candidateSourceState.revision,
-              persistedCandidate,
-              signal,
-            );
+            try {
+              await internals.storage.commit(
+                candidateSourceState.revision,
+                persistedCandidate,
+                signal,
+              );
+            } catch (error) {
+              if (!retryConflict) throw error;
+              let durable: AppearancePersistedState;
+              try {
+                durable = await internals.storage.load();
+              } catch {
+                throw error;
+              }
+              if (durable.revision <= candidateSourceState.revision) throw error;
+              if (compiled !== oldCompiled) compiled.dispose?.();
+              await reconcile(durable, "storage");
+              return run(false);
+            }
           }
         }
       } catch (error) {
@@ -1182,7 +1196,10 @@ export async function createAppearanceRuntime(
         snapshot: currentSnapshot,
       };
     };
-    const work = tail.then(run, run);
+    const work = tail.then(
+      () => run(),
+      () => run(),
+    );
     tail = work.then(
       () => undefined,
       () => undefined,

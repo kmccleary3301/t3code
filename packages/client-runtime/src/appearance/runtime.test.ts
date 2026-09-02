@@ -216,6 +216,39 @@ describe("appearance runtime transactions", () => {
     expect(storage.state.revision).toBe(2);
     expect(storage.state.preference.mode).toBe("dark");
   });
+  it("retries once when durable state advances during a persistent command", async () => {
+    let durable = createEmptyAppearanceState();
+    let raceCommit = true;
+    const storage: AppearanceStorageAdapter = {
+      load: async () => durable,
+      commit: async (expectedRevision, candidate) => {
+        if (expectedRevision !== durable.revision) throw new Error("revision conflict");
+        if (raceCommit) {
+          raceCommit = false;
+          durable = {
+            ...durable,
+            revision: durable.revision + 1,
+            preference: { mode: "light" },
+          };
+          throw new Error("revision conflict");
+        }
+        durable = candidate;
+      },
+      subscribe: () => () => undefined,
+    };
+    const runtime = await createAppearanceRuntime({
+      storage,
+      compiler: compilerThatNormalizes(),
+      apply: { apply: async () => undefined },
+    });
+    const result = await runtime.execute({
+      type: "preference",
+      preference: { mode: "dark" },
+    });
+    expect(result.status).toBe("applied");
+    expect(durable.revision).toBe(2);
+    expect(durable.preference.mode).toBe("dark");
+  });
 
   it("quarantines a package after initial compilation failure and does not retry it", async () => {
     const seed = await createAppearanceRuntime({
