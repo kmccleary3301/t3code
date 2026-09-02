@@ -1,0 +1,171 @@
+name: Appearance Windows verification
+
+on:
+  push:
+    branches:
+      - verification/appearance-windows-ad54d3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appearance-windows-ad54d3
+  cancel-in-progress: false
+
+env:
+  PRODUCT_COMMIT: ad54d3a88a83b8ef026fa13e63e4a67fcb00bb05
+  CONTRACT_SHA256: 54ccbab26ba43af981f9326000c04c98641b961ea6211e814668e908c53caa08
+  BUILD_VERSION: 0.0.37
+  T3_PRODUCT_PROFILE: pi-omp
+  T3CODE_DESKTOP_UPDATE_REPOSITORY: ""
+
+jobs:
+  wsl-node-pty:
+    name: WSL node-pty prebuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact product commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.PRODUCT_COMMIT }}
+          path: product
+          fetch-depth: 0
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: product/package.json
+          run-install: false
+
+      - name: Install server dependencies
+        working-directory: product
+        run: vp install --filter=t3...
+
+      - name: Build Linux x64 node-pty binding
+        working-directory: product
+        shell: bash
+        run: |
+          set -euo pipefail
+          pty_dir="$(dirname "$(node -e "process.stdout.write(require.resolve('node-pty/package.json', { paths: [process.cwd() + '/apps/server'] }))")")"
+          (cd "$pty_dir" && npx --yes node-gyp rebuild)
+          test -f "$pty_dir/build/Release/pty.node"
+          mkdir -p "$GITHUB_WORKSPACE/wsl-prebuild"
+          cp "$pty_dir/build/Release/pty.node" "$GITHUB_WORKSPACE/wsl-prebuild/pty.node"
+
+      - name: Upload WSL prebuild
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: wsl-node-pty-x64
+          path: wsl-prebuild/pty.node
+          if-no-files-found: error
+          retention-days: 3
+
+  windows-verify:
+    name: Windows x64 packaged appearance smoke
+    needs: wsl-node-pty
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Checkout verification tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          path: verification-tools
+          fetch-depth: 1
+
+      - name: Checkout exact product commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ env.PRODUCT_COMMIT }}
+          path: product
+          fetch-depth: 0
+
+      - name: Verify exact product identity
+        shell: pwsh
+        run: |
+          $actual = git -C product rev-parse HEAD
+          if ($actual -ne $env:PRODUCT_COMMIT) {
+            throw "Product checkout mismatch: $actual"
+          }
+          if (git -C product status --porcelain) {
+            throw "Product checkout is not clean before the build."
+          }
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: product/package.json
+          run-install: false
+
+      - name: Install product dependencies
+        working-directory: product
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Spectre-mitigated MSVC libraries
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installationPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installationPath) {
+            throw "Visual Studio installation was not found."
+          }
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          & $installer modify --installPath $installationPath --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre --quiet --norestart
+          if ($LASTEXITCODE -notin @(0, 3010)) {
+            throw "Visual Studio Spectre component installation failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Download WSL prebuild
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: wsl-node-pty-x64
+          path: product/wsl-prebuild
+
+      - name: Build exact unsigned NSIS artifact
+        working-directory: product
+        shell: pwsh
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "false"
+        run: |
+          vp run dist:desktop:artifact -- --platform win --target nsis --arch x64 --build-version $env:BUILD_VERSION --wsl-prebuild "$env:GITHUB_WORKSPACE\product\wsl-prebuild\pty.node" --output-dir release --verbose
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows desktop build failed with exit code $LASTEXITCODE."
+          }
+          $actual = git rev-parse HEAD
+          if ($actual -ne $env:PRODUCT_COMMIT) {
+            throw "Product checkout changed during the build: $actual"
+          }
+
+      - name: Smoke installed packaged application
+        shell: pwsh
+        env:
+          ELECTRON_ENABLE_LOGGING: "1"
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\appearance-windows-evidence" | Out-Null
+          node --experimental-strip-types "$env:GITHUB_WORKSPACE\verification-tools\.github\verification\windows-appearance-smoke.mjs" `
+            "$env:GITHUB_WORKSPACE\product" `
+            "$env:GITHUB_WORKSPACE\product\release" `
+            "$env:RUNNER_TEMP\appearance-windows-evidence" `
+            "$env:PRODUCT_COMMIT" `
+            "$env:CONTRACT_SHA256"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged appearance smoke failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Upload Windows evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: appearance-windows-ad54d3
+          path: |
+            product/release/*.exe
+            ${{ runner.temp }}/appearance-windows-evidence/**
+          if-no-files-found: error
+          retention-days: 3
