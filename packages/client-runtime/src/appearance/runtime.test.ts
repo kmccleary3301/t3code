@@ -196,6 +196,26 @@ describe("appearance runtime transactions", () => {
     expect(runtime.getSnapshot().revision).toBe(1);
     expect(runtime.getSnapshot().preference.mode).toBe("dark");
   });
+  it("refreshes durable state before a persistent command", async () => {
+    const storage = new MemoryStorage();
+    const runtime = await createAppearanceRuntime({
+      storage,
+      compiler: compilerThatNormalizes(),
+      apply: { apply: async () => undefined },
+    });
+    storage.state = {
+      ...storage.state,
+      revision: 1,
+      preference: { mode: "light" },
+    };
+    const result = await runtime.execute({
+      type: "preference",
+      preference: { mode: "dark" },
+    });
+    expect(result.status).toBe("applied");
+    expect(storage.state.revision).toBe(2);
+    expect(storage.state.preference.mode).toBe("dark");
+  });
 
   it("quarantines a package after initial compilation failure and does not retry it", async () => {
     const seed = await createAppearanceRuntime({

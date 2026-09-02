@@ -952,6 +952,19 @@ export async function createAppearanceRuntime(
       const commandType = command.type;
       if (cancellation(signal))
         return { status: "cancelled", command: commandType, snapshot: currentSnapshot };
+      const persists =
+        command.type !== "external-reconcile" &&
+        command.type !== "preview" &&
+        command.type !== "environment-packages" &&
+        command.type !== "refresh";
+      if (!options.forceSafeMode && persists) {
+        try {
+          await reconcile(await internals.storage.load(), "storage");
+        } catch {
+          // The existing snapshot remains usable; the ensuing optimistic
+          // commit still rejects rather than overwriting unknown durable state.
+        }
+      }
       const oldState = state;
       const oldPreview = preview;
       const oldSnapshot = currentSnapshot;
@@ -1086,12 +1099,7 @@ export async function createAppearanceRuntime(
           compiled.dispose?.();
           return { status: "cancelled", command: commandType, snapshot: oldSnapshot };
         }
-        if (
-          command.type !== "external-reconcile" &&
-          command.type !== "preview" &&
-          command.type !== "environment-packages" &&
-          command.type !== "refresh"
-        ) {
+        if (persists) {
           // Cancellation ends before commit. Recovery and environment inputs are session-only.
           const persistedCandidate = {
             ...candidateState,
@@ -1155,12 +1163,7 @@ export async function createAppearanceRuntime(
         persistedSafeMode = false;
       }
       notify();
-      if (
-        command.type !== "external-reconcile" &&
-        command.type !== "preview" &&
-        command.type !== "environment-packages" &&
-        command.type !== "refresh"
-      ) {
+      if (persists) {
         try {
           const broadcastState = {
             ...state,
