@@ -2376,7 +2376,8 @@ function ChatMarkdown({
         );
       },
       code({ node, children, className, ...props }) {
-        if (node?.properties?.dataInlineCode != null) {
+        const isInlineCode = node?.properties?.dataInlineCode != null;
+        if (isInlineCode) {
           const codeText = nodeToPlainText(children);
           const fileLinkMeta =
             inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
@@ -2386,7 +2387,12 @@ function ChatMarkdown({
           }
         }
         return (
-          <code {...props} className={className} data-t3-part="code">
+          <code
+            {...props}
+            className={className}
+            data-inline-code={isInlineCode ? "" : undefined}
+            data-t3-part="code"
+          >
             {children}
           </code>
         );

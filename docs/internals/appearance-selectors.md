@@ -27,7 +27,7 @@ Stable values are static and nonsecret. A hook may identify a route or state cla
 
 ### Roots, routes, and chrome
 
-`app`, `app-shell`, `portal`, `overlay`, `drag-region`, `route-chat`, `route-settings`, `route-pairing`, `route-connect`, `route-auth`, `route-error`, `canvas`, `title-area`, `toolbar`, `sidebar`, `sidebar-header`, `thread-list`, `thread-row`, `split-pane`, `tabs`, `tab`, `resize-handle`.
+`app`, `app-shell`, `portal`, `overlay`, `drag-region`, `route-chat`, `route-settings`, `route-pairing`, `route-connect`, `route-auth`, `route-error`, `route-appearance-recovery`, `canvas`, `title-area`, `toolbar`, `sidebar`, `sidebar-header`, `thread-list`, `thread-row`, `split-pane`, `tabs`, `tab`, `resize-handle`.
 
 ### Timeline and composer
 

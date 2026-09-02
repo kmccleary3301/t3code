@@ -12,6 +12,7 @@ export const T3_SURFACES = [
   "route-connect",
   "route-auth",
   "route-error",
+  "route-appearance-recovery",
   "canvas",
   "title-area",
   "toolbar",

@@ -818,7 +818,11 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "work") {
-      if (timelineEntry.entry.agentSpawn !== undefined || timelineEntry.entry.tone === "error") {
+      if (
+        timelineEntry.entry.agentSpawn !== undefined ||
+        timelineEntry.entry.tone === "error" ||
+        timelineEntry.entry.nativeTerminalFallback !== undefined
+      ) {
         nextRows.push({
           kind: "work",
           id: timelineEntry.id,
@@ -838,6 +842,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.kind !== "work" ||
           nextEntry.entry.agentSpawn !== undefined ||
           nextEntry.entry.tone === "error" ||
+          nextEntry.entry.nativeTerminalFallback !== undefined ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id)

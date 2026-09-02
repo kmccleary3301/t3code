@@ -876,7 +876,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('<code data-inline-code="">&lt;tag attr=&quot;x&quot;&gt;</code>');
+    expect(markup).toMatch(
+      /<code\b[^>]*data-inline-code=""[^>]*>&lt;tag attr=&quot;x&quot;&gt;<\/code>/,
+    );
     expect(markup).toContain("&lt;root&gt;&lt;child enabled=&quot;true&quot; /&gt;&lt;/root&gt;");
   });
 
