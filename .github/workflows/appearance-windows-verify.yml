@@ -134,7 +134,7 @@ jobs:
         env:
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "false"
         run: |
-          vp run dist:desktop:artifact -- --platform win --target nsis --arch x64 --build-version $env:BUILD_VERSION --wsl-prebuild "$env:GITHUB_WORKSPACE\product\wsl-prebuild\pty.node" --output-dir release --verbose
+          vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version $env:BUILD_VERSION --wsl-prebuild "$env:GITHUB_WORKSPACE\product\wsl-prebuild\pty.node" --output-dir release --verbose
           if ($LASTEXITCODE -ne 0) {
             throw "Windows desktop build failed with exit code $LASTEXITCODE."
           }
