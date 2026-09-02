@@ -484,7 +484,7 @@ describe("DesktopAppearanceStorage", () => {
     ).toBe(nextCss);
   });
 
-  it("preserves and restores desktop reset state with package directories", async () => {
+  it("preserves and restores desktop reset state from safe mode with package directories", async () => {
     const root = await makeRoot();
     const storage = new DesktopAppearanceStorage(root, undefined, "darwin");
     const css = "body { color: red; }\n";
@@ -503,12 +503,20 @@ describe("DesktopAppearanceStorage", () => {
     await storage.reset();
     expect((await storage.readQuarantinedState())?.revision).toBe(before.revision);
     expect((await storage.load()).packages["watch-package"]).toBeUndefined();
+    await storage.setSafeMode(true);
+    expect((await storage.load()).safeMode).toBe(true);
 
     const restored = await storage.restoreQuarantinedState();
     expect(restored.revision).toBeGreaterThan(before.revision);
     expect(restored.safeMode).toBe(false);
     expect(restored.packages["watch-package"]?.desktopCss).toBe(css);
     expect(await storage.readQuarantinedState()).toBeNull();
+    expect(
+      await readFile(Path.join(storage.revealPath("watch-package"), "desktop.css"), "utf8"),
+    ).toBe(css);
+    await expect(
+      stat(Path.join(root, "appearance", "quarantine", "reset-packages")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("retains the last good state when the state file is malformed", async () => {

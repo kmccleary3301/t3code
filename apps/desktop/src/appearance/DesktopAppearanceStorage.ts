@@ -589,6 +589,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
     state: AppearancePersistedState,
     signal?: AbortSignal,
     currentState?: AppearancePersistedState,
+    mutation: "ordinary" | "quarantine-restore" = "ordinary",
   ): Promise<void> {
     checkAbort(signal);
     const current = currentState ?? (await this.loadUnlocked(signal));
@@ -601,6 +602,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
     }
     if (
       current.safeMode &&
+      mutation !== "quarantine-restore" &&
       !isExplicitRecoveryReset(state) &&
       !isNarrowSafeRecoveryMutation(current, state)
     ) {
@@ -912,7 +914,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
           revision: Math.max(current.revision + 1, Date.now()),
           safeMode: false,
         };
-        await this.commitUnlocked(current.revision, next, signal, current);
+        await this.commitUnlocked(current.revision, next, signal, current, "quarantine-restore");
         committed = true;
         await FileSystem.rm(this.quarantineStatePath, { force: true }).catch(() => undefined);
         await FileSystem.rm(discarded, { recursive: true, force: true }).catch(() => undefined);
