@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off globalRandom:off -- Browser storage uses host timestamps and a per-tab source identifier.
 /* oxlint-disable unicorn/prefer-add-event-listener, unicorn/require-post-message-target-origin -- IndexedDB exposes mutable on* handlers and BroadcastChannel.postMessage has no target origin. */
 import {
   appearanceBytesSha256,

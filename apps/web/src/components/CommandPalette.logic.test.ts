@@ -158,7 +158,9 @@ describe("buildAppearanceCommandPaletteItem", () => {
     const action = item.groups[0]?.items.find(
       (candidate) => candidate.value === "appearance:safe-mode",
     );
-    if (action === undefined) throw new Error("Expected the safe-mode action.");
+    if (action === undefined || action.kind !== "action") {
+      throw new Error("Expected the safe-mode action.");
+    }
     await action.run();
     expect(action.title).toBe("Reset appearance to leave safe mode");
     expect(run).toHaveBeenCalledWith({ type: "reset" });

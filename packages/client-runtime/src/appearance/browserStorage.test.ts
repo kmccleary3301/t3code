@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off -- Browser IndexedDB test doubles schedule asynchronous requests.
 import { describe, expect, it } from "@effect/vitest";
 import { normalizeAppearance } from "@t3tools/shared/appearance";
 import { T3_CHAT_THEME } from "@t3tools/shared/themePalettes";

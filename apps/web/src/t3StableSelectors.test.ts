@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- This contract test reads checked-in selector fixtures from disk.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";

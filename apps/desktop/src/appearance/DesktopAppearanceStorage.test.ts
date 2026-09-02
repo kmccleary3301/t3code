@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Filesystem-backed desktop appearance tests use host fixtures and asynchronous watch timing.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -817,7 +818,7 @@ describe("DesktopAppearanceStorage", () => {
     const manifestPath = Path.join(packagePath, "manifest.json");
     const cssPath = Path.join(packagePath, "desktop.css");
     await writeFile(cssPath, "partial", { mode: 0o600 });
-    await waitForFilesystem(500);
+    await waitForFilesystem(750);
     expect(updates).toHaveLength(1);
     expect(updates[0]?.packages["watch-package"]?.desktopCss).toBe(firstCss);
     expect(updates[0]?.packages["watch-package"]?.enabled).toBe(false);
@@ -833,7 +834,7 @@ describe("DesktopAppearanceStorage", () => {
     await rename(cssTemporaryPath, cssPath);
     await writeFile(manifestTemporaryPath, nextManifest, { mode: 0o600 });
     await rename(manifestTemporaryPath, manifestPath);
-    await waitForFilesystem(500);
+    await waitForFilesystem(750);
     stop();
     expect(updates).toHaveLength(2);
     expect(updates[1]?.revision).toBe(before.revision + 2);

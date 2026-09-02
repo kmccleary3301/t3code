@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Desktop appearance storage is intentionally filesystem-backed.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - Desktop appearance storage is intentionally filesystem-backed and uses host time for persisted metadata.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";

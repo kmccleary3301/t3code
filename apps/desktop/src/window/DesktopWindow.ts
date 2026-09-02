@@ -1062,9 +1062,9 @@ export const make = Effect.gen(function* () {
       // own zoom, so put each guest back where the preview left it.
       yield* previewManager.reapplyZoom();
     }),
-    syncAppearance: Effect.gen(function* () {
-      yield* syncAppearanceState(appearanceState, false);
-    }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
+    syncAppearance: syncAppearanceState(appearanceState, false).pipe(
+      Effect.withSpan("desktop.window.syncAppearance"),
+    ),
   });
 });
 
