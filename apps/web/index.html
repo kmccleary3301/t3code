@@ -261,7 +261,36 @@
         const revealStartupFailure = () => {
           const root = document.documentElement;
           if (root.dataset.appearanceStartup !== "pending") return;
+          let dark = true;
+          try {
+            dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          } catch {
+            // Keep the dark default when matchMedia is unavailable.
+          }
+          const background = dark ? "#0a0a0a" : "#ffffff";
+          delete root.dataset.themeId;
+          delete root.dataset.t3AppearanceActive;
+          delete root.dataset.themeSelected;
+          root.dataset.appearanceSafeMode = "true";
           root.dataset.appearanceStartup = "recovery";
+          root.classList.toggle("dark", dark);
+          root.style.colorScheme = dark ? "dark" : "light";
+          root.style.backgroundColor = background;
+          for (const name of Array.from({ length: root.style.length }, (_, index) =>
+            root.style.item(index),
+          )) {
+            if (
+              name.startsWith("--app-theme-") ||
+              name.startsWith("--boot-") ||
+              name.startsWith("--t3-")
+            ) {
+              root.style.removeProperty(name);
+            }
+          }
+          document.body.style.backgroundColor = background;
+          for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+            meta.setAttribute("content", background);
+          }
           const card = document.getElementById("boot-shell-card");
           if (card === null) return;
           const message = document.createElement("p");

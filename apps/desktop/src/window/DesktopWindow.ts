@@ -50,7 +50,10 @@ const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
 const APPEARANCE_STARTUP_TIMEOUT_MS = 30_000;
-const APPEARANCE_RECOVERY_SCRIPT_TIMEOUT_MS = 2_000;
+const APPEARANCE_RECOVERY_DOCUMENT_TIMEOUT_MS = 2_000;
+const APPEARANCE_RECOVERY_DOCUMENT_URL = `data:text/html;charset=utf-8,${encodeURIComponent(
+  `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>T3 Code recovery</title><style>html{color-scheme:light dark;background:Canvas;color:CanvasText;font:16px system-ui}body{min-height:100vh;margin:0;display:grid;place-items:center}main{max-width:32rem;padding:2rem}</style></head><body><main role="alert"><h1>T3 Code could not start</h1><p>Close and reopen the app to try again. Use appearance safe mode if the problem continues.</p></main></body></html>`,
+)}`;
 const SAFE_APPEARANCE_STATE: AppearancePersistedState = {
   revision: 0,
   packages: {},
@@ -682,8 +685,10 @@ export const make = Effect.gen(function* () {
       }
       return { action: "deny" };
     });
+    let allowAppearanceRecoveryDocumentNavigation = false;
     window.webContents.on("will-navigate", (event, url) => {
       if (
+        (allowAppearanceRecoveryDocumentNavigation && url === APPEARANCE_RECOVERY_DOCUMENT_URL) ||
         isSameOriginRendererNavigation({
           applicationUrl,
           navigationUrl: url,
@@ -808,6 +813,10 @@ export const make = Effect.gen(function* () {
     };
 
     window.webContents.on("did-finish-load", () => {
+      if (window.webContents.getURL() === APPEARANCE_RECOVERY_DOCUMENT_URL) {
+        allowAppearanceRecoveryDocumentNavigation = false;
+        return;
+      }
       if (
         environment.isDevelopment &&
         !isSameOriginRendererNavigation({
@@ -881,6 +890,11 @@ export const make = Effect.gen(function* () {
           rendererRecoveryTimestamps.push(now);
           yield* Effect.sleep(RENDERER_RECOVERY_RELOAD_DELAY_MS);
           if (!window.isDestroyed()) {
+            if (!initialRevealStarted) {
+              appearanceStartupReady = false;
+              rendererStartupRecoveryStarted = false;
+              armAppearanceStartupTimeout();
+            }
             loadApplication();
           }
         }),
@@ -923,61 +937,42 @@ export const make = Effect.gen(function* () {
     rendererStartupFailure = () => {
       if (rendererStartupRecoveryStarted) return;
       rendererStartupRecoveryStarted = true;
-      // A failed or hung main-frame load may never emit ready-to-show.
-      markNativeReady();
-      const executeJavaScript = window.webContents.executeJavaScript;
-      if (typeof executeJavaScript !== "function") {
-        markAppearanceStartupReady();
-        return;
-      }
+      clearDevelopmentLoadRetry();
+      allowAppearanceRecoveryDocumentNavigation = true;
+      // Navigate away from the failed renderer before revealing. This cancels
+      // any late script work from the old document and provides an actionable,
+      // style-independent recovery surface even when the app URL never loaded.
       runFork(
         Effect.tryPromise({
-          try: () =>
-            executeJavaScript.call(
-              window.webContents,
-              `(() => {
-                const root = document.documentElement;
-                const dark = typeof window.matchMedia === "function"
-                  && window.matchMedia("(prefers-color-scheme: dark)").matches;
-                const background = dark ? "#0a0a0a" : "#ffffff";
-                root.dataset.appearanceSafeMode = "true";
-                delete root.dataset.themeId;
-                delete root.dataset.t3AppearanceActive;
-                root.removeAttribute("data-appearance-startup");
-                root.classList.toggle("dark", dark);
-                root.style.backgroundColor = background;
-                root.style.colorScheme = dark ? "dark" : "light";
-                if (document.body !== null) document.body.style.backgroundColor = background;
-                for (const name of Array.from({length: root.style.length}, (_, index) => root.style.item(index))) {
-                  if (name.startsWith("--app-theme-") || name.startsWith("--t3-")) root.style.removeProperty(name);
-                }
-                document.querySelector("style[data-t3-appearance-atomic]")?.remove();
-                if ("adoptedStyleSheets" in document) {
-                  document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
-                    (sheet) => sheet.__t3AppearanceManaged !== true
-                  );
-                }
-              })()`,
-            ),
+          try: () => window.loadURL(APPEARANCE_RECOVERY_DOCUMENT_URL),
           catch: () => undefined,
         }).pipe(
-          Effect.timeout(APPEARANCE_RECOVERY_SCRIPT_TIMEOUT_MS),
+          Effect.timeout(APPEARANCE_RECOVERY_DOCUMENT_TIMEOUT_MS),
           Effect.ignore,
-          Effect.ensuring(Effect.sync(markAppearanceStartupReady)),
+          Effect.ensuring(
+            Effect.sync(() => {
+              markNativeReady();
+              markAppearanceStartupReady();
+            }),
+          ),
         ),
       );
     };
     startupReveal.set(window, revealIfReady);
-    appearanceStartupTimeoutFiber = runFork(
-      Effect.sleep(APPEARANCE_STARTUP_TIMEOUT_MS).pipe(
-        Effect.andThen(
-          logWindowWarning("appearance startup timed out; revealing builtin recovery", {
-            timeoutMs: APPEARANCE_STARTUP_TIMEOUT_MS,
-          }),
+    const armAppearanceStartupTimeout = () => {
+      clearAppearanceStartupTimeout();
+      appearanceStartupTimeoutFiber = runFork(
+        Effect.sleep(APPEARANCE_STARTUP_TIMEOUT_MS).pipe(
+          Effect.andThen(
+            logWindowWarning("appearance startup timed out; revealing builtin recovery", {
+              timeoutMs: APPEARANCE_STARTUP_TIMEOUT_MS,
+            }),
+          ),
+          Effect.andThen(Effect.sync(() => rendererStartupFailure?.())),
         ),
-        Effect.andThen(Effect.sync(() => rendererStartupFailure?.())),
-      ),
-    );
+      );
+    };
+    armAppearanceStartupTimeout();
     window.webContents.on("ipc-message", (_event, channel) => {
       if (channel === APPEARANCE_STARTUP_FAILED_CHANNEL) {
         rendererStartupFailure?.();

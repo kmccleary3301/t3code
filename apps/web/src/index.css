@@ -927,13 +927,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    Keep T3 chrome legible with system colors while leaving embedded preview
    documents and native window chrome to their owners. */
 @media (forced-colors: active) {
+  :root,
   [data-t3-app] {
+    --app-chrome-background: Canvas !important;
+    --toolbar-background: Canvas !important;
+    --toolbar-foreground: CanvasText !important;
+    --toolbar-border: CanvasText !important;
+    --toolbar-control: Canvas !important;
+    --toolbar-control-foreground: CanvasText !important;
+    --toolbar-control-hover: Highlight !important;
     --background: Canvas !important;
     --foreground: CanvasText !important;
     --card: Canvas !important;
     --card-foreground: CanvasText !important;
     --popover: Canvas !important;
     --popover-foreground: CanvasText !important;
+    --surface-raised: Canvas !important;
+    --primary: Highlight !important;
+    --primary-foreground: HighlightText !important;
+    --secondary: Canvas !important;
+    --secondary-foreground: CanvasText !important;
     --border: CanvasText !important;
     --input: CanvasText !important;
     --ring: Highlight !important;
@@ -941,34 +954,63 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --accent-foreground: HighlightText !important;
     --muted: Canvas !important;
     --muted-foreground: CanvasText !important;
+    --placeholder: GrayText !important;
+    --secondary-label: GrayText !important;
+    --icon-muted: GrayText !important;
+    --message-surface: Canvas !important;
+    --message-foreground: CanvasText !important;
+    --message-action: Highlight !important;
+    --message-action-foreground: HighlightText !important;
+    --message-action-hover: Highlight !important;
+    --error: CanvasText !important;
+    --error-foreground: CanvasText !important;
+    --error-surface: Canvas !important;
+    --destructive: CanvasText !important;
+    --destructive-foreground: CanvasText !important;
+    --info: CanvasText !important;
+    --info-foreground: CanvasText !important;
+    --success: CanvasText !important;
+    --success-foreground: CanvasText !important;
+    --warning: CanvasText !important;
+    --warning-foreground: CanvasText !important;
+    --warning-surface: Canvas !important;
+    --update: CanvasText !important;
+    --update-foreground: CanvasText !important;
+    --update-surface: Canvas !important;
     --sidebar: Canvas !important;
     --sidebar-foreground: CanvasText !important;
     --sidebar-border: CanvasText !important;
+    --sidebar-muted-foreground: CanvasText !important;
+    --sidebar-control-surface: Canvas !important;
+    --sidebar-row-hover: Highlight !important;
+    --sidebar-row-active: Canvas !important;
+    --sidebar-row-selected: Highlight !important;
+    --code-background: Canvas !important;
+    --code-foreground: CanvasText !important;
   }
 
-  [data-t3-app]
-    :where(
-      [data-t3-surface="app-shell"],
-      [data-t3-surface="route-chat"],
-      [data-t3-surface="route-settings"],
-      [data-t3-surface="route-pairing"],
-      [data-t3-surface="route-connect"],
-      [data-t3-surface="route-auth"],
-      [data-t3-surface="route-error"],
-      [data-t3-surface="overlay"],
-      [data-t3-surface="toolbar"],
-      [data-t3-surface="sidebar"],
-      [data-t3-surface="tabs"],
-      [data-t3-surface="composer"],
-      [data-t3-surface="settings"],
-      [data-t3-surface="menu"],
-      [data-t3-surface="popover"],
-      [data-t3-surface="dialog"],
-      [data-t3-surface="terminal"],
-      [data-t3-surface="files"],
-      [data-t3-surface="diff"],
-      [data-t3-surface="preview"]
-    ) {
+  :where([data-t3-app], [data-t3-app] *):where(
+    [data-t3-surface="app-shell"],
+    [data-t3-surface="route-chat"],
+    [data-t3-surface="route-settings"],
+    [data-t3-surface="route-pairing"],
+    [data-t3-surface="route-connect"],
+    [data-t3-surface="route-auth"],
+    [data-t3-surface="route-error"],
+    [data-t3-surface="overlay"],
+    [data-t3-surface="toolbar"],
+    [data-t3-surface="sidebar"],
+    [data-t3-surface="tabs"],
+    [data-t3-surface="composer"],
+    [data-t3-surface="settings"],
+    [data-t3-surface="menu"],
+    [data-t3-surface="popover"],
+    [data-t3-surface="dialog"],
+    [data-t3-surface="terminal"],
+    [data-t3-surface="files"],
+    [data-t3-surface="diff"],
+    [data-t3-surface="preview"]
+  ) {
     forced-color-adjust: none !important;
     background-color: Canvas !important;
     color: CanvasText !important;

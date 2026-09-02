@@ -60,6 +60,7 @@ function revealBuiltinAppearance(): void {
   root.dataset.appearanceSafeMode = "true";
   delete root.dataset.themeId;
   delete root.dataset.t3AppearanceActive;
+  delete root.dataset.themeSelected;
   root.style.colorScheme = dark ? "dark" : "light";
   root.style.backgroundColor = background;
   if (document.body !== null) document.body.style.backgroundColor = background;
@@ -76,8 +77,9 @@ function revealBuiltinAppearance(): void {
   for (const name of Array.from({ length: root.style.length }, (_, index) =>
     root.style.item(index),
   )) {
-    if (name.startsWith("--app-theme-") || name.startsWith("--t3-"))
+    if (name.startsWith("--app-theme-") || name.startsWith("--boot-") || name.startsWith("--t3-")) {
       root.style.removeProperty(name);
+    }
   }
 }
 

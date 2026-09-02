@@ -97,6 +97,7 @@ const LEGACY_THEME_STORAGE_KEY = "t3code:theme";
 const appearanceFontLoads = new AppearanceFontLoadCache();
 const appearanceAssets = new AppearanceAssetRegistry();
 let suppressPendingStartupApply = false;
+let appearanceFontLoadGeneration = 0;
 const COLOR_ROLE_SET = new Set<string>(THEME_COLOR_ROLES);
 
 const BUILTIN_TRUST: AppearanceTrust = {
@@ -818,6 +819,7 @@ function applyWebAppearanceLayers(compiled: AppearanceCompiledOutput): void {
 async function applyWebAppearance(compiled: AppearanceCompiledOutput): Promise<void> {
   if (typeof document === "undefined") return;
   if (suppressPendingStartupApply) return;
+  const fontLoadGeneration = ++appearanceFontLoadGeneration;
   const root = document.documentElement;
   const bootVariables = Array.from({ length: root.style.length }, (_, index) =>
     root.style.item(index),
@@ -869,8 +871,13 @@ async function applyWebAppearance(compiled: AppearanceCompiledOutput): Promise<v
         ...(asset.weight === undefined ? {} : { weight: asset.weight }),
       }));
     void appearanceFontLoads.load(requests).then(
-      (result) => setAppearanceFontLoadDiagnostics(result.diagnostics),
-      (error: unknown) =>
+      (result) => {
+        if (fontLoadGeneration === appearanceFontLoadGeneration) {
+          setAppearanceFontLoadDiagnostics(result.diagnostics);
+        }
+      },
+      (error: unknown) => {
+        if (fontLoadGeneration !== appearanceFontLoadGeneration) return;
         setAppearanceFontLoadDiagnostics([
           {
             family: "appearance",
@@ -880,7 +887,8 @@ async function applyWebAppearance(compiled: AppearanceCompiledOutput): Promise<v
             }`,
             recovery: "Retry appearance font loading; fallback stacks remain available.",
           },
-        ]),
+        ]);
+      },
     );
   } else {
     setAppearanceFontLoadDiagnostics([]);
@@ -902,6 +910,7 @@ export function revealAppearanceStartup(): void {
 export function applyBuiltinAppearanceForStartup(): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
+  appearanceFontLoadGeneration += 1;
   let dark = false;
   try {
     dark =
@@ -912,6 +921,7 @@ export function applyBuiltinAppearanceForStartup(): void {
   clearNormalizedSyntaxTheme();
   delete root.dataset.themeId;
   delete root.dataset.t3AppearanceActive;
+  delete root.dataset.themeSelected;
   root.dataset.appearanceSafeMode = "true";
   root.classList.toggle("dark", dark);
   root.style.colorScheme = dark ? "dark" : "light";
@@ -921,8 +931,9 @@ export function applyBuiltinAppearanceForStartup(): void {
   for (const name of Array.from({ length: root.style.length }, (_, index) =>
     root.style.item(index),
   )) {
-    if (name.startsWith("--app-theme-") || name.startsWith("--t3-"))
+    if (name.startsWith("--app-theme-") || name.startsWith("--boot-") || name.startsWith("--t3-")) {
       root.style.removeProperty(name);
+    }
   }
   for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
     meta.setAttribute("content", background);

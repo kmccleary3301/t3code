@@ -87,6 +87,17 @@ async function stopMarkedProcesses(processTitle: string): Promise<void> {
   }
 }
 
+async function stopWindowsProcessTree(child: NodeChildProcess.ChildProcess): Promise<void> {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  try {
+    await commandOutput("taskkill", ["/pid", String(pid), "/t", "/f"]);
+  } catch (cause) {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    throw cause;
+  }
+}
+
 async function closeElectronApplication(application: ElectronApplication): Promise<void> {
   const child = application.process();
   if (child.exitCode === null && child.signalCode === null) {
@@ -99,7 +110,10 @@ async function closeElectronApplication(application: ElectronApplication): Promi
       exited,
       new Promise<void>((resolve) => setTimeout(resolve, GRACEFUL_ELECTRON_SHUTDOWN_TIMEOUT_MS)),
     ]);
-    if (child.exitCode === null && child.signalCode === null) await stopActualSurfaceProcess(child);
+    if (child.exitCode === null && child.signalCode === null) {
+      if (NodeProcess.platform === "win32") await stopWindowsProcessTree(child);
+      else await stopActualSurfaceProcess(child);
+    }
   }
   await Promise.race([
     application.close().catch(() => undefined),
