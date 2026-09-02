@@ -335,6 +335,9 @@ const SHELL_RESUME_MAX_GAP = 1_000;
 // hundreds of thousands of events behind have OOM-killed servers on large
 // databases. Past this gap the client is reset with a fresh thread snapshot.
 const THREAD_RESUME_MAX_GAP = 1_000;
+// Limit live thread stream chunks without waiting for a full batch. This
+// bounds individual RPC frames while keeping the first queued event immediate.
+const THREAD_STREAM_MAX_ITEMS_PER_CHUNK = 4;
 
 function toAuthAccessStreamEvent(
   change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
@@ -1513,7 +1516,23 @@ const makeWsRpcLayer = (
               yield* Effect.forkScoped(
                 liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
               );
-              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
+              // Take the first queued event immediately, then include only
+              // events already available up to the per-frame cap. This keeps
+              // sparse updates responsive while preventing scheduling-dependent
+              // queue bursts from producing oversized RPC frames.
+              const bufferedLiveStream = Stream.fromPull(
+                Effect.succeed(
+                  Queue.takeBetween(liveBuffer, 1, THREAD_STREAM_MAX_ITEMS_PER_CHUNK).pipe(
+                    Effect.map(
+                      (items) =>
+                        items as [
+                          OrchestrationThreadStreamItem,
+                          ...OrchestrationThreadStreamItem[],
+                        ],
+                    ),
+                  ),
+                ),
+              );
 
               // When the client already loaded the snapshot over HTTP it passes
               // that snapshot's sequence, and we resume the live subscription by
