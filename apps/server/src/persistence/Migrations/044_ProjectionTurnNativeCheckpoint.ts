@@ -3,9 +3,14 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-
-  yield* sql`
-    ALTER TABLE projection_turns
-    ADD COLUMN native_checkpoint_json TEXT NOT NULL DEFAULT 'null'
+  const columns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(projection_turns)
   `;
+
+  if (!columns.some((column) => column.name === "native_checkpoint_json")) {
+    yield* sql`
+      ALTER TABLE projection_turns
+      ADD COLUMN native_checkpoint_json TEXT NOT NULL DEFAULT 'null'
+    `;
+  }
 });

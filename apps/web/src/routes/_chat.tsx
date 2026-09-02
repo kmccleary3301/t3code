@@ -176,7 +176,7 @@ function ChatRouteGlobalShortcuts() {
 
 function ChatRouteLayout() {
   return (
-    <div data-t3-surface="route-chat">
+    <div className="flex min-h-0 min-w-0 flex-1" data-t3-surface="route-chat">
       <ChatRouteGlobalShortcuts />
       <Outlet />
     </div>

@@ -1,4 +1,9 @@
-import { generate, parse, walk, type CssNode } from "css-tree";
+/// <reference path="../css-tree-subpaths.d.ts" />
+
+import generate from "css-tree/generator";
+import parse from "css-tree/parser";
+import type { CssNode } from "css-tree";
+import walk from "css-tree/walker";
 
 const SUPPORTED_AT_RULES: Readonly<Record<string, true>> = {
   charset: true,
