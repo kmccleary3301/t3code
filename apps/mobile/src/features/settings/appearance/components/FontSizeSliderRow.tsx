@@ -13,6 +13,10 @@ import type { ComponentProps } from "react";
 
 import { AppText as Text } from "../../../../components/AppText";
 import { useUniwindTheme } from "../../../../lib/useUniwindTheme";
+import {
+  fontSizeSliderAccessibilityState,
+  resolveFontSizeSliderAccessibilityAction,
+} from "./fontSizeSliderAccessibility";
 
 type SymbolName = ComponentProps<typeof SymbolView>["name"];
 
@@ -127,11 +131,15 @@ export function FontSizeSliderRow(props: {
   }));
 
   const handleAccessibilityAction = (event: AccessibilityActionEvent) => {
-    if (event.nativeEvent.actionName === "increment") {
-      commit(Math.min(max, value + step));
-    } else if (event.nativeEvent.actionName === "decrement") {
-      commit(Math.max(min, value - step));
-    }
+    const next = resolveFontSizeSliderAccessibilityAction(
+      event.nativeEvent.actionName,
+      disabled,
+      min,
+      max,
+      step,
+      value,
+    );
+    if (next !== null) commit(next);
   };
 
   return (
@@ -164,6 +172,7 @@ export function FontSizeSliderRow(props: {
             ]}
             accessibilityLabel={props.label}
             accessibilityRole="adjustable"
+            accessibilityState={fontSizeSliderAccessibilityState(disabled)}
             accessibilityValue={{ min, max, now: value, text: props.valueLabel }}
             className="h-11 flex-1 justify-center"
             onAccessibilityAction={handleAccessibilityAction}

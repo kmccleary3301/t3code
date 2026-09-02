@@ -9,6 +9,7 @@ import {
 import {
   appearanceBytesSha256,
   appearanceSha256,
+  matchesAppearanceAssetSignature,
   normalizeAppearance,
   APPEARANCE_MANIFEST_VERSION,
   APPEARANCE_SCHEMA_ID,
@@ -267,6 +268,54 @@ function inputFromStored(value: AppearanceStoredPackage): AppearancePackageInput
     assets: value.assets,
   };
 }
+function verifyStoredPackageContents(value: AppearanceStoredPackage): void {
+  for (const [name, source, declaration] of [
+    ["shared CSS", value.sharedCss, value.manifest.styles?.web],
+    ["desktop CSS", value.desktopCss, value.manifest.styles?.desktop],
+  ] as const) {
+    if ((source === undefined) !== (declaration === undefined)) {
+      throw new Error(`Stored package has an incomplete ${name} declaration.`);
+    }
+    if (source === undefined || declaration === undefined) continue;
+    const bytes = new TextEncoder().encode(source);
+    if (
+      bytes.byteLength !== declaration.sizeBytes ||
+      appearanceBytesSha256(bytes) !== declaration.sha256
+    ) {
+      throw new Error(`Stylesheet checksum or size differs for ${declaration.path}.`);
+    }
+  }
+  const declarations = new Map(value.manifest.assets.map((asset) => [asset.id, asset]));
+  if (declarations.size !== value.assets.length) {
+    throw new Error("Stored package asset declarations do not match stored assets.");
+  }
+  for (const asset of value.assets) {
+    const declaration = declarations.get(asset.id);
+    if (
+      declaration === undefined ||
+      declaration.path !== asset.path ||
+      declaration.sizeBytes !== asset.sizeBytes ||
+      declaration.sha256 !== asset.sha256 ||
+      declaration.mimeType !== asset.mimeType
+    ) {
+      throw new Error(`Asset declaration differs for ${asset.path}.`);
+    }
+    let bytes: Uint8Array;
+    try {
+      const decoded = globalThis.atob(asset.dataBase64);
+      bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+    } catch {
+      throw new Error(`Asset data is not valid base64 for ${asset.path}.`);
+    }
+    if (
+      bytes.byteLength !== declaration.sizeBytes ||
+      appearanceBytesSha256(bytes) !== declaration.sha256 ||
+      !matchesAppearanceAssetSignature(declaration.mimeType, bytes)
+    ) {
+      throw new Error(`Asset checksum, size, or MIME signature differs for ${asset.path}.`);
+    }
+  }
+}
 
 async function inputFromZip(bytes: Uint8Array): Promise<AppearancePackageInput> {
   const files = await archiveFiles(bytes);
@@ -274,6 +323,7 @@ async function inputFromZip(bytes: Uint8Array): Promise<AppearancePackageInput> 
   if (manifestBytes === undefined || manifestBytes.byteLength > 256 * 1024) {
     throw new Error("Appearance archive has no bounded manifest.json.");
   }
+
   const manifest = parseJson(new TextDecoder().decode(manifestBytes));
   if (typeof manifest !== "object" || manifest === null) throw new Error("Manifest is invalid.");
   const normalized = normalizeAppearance(manifest, {
@@ -311,9 +361,10 @@ async function inputFromZip(bytes: Uint8Array): Promise<AppearancePackageInput> 
     if (
       value === undefined ||
       value.byteLength !== declaration.sizeBytes ||
-      appearanceBytesSha256(value) !== declaration.sha256
+      appearanceBytesSha256(value) !== declaration.sha256 ||
+      !matchesAppearanceAssetSignature(declaration.mimeType, value)
     ) {
-      throw new Error(`Asset checksum or size differs for ${declaration.path}.`);
+      throw new Error(`Asset checksum, size, or MIME signature differs for ${declaration.path}.`);
     }
     return {
       id: declaration.id,
@@ -371,6 +422,7 @@ export async function inspectBrowserAppearancePackage(
     if (stored === null || appearanceSha256(stored) !== document.sha256) {
       throw new Error("Appearance package document checksum or schema is invalid.");
     }
+    verifyStoredPackageContents(stored);
     input = inputFromStored(stored);
   }
   const trust = input.trust ?? trustFor(input.sharedCss, input.desktopCss);

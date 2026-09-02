@@ -16,6 +16,7 @@ type BootResult = {
   themeId: string | undefined;
   t3AppearanceActive: string | undefined;
   appearanceSafeMode: string | undefined;
+  appearanceStartup: string | undefined;
   themeSelected: string | undefined;
   backgroundColor: string;
   bootVariables: Record<string, string>;
@@ -76,12 +77,12 @@ function runBootScript(options: {
   };
 
   new Function("window", "document", "CSS", bootScript)(fakeWindow, fakeDocument, fakeCss);
-
   return {
     isDark: classes.has("dark"),
     themeId: documentElement.dataset.themeId,
     t3AppearanceActive: documentElement.dataset.t3AppearanceActive,
     appearanceSafeMode: documentElement.dataset.appearanceSafeMode,
+    appearanceStartup: documentElement.dataset.appearanceStartup,
     themeSelected: documentElement.dataset.themeSelected,
     backgroundColor: documentElement.style.backgroundColor,
     bootVariables,
@@ -100,6 +101,10 @@ function bootChecksum(value: unknown): string {
 }
 
 describe("index.html boot script", () => {
+  it("keeps the document behind the startup gate until the full profile is applied", () => {
+    const boot = runBootScript({ prefersDark: false });
+    expect(boot.appearanceStartup).toBe("pending");
+  });
   it("uses a neutral OS surface when no valid runtime snapshot exists", () => {
     const boot = runBootScript({
       storage: {

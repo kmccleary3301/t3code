@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { PairingPendingSurface } from "./components/auth/PairingRouteSurface";
 import {
+  T3_FORCED_COLORS_SURFACES,
   T3_PARTS,
   T3_ROOT_HOOK,
   T3_SELECTOR_CONTRACT_VERSION,
@@ -436,6 +437,15 @@ describe("T3 stable selector contract", () => {
     expect(selectorDocument).toContain("Do not add a parallel `data-t3-state`");
     expect(coreStylesheet).toContain("@media (forced-colors: active)");
     expect(coreStylesheet).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
+  it("keeps every documented owned surface covered by forced-colors rules", () => {
+    for (const surface of T3_FORCED_COLORS_SURFACES) {
+      expect(coreStylesheet).toContain(`[data-t3-surface="${surface}"]`);
+    }
+    expect(coreStylesheet).toContain("forced-color-adjust: none");
+    expect(coreStylesheet).toContain("CanvasText");
+    expect(coreStylesheet).toContain("HighlightText");
   });
 
   it("audits authored CSS and renderer source with file-scoped allowances", () => {

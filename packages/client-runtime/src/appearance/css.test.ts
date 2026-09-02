@@ -32,6 +32,24 @@ describe("appearance CSS validation", () => {
       validateAppearanceSnippetCss(".x { background: url(https://example.com/x); }"),
     ).toThrow("contained relative asset path");
   });
+  it("canonicalizes escaped resource function names without rejecting ordinary escapes", () => {
+    expect(() => validateAppearancePackageCss(String.raw`.x { color: r\65 d; }`)).not.toThrow();
+    for (const source of [
+      String.raw`.x { background: \75 rl("https://example.com/x"); }`,
+      String.raw`.x { background-image: \69 mage-set("https://example.com/x" 1x); }`,
+      String.raw`.x { background: \70 aint(remote-worklet); }`,
+    ]) {
+      try {
+        validateAppearancePackageCss(source, new Set(), "escaped.css");
+        throw new Error("Expected escaped resource function to fail.");
+      } catch (error) {
+        expect(error).toBeInstanceOf(AppearanceCssValidationError);
+        if (!(error instanceof AppearanceCssValidationError)) continue;
+        expect(error.diagnostics[0]).toMatchObject({ file: "escaped.css", line: 1 });
+        expect(error.diagnostics[0]?.message).toContain("resource-bearing");
+      }
+    }
+  });
 
   it("rewrites only declared contained package assets", () => {
     const paths = new Set(["images/background.webp"]);

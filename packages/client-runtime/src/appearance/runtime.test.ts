@@ -10,6 +10,8 @@ import { resolveAppearancePrecedence } from "./precedence.ts";
 import {
   APPEARANCE_COMMAND_TYPES,
   APPEARANCE_COMMAND_TYPES_EXHAUSTIVE,
+  decodeAppearancePersistedState,
+  ENVIRONMENT_PALETTE_TRUST,
   type AppearanceBroadcastAdapter,
   type AppearanceBroadcastEvent,
   type AppearanceCommand,
@@ -491,6 +493,71 @@ describe("appearance runtime transactions", () => {
       T3_CHAT_THEME.variants?.dark?.canvas,
     );
   });
+  it("assigns environment-palette trust regardless of caller-supplied trust", async () => {
+    const runtime = await createAppearanceRuntime({
+      storage: new MemoryStorage(),
+      compiler: {
+        normalize: (input, options) => normalizeAppearance(input, options),
+        compile: async (input) => ({ input, artifact: input.resolved.css }),
+      },
+      apply: { apply: async () => undefined },
+    });
+    const result = await runtime.execute({
+      type: "environment-packages",
+      packages: [
+        {
+          input: GROVE_THEME,
+          sourceId: GROVE_THEME.id,
+          trust: {
+            class: "local-package",
+            allowSharedCss: true,
+            allowDesktopCss: true,
+            allowAdvancedSnippet: true,
+          },
+        },
+      ],
+    });
+    expect(result.status).toBe("applied");
+    expect(runtime.getSnapshot().environmentPackages[0]?.profile.trust).toEqual(
+      ENVIRONMENT_PALETTE_TRUST,
+    );
+  });
+
+  it("rejects persisted environment packages with forged trust", async () => {
+    const runtime = await createAppearanceRuntime({
+      storage: new MemoryStorage(),
+      compiler: {
+        normalize: (input, options) => normalizeAppearance(input, options),
+        compile: async (input) => ({ input, artifact: input.resolved.css }),
+      },
+      apply: { apply: async () => undefined },
+    });
+    await runtime.execute({
+      type: "environment-packages",
+      packages: [{ input: GROVE_THEME, sourceId: GROVE_THEME.id }],
+    });
+    const environmentPackage = runtime.getSnapshot().environmentPackages[0];
+    if (environmentPackage === undefined) throw new Error("missing environment package fixture");
+    const forged = {
+      ...environmentPackage,
+      profile: {
+        ...environmentPackage.profile,
+        trust: {
+          class: "local-package" as const,
+          allowSharedCss: false,
+          allowDesktopCss: false,
+          allowAdvancedSnippet: false,
+        },
+      },
+    };
+    expect(
+      decodeAppearancePersistedState({
+        ...createEmptyAppearanceState(),
+        environmentPackages: [forged],
+      }),
+    ).toBeNull();
+  });
+
   it("drops stale persisted environment palettes before initial compilation", async () => {
     const seed = await createAppearanceRuntime({
       storage: new MemoryStorage(),

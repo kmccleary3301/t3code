@@ -50,7 +50,12 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  APPEARANCE_STARTUP_FAILED_CHANNEL,
+  APPEARANCE_STARTUP_READY_CHANNEL,
+  MENU_ACTION_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -216,6 +221,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly revealedWindows?: Electron.BrowserWindow[];
   readonly platform?: NodeJS.Platform;
   readonly hostArguments?: ReadonlyArray<string>;
   readonly hostEnvironment?: NodeJS.ProcessEnv;
@@ -267,7 +273,10 @@ function makeTestLayer(input: {
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: (window) =>
+      Effect.sync(() => {
+        input.revealedWindows?.push(window);
+      }),
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
@@ -739,10 +748,13 @@ describe("DesktopWindow", () => {
 
         assert.equal(fakeWindow.maximize.mock.calls.length, 0);
         const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
-        if (!readyToShow) {
-          return yield* Effect.die("window ready-to-show listener was not registered");
+        const startupReady = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startupReady) {
+          return yield* Effect.die("window startup listeners were not registered");
         }
         readyToShow();
+        assert.equal(fakeWindow.maximize.mock.calls.length, 0);
+        startupReady({}, APPEARANCE_STARTUP_READY_CHANNEL);
         assert.equal(fakeWindow.maximize.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
@@ -768,11 +780,133 @@ describe("DesktopWindow", () => {
 
         assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
         const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
-        if (!readyToShow) {
-          return yield* Effect.die("window ready-to-show listener was not registered");
+        const startupReady = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startupReady) {
+          return yield* Effect.die("window startup listeners were not registered");
         }
         readyToShow();
+        assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
+        startupReady({}, APPEARANCE_STARTUP_READY_CHANNEL);
         assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("reveals builtin recovery when renderer startup fails", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        const startup = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startup) {
+          return yield* Effect.die("window startup listeners were not registered");
+        }
+        readyToShow();
+        assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
+        startup({}, APPEARANCE_STARTUP_FAILED_CHANNEL);
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps activation behind the appearance startup gate", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealedWindows: Electron.BrowserWindow[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        revealedWindows,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.activate;
+        yield* Effect.yieldNow;
+        assert.deepEqual(revealedWindows, []);
+
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        const startupReady = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startupReady) {
+          return yield* Effect.die("window startup listeners were not registered");
+        }
+        readyToShow();
+        startupReady({}, APPEARANCE_STARTUP_READY_CHANNEL);
+        yield* Effect.yieldNow;
+        assert.deepEqual(revealedWindows, [fakeWindow.window]);
+
+        yield* desktopWindow.activate;
+        assert.deepEqual(revealedWindows, [fakeWindow.window, fakeWindow.window]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("fails open after a non-retryable main-frame load failure", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealedWindows: Electron.BrowserWindow[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        revealedWindows,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const didFailLoad = fakeWindow.webContentsListeners.get("did-fail-load");
+        if (!didFailLoad) return yield* Effect.die("renderer load listener was not registered");
+
+        didFailLoad({}, -3, "ERR_ABORTED", "t3code-dev://app/", true);
+        yield* Effect.yieldNow;
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+        assert.deepEqual(revealedWindows, [fakeWindow.window]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("fails open when the appearance startup handshake times out", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealedWindows: Electron.BrowserWindow[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        revealedWindows,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        if (!readyToShow) return yield* Effect.die("ready-to-show listener was not registered");
+        readyToShow();
+
+        yield* TestClock.adjust(30_000);
+        yield* Effect.yieldNow;
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+        assert.deepEqual(revealedWindows, [fakeWindow.window]);
       }).pipe(Effect.provide(layer));
     }),
   );

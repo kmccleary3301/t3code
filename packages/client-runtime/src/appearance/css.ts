@@ -66,6 +66,44 @@ function validationError(
   );
 }
 
+function canonicalCssIdentifier(raw: string): string | null {
+  let value = "";
+  for (let offset = 0; offset < raw.length; offset += 1) {
+    const character = raw[offset];
+    if (character !== "\\") {
+      value += character;
+      continue;
+    }
+    const next = raw[offset + 1];
+    if (next === undefined || next === "\n" || next === "\r" || next === "\f") return null;
+    if (!/[0-9a-f]/iu.test(next)) {
+      value += next;
+      offset += 1;
+      continue;
+    }
+    let end = offset + 1;
+    while (end < raw.length && end < offset + 7 && /[0-9a-f]/iu.test(raw[end] ?? "")) end += 1;
+    const codePoint = Number.parseInt(raw.slice(offset + 1, end), 16);
+    if (codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+      value += "\ufffd";
+    } else {
+      value += String.fromCodePoint(codePoint);
+    }
+    offset = end - 1;
+    const whitespace = raw[offset + 1];
+    if (
+      whitespace === " " ||
+      whitespace === "\t" ||
+      whitespace === "\n" ||
+      whitespace === "\r" ||
+      whitespace === "\f"
+    ) {
+      offset += whitespace === "\r" && raw[offset + 2] === "\n" ? 2 : 1;
+    }
+  }
+  return value;
+}
+
 function normalizeAssetPath(raw: string): string | null {
   let decoded: string;
   try {
@@ -129,7 +167,7 @@ function parseAppearanceCss(
 
   walk(ast, (node) => {
     if (node.type === "Atrule") {
-      const name = node.name.toLowerCase();
+      const name = canonicalCssIdentifier(node.name)?.toLowerCase() ?? node.name.toLowerCase();
       if (name === "import") {
         diagnostics.push({ message: "Appearance CSS cannot use @import.", ...location(node) });
         return;
@@ -142,14 +180,15 @@ function parseAppearanceCss(
       }
     }
     if (node.type === "Function") {
-      const name = node.name.toLowerCase();
+      const canonicalName = canonicalCssIdentifier(node.name)?.toLowerCase();
       if (
-        name === "image" ||
-        name === "image-set" ||
-        name === "-webkit-image-set" ||
-        name === "cross-fade" ||
-        name === "paint" ||
-        name === "src"
+        canonicalName === "image" ||
+        canonicalName === "image-set" ||
+        canonicalName === "-webkit-image-set" ||
+        canonicalName === "cross-fade" ||
+        canonicalName === "paint" ||
+        canonicalName === "src" ||
+        canonicalName === "url"
       ) {
         diagnostics.push({
           message: `Appearance CSS cannot use resource-bearing ${node.name}().`,

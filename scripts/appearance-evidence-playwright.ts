@@ -53,16 +53,111 @@ export interface SurfaceReadiness {
   readonly resolvedAppearance: AppearanceMode;
 }
 
-export interface StylesheetRecord {
-  readonly href: string | null;
-  readonly ruleCount: number | null;
-  readonly readable: boolean;
+export type StylesheetRecordKind = "document" | "adopted" | "managed-fallback";
+
+export const StylesheetRecordSchema = Schema.Struct({
+  kind: Schema.Literals(["document", "adopted", "managed-fallback"]),
+  href: Schema.NullOr(Schema.String),
+  ruleCount: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  readable: Schema.Boolean,
+});
+export type StylesheetRecord = typeof StylesheetRecordSchema.Type;
+
+export const StylesheetProbeSchema = Schema.Struct({
+  records: Schema.Array(StylesheetRecordSchema),
+  hasDuplicateAdoptedSheet: Schema.Boolean,
+});
+export type StylesheetProbe = typeof StylesheetProbeSchema.Type;
+
+export const StylesheetMetricsSchema = Schema.Struct({
+  ordinaryDocumentSheets: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  adoptedConstructableSheets: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  managedFallbackAppearanceStyles: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type StylesheetMetrics = typeof StylesheetMetricsSchema.Type;
+const decodeInstrumentationSnapshot = Schema.decodeUnknownSync(InstrumentationSnapshotSchema);
+const decodeStylesheetProbeValue = Schema.decodeUnknownSync(StylesheetProbeSchema);
+
+export function stylesheetMetricsFromProbe(probe: StylesheetProbe): StylesheetMetrics {
+  const decoded = decodeStylesheetProbeValue(probe);
+  if (decoded.hasDuplicateAdoptedSheet) {
+    throw new Error("Duplicate adopted appearance stylesheet cannot pass the stylesheet metric.");
+  }
+  const ordinaryDocumentSheets = decoded.records.filter(
+    (record) => record.kind === "document" || record.kind === "managed-fallback",
+  ).length;
+  const adoptedConstructableSheets = decoded.records.filter(
+    (record) => record.kind === "adopted",
+  ).length;
+  const managedFallbackAppearanceStyles = decoded.records.filter(
+    (record) => record.kind === "managed-fallback",
+  ).length;
+  if (managedFallbackAppearanceStyles > 1) {
+    throw new Error(
+      "Multiple managed fallback appearance styles cannot pass the stylesheet metric.",
+    );
+  }
+  return {
+    ordinaryDocumentSheets,
+    adoptedConstructableSheets,
+    managedFallbackAppearanceStyles,
+    total: ordinaryDocumentSheets + adoptedConstructableSheets,
+  };
 }
+
+/**
+ * Keep the fallback style in the document-sheet inventory. It is marked rather
+ * than appended separately, so the total cannot count it twice.
+ */
+export const STYLESHEET_PROBE_SCRIPT = `(() => {
+  const fallbackElements = [
+    ...document.querySelectorAll("style[data-t3-appearance-atomic]"),
+  ];
+  const fallbackSheets = new Set();
+  for (const element of fallbackElements) {
+    if (element.sheet) fallbackSheets.add(element.sheet);
+  }
+  const documentSheets = [...document.styleSheets];
+  const adoptedSheets =
+    "adoptedStyleSheets" in document ? [...document.adoptedStyleSheets] : [];
+  const seenAdoptedSheets = new Set();
+  let hasDuplicateAdoptedSheet = false;
+  for (const sheet of adoptedSheets) {
+    if (seenAdoptedSheets.has(sheet)) hasDuplicateAdoptedSheet = true;
+    seenAdoptedSheets.add(sheet);
+  }
+  const describe = (sheet, kind) => {
+    let ruleCount = null;
+    let readable = true;
+    try {
+      ruleCount = sheet.cssRules?.length ?? 0;
+    } catch {
+      readable = false;
+    }
+    return {
+      kind,
+      href: sheet.href ?? null,
+      ruleCount,
+      readable,
+    };
+  };
+  return {
+    records: [
+      ...documentSheets.map((sheet) =>
+        describe(sheet, fallbackSheets.has(sheet) ? "managed-fallback" : "document"),
+      ),
+      ...adoptedSheets.map((sheet) => describe(sheet, "adopted")),
+    ],
+    hasDuplicateAdoptedSheet,
+  };
+})()`;
 
 export interface SurfaceEvidence {
   readonly readiness: SurfaceReadiness;
   readonly instrumentation: InstrumentationSnapshot;
   readonly stylesheetInventory: ReadonlyArray<StylesheetRecord>;
+  readonly stylesheetMetrics: StylesheetMetrics;
   readonly dom: string;
   readonly styles: string;
   readonly ariaSnapshot: string;
@@ -148,7 +243,14 @@ export async function readInstrumentationSnapshot(page: Page): Promise<Instrumen
       },
     };
   });
-  return Schema.decodeUnknownSync(InstrumentationSnapshotSchema)(raw);
+  return decodeInstrumentationSnapshot(raw);
+}
+export function decodeStylesheetProbe(raw: unknown): StylesheetProbe {
+  return decodeStylesheetProbeValue(raw);
+}
+
+export async function readStylesheetProbe(page: Page): Promise<StylesheetProbe> {
+  return decodeStylesheetProbe(await page.evaluate(STYLESHEET_PROBE_SCRIPT));
 }
 
 async function waitForAnimationFrames(page: Page, count: number): Promise<void> {
@@ -253,7 +355,10 @@ export async function collectSurfaceEvidence(
   page: Page,
   readiness: SurfaceReadiness,
   consoleMessages: ReadonlyArray<string>,
+  stylesheetProbe?: StylesheetProbe,
 ): Promise<SurfaceEvidence> {
+  const probe = stylesheetProbe ?? (await readStylesheetProbe(page));
+  const stylesheetMetrics = stylesheetMetricsFromProbe(probe);
   const pageData = await page.evaluate(() => {
     const styleProperties = [
       "background-color",
@@ -283,7 +388,13 @@ export async function collectSurfaceEvidence(
         sensitiveName.test(element.getAttribute(name) ?? ""),
       );
       if (identifiesSensitiveField) element.textContent = "[REDACTED]";
-      for (const attribute of [...element.attributes]) {
+      for (
+        let attributeIndex = element.attributes.length - 1;
+        attributeIndex >= 0;
+        attributeIndex -= 1
+      ) {
+        const attribute = element.attributes.item(attributeIndex);
+        if (attribute === null) continue;
         if (sensitiveName.test(attribute.name) || sensitiveName.test(attribute.value)) {
           element.removeAttribute(attribute.name);
         } else if (attribute.name === "value") {
@@ -315,16 +426,6 @@ export async function collectSurfaceEvidence(
     return {
       styles,
       dom: clone.outerHTML,
-      stylesheets: [...document.styleSheets].map((sheet) => {
-        let ruleCount: number | null = null;
-        let readable = true;
-        try {
-          ruleCount = sheet.cssRules?.length ?? 0;
-        } catch {
-          readable = false;
-        }
-        return { href: sheet.href, ruleCount, readable };
-      }),
       rendererMemoryBytes: typeof memory === "number" && Number.isFinite(memory) ? memory : null,
     };
   });
@@ -333,10 +434,11 @@ export async function collectSurfaceEvidence(
   return {
     readiness,
     instrumentation: await readInstrumentationSnapshot(page),
-    stylesheetInventory: pageData.stylesheets.map((sheet) => ({
+    stylesheetInventory: probe.records.map((sheet) => ({
       ...sheet,
       href: safeStylesheetHref(sheet.href),
     })),
+    stylesheetMetrics,
     dom: redactActualSurfaceLog(pageData.dom),
     styles: redactActualSurfaceLog(pageData.styles),
     ariaSnapshot: redactActualSurfaceLog(ariaSnapshot),

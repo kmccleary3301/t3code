@@ -20,12 +20,16 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
-import { MobilePreferencesStore, type Preferences } from "./persistence/mobile-preferences";
+import {
+  MobilePreferencesStore,
+  type MobilePreferencesSaveError,
+  type Preferences,
+} from "./persistence/mobile-preferences";
 import { mobilePreferencesAtom } from "./state/preferences";
 import {
-  createMobileAppearanceResetPatch,
   createMobileAppearanceRestorePatch,
   parseMobileAppearanceRecoveryUrl,
+  resetMobileAppearance,
   type MobileAppearanceRecoveryAction,
 } from "./lib/mobileAppearanceRecovery";
 import { runtime } from "./lib/runtime";
@@ -152,12 +156,14 @@ function AppearanceRecoverySurface(props: {
     void SplashScreen.hide();
   }, []);
 
-  const persist = async (patch: Partial<Preferences>) => {
+  const persist = async (
+    operation: (
+      store: MobilePreferencesStore["Service"],
+    ) => Effect.Effect<Preferences, MobilePreferencesSaveError>,
+  ) => {
     setIsSaving(true);
     try {
-      await runtime.runPromise(
-        MobilePreferencesStore.pipe(Effect.flatMap((store) => store.savePatch(patch))),
-      );
+      await runtime.runPromise(MobilePreferencesStore.pipe(Effect.flatMap(operation)));
       setIsSaving(false);
       return true;
     } catch {
@@ -169,7 +175,7 @@ function AppearanceRecoverySurface(props: {
 
   const confirm = async () => {
     if (props.action === "reset") {
-      if (!(await persist(createMobileAppearanceResetPatch(current.appearanceProfile)))) return;
+      if (!(await persist(resetMobileAppearance))) return;
     }
     props.onComplete();
   };
@@ -178,8 +184,10 @@ function AppearanceRecoverySurface(props: {
     const quarantinedProfile = current.quarantinedAppearanceProfile;
     if (quarantinedProfile === undefined) return;
     if (
-      !(await persist(
-        createMobileAppearanceRestorePatch(current.appearanceProfile, quarantinedProfile),
+      !(await persist((store) =>
+        store.savePatch(
+          createMobileAppearanceRestorePatch(current.appearanceProfile, quarantinedProfile),
+        ),
       ))
     ) {
       return;
@@ -201,9 +209,7 @@ function AppearanceRecoverySurface(props: {
         <Button
           title={props.action === "safe" ? "Continue with built-in appearance" : "Reset appearance"}
           onPress={() => void confirm()}
-          disabled={
-            isSaving || (props.action === "reset" && !AsyncResult.isSuccess(preferencesResult))
-          }
+          disabled={isSaving}
         />
         {props.action === "safe" && current.quarantinedAppearanceProfile !== undefined ? (
           <Button

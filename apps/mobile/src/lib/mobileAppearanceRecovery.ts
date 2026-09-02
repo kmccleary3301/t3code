@@ -1,3 +1,10 @@
+import type * as Effect from "effect/Effect";
+import type {
+  MobilePreferencesSaveError,
+  MobilePreferencesStore,
+  Preferences,
+} from "../persistence/mobile-preferences";
+
 export const MOBILE_APPEARANCE_SAFE_URL = "t3code://appearance/safe" as const;
 export const MOBILE_APPEARANCE_RESET_URL = "t3code://appearance/reset" as const;
 
@@ -20,6 +27,18 @@ export function createMobileAppearanceResetPatch<T>(profile: T | undefined): {
   return profile === undefined
     ? { appearanceProfile: undefined }
     : { appearanceProfile: undefined, quarantinedAppearanceProfile: profile };
+}
+
+/**
+ * Reset from the storage service's current value rather than the preferences atom.
+ * Recovery remains usable when that atom is waiting or failed.
+ */
+export function resetMobileAppearance(
+  store: Pick<MobilePreferencesStore["Service"], "update">,
+): Effect.Effect<Preferences, MobilePreferencesSaveError> {
+  return store.update(({ appearanceProfile }) =>
+    createMobileAppearanceResetPatch(appearanceProfile),
+  );
 }
 
 export function createMobileAppearanceRestorePatch<T>(

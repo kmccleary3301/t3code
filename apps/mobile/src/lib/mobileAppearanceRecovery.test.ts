@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+
+import type { MobilePreferencesStore, Preferences } from "../persistence/mobile-preferences";
 
 import {
   MOBILE_APPEARANCE_RESET_URL,
@@ -6,6 +9,7 @@ import {
   createMobileAppearanceResetPatch,
   createMobileAppearanceRestorePatch,
   parseMobileAppearanceRecoveryUrl,
+  resetMobileAppearance,
 } from "./mobileAppearanceRecovery";
 
 describe("parseMobileAppearanceRecoveryUrl", () => {
@@ -44,6 +48,23 @@ describe("parseMobileAppearanceRecoveryUrl", () => {
       parseMobileAppearanceRecoveryUrl("t3code-pi-omp-preview://appearance/safe", "t3code-pi-omp"),
     ).toBeNull();
   });
+});
+describe("resetMobileAppearance", () => {
+  it.effect("clears appearance through storage when the preferences atom is unavailable", () =>
+    Effect.gen(function* () {
+      let patch: Partial<Preferences> | undefined;
+      const store: Pick<MobilePreferencesStore["Service"], "update"> = {
+        update: (transform) => {
+          patch = transform({});
+          return Effect.succeed<Preferences>({});
+        },
+      };
+
+      yield* resetMobileAppearance(store);
+
+      expect(patch).toEqual({ appearanceProfile: undefined });
+    }),
+  );
 });
 
 describe("createMobileAppearanceResetPatch", () => {

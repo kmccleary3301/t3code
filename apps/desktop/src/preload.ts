@@ -46,6 +46,71 @@ exposeClerkBridge({ passkeys: true });
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
 const clientPlatform = process.platform;
 
+const APPEARANCE_STARTUP_READY_MESSAGE = "t3code:appearance-startup-ready";
+const APPEARANCE_STARTUP_FAILED_MESSAGE = "t3code:appearance-startup-failed";
+let appearanceStartupSettled = false;
+
+function revealBuiltinAppearance(): void {
+  const root = document.documentElement;
+  const dark =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches;
+  root.classList.toggle("dark", dark);
+  root.dataset.appearanceSafeMode = "true";
+  delete root.dataset.themeId;
+  delete root.dataset.t3AppearanceActive;
+  root.style.removeProperty("color-scheme");
+  root.style.removeProperty("background-color");
+  document.body?.style.removeProperty("background-color");
+  root.removeAttribute("data-appearance-startup");
+  root.dataset.appearanceStartup = "recovery";
+  document.querySelector<HTMLStyleElement>("style[data-t3-appearance-atomic]")?.remove();
+  for (const name of Array.from({ length: root.style.length }, (_, index) =>
+    root.style.item(index),
+  )) {
+    if (name.startsWith("--app-theme-") || name.startsWith("--t3-"))
+      root.style.removeProperty(name);
+  }
+}
+
+function detachAppearanceStartupFailureListeners(): void {
+  window.removeEventListener("message", handleAppearanceStartupMessage);
+  window.removeEventListener("unhandledrejection", reportAppearanceStartupFailure);
+  window.removeEventListener("error", handleAppearanceStartupError);
+}
+
+function settleAppearanceStartup(channel: string): void {
+  if (appearanceStartupSettled) return;
+  appearanceStartupSettled = true;
+  detachAppearanceStartupFailureListeners();
+  ipcRenderer.send(channel);
+}
+
+function reportAppearanceStartupFailure(): void {
+  if (appearanceStartupSettled) return;
+  revealBuiltinAppearance();
+  settleAppearanceStartup(IpcChannels.APPEARANCE_STARTUP_FAILED_CHANNEL);
+}
+
+function handleAppearanceStartupError(event: ErrorEvent): void {
+  if (event.error !== undefined) reportAppearanceStartupFailure();
+}
+
+function handleAppearanceStartupMessage(event: MessageEvent): void {
+  if (event.source !== window) return;
+  if (event.data === APPEARANCE_STARTUP_READY_MESSAGE) {
+    settleAppearanceStartup(IpcChannels.APPEARANCE_STARTUP_READY_CHANNEL);
+  } else if (event.data === APPEARANCE_STARTUP_FAILED_MESSAGE) {
+    reportAppearanceStartupFailure();
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("message", handleAppearanceStartupMessage);
+  window.addEventListener("unhandledrejection", reportAppearanceStartupFailure);
+  window.addEventListener("error", handleAppearanceStartupError);
+}
+
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
     typeof result === "object" &&

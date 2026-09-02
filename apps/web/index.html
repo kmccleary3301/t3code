@@ -11,6 +11,7 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <script>
+      document.documentElement.dataset.appearanceStartup = "pending";
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#0a0a0a";
@@ -243,6 +244,9 @@
         width: 64px;
         height: 64px;
         object-fit: contain;
+      }
+      html[data-appearance-startup="pending"] #root {
+        visibility: hidden;
       }
     </style>
     <title>T3 Code (Alpha)</title>

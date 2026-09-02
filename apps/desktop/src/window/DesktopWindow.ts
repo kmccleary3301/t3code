@@ -27,6 +27,8 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
+  APPEARANCE_STARTUP_FAILED_CHANNEL,
+  APPEARANCE_STARTUP_READY_CHANNEL,
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
@@ -47,6 +49,8 @@ const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
+const APPEARANCE_STARTUP_TIMEOUT_MS = 30_000;
+const APPEARANCE_RECOVERY_SCRIPT_TIMEOUT_MS = 2_000;
 const SAFE_APPEARANCE_STATE: AppearancePersistedState = {
   revision: 0,
   packages: {},
@@ -422,6 +426,12 @@ export const make = Effect.gen(function* () {
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+  const startupReveal = new WeakMap<Electron.BrowserWindow, () => void>();
+  const revealMainWindow = (window: Electron.BrowserWindow): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      const reveal = startupReveal.get(window);
+      return reveal === undefined ? electronWindow.reveal(window) : Effect.sync(reveal);
+    });
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
     Electron.BrowserWindow,
@@ -749,6 +759,8 @@ export const make = Effect.gen(function* () {
     let developmentLoadRetryIndex = 0;
     let developmentLoadRetryFiber: Fiber.Fiber<void, never> | undefined;
     let rendererRecoveryTimestamps: number[] = [];
+    let appearanceStartupTimeoutFiber: Fiber.Fiber<void, never> | undefined;
+    let rendererStartupFailure: (() => void) | undefined;
     const clearDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber === undefined) {
         return;
@@ -756,6 +768,12 @@ export const make = Effect.gen(function* () {
       const retryFiber = developmentLoadRetryFiber;
       developmentLoadRetryFiber = undefined;
       runFork(Fiber.interrupt(retryFiber));
+    };
+    const clearAppearanceStartupTimeout = () => {
+      if (appearanceStartupTimeoutFiber === undefined) return;
+      const timeoutFiber = appearanceStartupTimeoutFiber;
+      appearanceStartupTimeoutFiber = undefined;
+      runFork(Fiber.interrupt(timeoutFiber));
     };
     const loadApplication = () => {
       if (window.isDestroyed()) {
@@ -827,6 +845,7 @@ export const make = Effect.gen(function* () {
             ...(retryInMs === undefined ? {} : { retryInMs }),
           }),
         );
+        if (retryInMs === undefined) rendererStartupFailure?.();
       },
     );
     window.webContents.on("render-process-gone", (_event, details) => {
@@ -856,6 +875,7 @@ export const make = Effect.gen(function* () {
             recovering: shouldRecover,
           });
           if (!shouldRecover) {
+            rendererStartupFailure?.();
             return;
           }
           rendererRecoveryTimestamps.push(now);
@@ -867,11 +887,16 @@ export const make = Effect.gen(function* () {
       );
     });
 
-    const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
-    if (environment.platform === "linux") {
-      revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
-    }
-    bindFirstRevealTrigger(revealSubscribers, () => {
+    // The renderer owns the appearance transaction. Keep the native window
+    // hidden until both Chromium has a first frame and the renderer has
+    // atomically applied the complete profile (or builtin recovery).
+    let nativeReady = false;
+    let appearanceStartupReady = false;
+    let initialRevealStarted = false;
+    const revealIfReady = () => {
+      if (!nativeReady || !appearanceStartupReady || initialRevealStarted) return;
+      initialRevealStarted = true;
+      startupReveal.delete(window);
       // Boot is done; hand the window back to normal hidden-window throttling
       // (see the backgroundThrottling comment on the create options above).
       if (!window.isDestroyed()) {
@@ -883,7 +908,79 @@ export const make = Effect.gen(function* () {
         window.maximize();
       }
       void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
+    };
+    const markNativeReady = () => {
+      nativeReady = true;
+      revealIfReady();
+    };
+    const markAppearanceStartupReady = () => {
+      if (appearanceStartupReady) return;
+      appearanceStartupReady = true;
+      clearAppearanceStartupTimeout();
+      revealIfReady();
+    };
+    let rendererStartupRecoveryStarted = false;
+    rendererStartupFailure = () => {
+      if (rendererStartupRecoveryStarted) return;
+      rendererStartupRecoveryStarted = true;
+      // A failed or hung main-frame load may never emit ready-to-show.
+      markNativeReady();
+      const executeJavaScript = window.webContents.executeJavaScript;
+      if (typeof executeJavaScript !== "function") {
+        markAppearanceStartupReady();
+        return;
+      }
+      runFork(
+        Effect.tryPromise({
+          try: () =>
+            executeJavaScript.call(
+              window.webContents,
+              `(() => {
+                const root = document.documentElement;
+                root.dataset.appearanceSafeMode = "true";
+                delete root.dataset.themeId;
+                delete root.dataset.t3AppearanceActive;
+                root.removeAttribute("data-appearance-startup");
+                root.style.removeProperty("background-color");
+                root.style.removeProperty("color-scheme");
+                for (const name of Array.from({length: root.style.length}, (_, index) => root.style.item(index))) {
+                  if (name.startsWith("--app-theme-") || name.startsWith("--t3-")) root.style.removeProperty(name);
+                }
+                document.querySelector("style[data-t3-appearance-atomic]")?.remove();
+              })()`,
+            ),
+          catch: () => undefined,
+        }).pipe(
+          Effect.timeout(APPEARANCE_RECOVERY_SCRIPT_TIMEOUT_MS),
+          Effect.ignore,
+          Effect.ensuring(Effect.sync(markAppearanceStartupReady)),
+        ),
+      );
+    };
+    startupReveal.set(window, revealIfReady);
+    appearanceStartupTimeoutFiber = runFork(
+      Effect.sleep(APPEARANCE_STARTUP_TIMEOUT_MS).pipe(
+        Effect.andThen(
+          logWindowWarning("appearance startup timed out; revealing builtin recovery", {
+            timeoutMs: APPEARANCE_STARTUP_TIMEOUT_MS,
+          }),
+        ),
+        Effect.andThen(Effect.sync(() => rendererStartupFailure?.())),
+      ),
+    );
+    window.webContents.on("ipc-message", (_event, channel) => {
+      if (
+        channel === APPEARANCE_STARTUP_READY_CHANNEL ||
+        channel === APPEARANCE_STARTUP_FAILED_CHANNEL
+      ) {
+        markAppearanceStartupReady();
+      }
     });
+    const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
+    if (environment.platform === "linux") {
+      revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
+    }
+    bindFirstRevealTrigger(revealSubscribers, markNativeReady);
 
     loadApplication();
     if (environment.isDevelopment) {
@@ -892,6 +989,8 @@ export const make = Effect.gen(function* () {
 
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
+      clearAppearanceStartupTimeout();
+      startupReveal.delete(window);
       clearBoundsPersist();
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
@@ -916,7 +1015,7 @@ export const make = Effect.gen(function* () {
 
   const revealOrCreateMain = Effect.gen(function* () {
     const window = yield* ensureMain;
-    yield* electronWindow.reveal(window);
+    yield* revealMainWindow(window);
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
@@ -994,7 +1093,7 @@ export const make = Effect.gen(function* () {
     activate: Effect.gen(function* () {
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
-        yield* electronWindow.reveal(existingWindow.value);
+        yield* revealMainWindow(existingWindow.value);
         return;
       }
       // No real main window yet. While the backend is still cold-booting,
@@ -1036,7 +1135,7 @@ export const make = Effect.gen(function* () {
       const send = () => {
         if (targetWindow.isDestroyed()) return;
         targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
-        void runPromise(electronWindow.reveal(targetWindow));
+        void runPromise(revealMainWindow(targetWindow));
       };
 
       if (targetWindow.webContents.isLoadingMainFrame()) {

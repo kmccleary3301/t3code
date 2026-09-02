@@ -269,7 +269,7 @@ describe("web appearance runtime adapter", () => {
     ).toContain("--desktop-marker");
   });
 
-  it("reconciles desktop watch events once through the storage adapter", async () => {
+  it("forwards every desktop watch event to runtime reconciliation", async () => {
     let state = createEmptyAppearanceState();
     const watch: { listener: ((event: DesktopAppearanceWatchEvent) => void) | null } = {
       listener: null,
@@ -316,7 +316,7 @@ describe("web appearance runtime adapter", () => {
 
     watch.listener?.({ reason: "external-change", state: summary });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(observed).toHaveLength(1);
+    expect(observed).toHaveLength(2);
     unsubscribe();
   });
   it("emits semantic typography, geometry, artwork, and protected motion variables", async () => {

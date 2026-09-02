@@ -496,6 +496,7 @@ export function AppearanceCustomizationManager() {
                   {value.enabled ? "Disable" : "Activate"}
                 </Button>
                 <Button
+                  aria-label={`Move ${value.profile.metadata.name} up`}
                   disabled={snapshot.safeMode || index === 0}
                   size="sm"
                   variant="outline"
@@ -508,6 +509,7 @@ export function AppearanceCustomizationManager() {
                   Up
                 </Button>
                 <Button
+                  aria-label={`Move ${value.profile.metadata.name} down`}
                   disabled={snapshot.safeMode || index === packageIds.length - 1}
                   size="sm"
                   variant="outline"
@@ -699,6 +701,7 @@ export function AppearanceCustomizationManager() {
                 {snippet.enabled ? "Disable" : "Enable"}
               </Button>
               <Button
+                aria-label={`Move ${snippet.id} up`}
                 disabled={snapshot.safeMode || index === 0}
                 size="sm"
                 variant="outline"
@@ -711,6 +714,7 @@ export function AppearanceCustomizationManager() {
                 Up
               </Button>
               <Button
+                aria-label={`Move ${snippet.id} down`}
                 disabled={snapshot.safeMode || index === snapshot.snippets.length - 1}
                 size="sm"
                 variant="outline"

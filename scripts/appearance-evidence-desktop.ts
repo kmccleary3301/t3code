@@ -25,10 +25,15 @@ import {
 import {
   APPEARANCE_INSTRUMENTATION_INIT_SCRIPT,
   InstrumentationSnapshotSchema,
+  STYLESHEET_PROBE_SCRIPT,
+  decodeStylesheetProbe,
   metricDelta,
+  stylesheetMetricsFromProbe,
   type AppearanceMode,
   type InstrumentationSnapshot,
   type SurfaceReadiness,
+  type StylesheetMetrics,
+  type StylesheetProbe,
   type StylesheetRecord,
 } from "./appearance-evidence-playwright.ts";
 import type { MetricSample } from "./appearance-evidence.ts";
@@ -115,14 +120,32 @@ function unobservedDesktopBlocker(
 async function desktopRendererEvaluate<T>(
   application: ElectronApplication,
   source: string,
+  timeoutMs = 5_000,
 ): Promise<T> {
-  return (await application.evaluate(async ({ webContents }, expression) => {
-    const contents = webContents
-      .getAllWebContents()
-      .find((candidate) => candidate.getURL().startsWith("t3code"));
-    if (!contents) throw new Error("Electron application renderer is unavailable.");
-    return await contents.executeJavaScript(expression);
-  }, source)) as T;
+  return await new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error(`Electron renderer evaluation timed out after ${timeoutMs}ms.`)),
+      timeoutMs,
+    );
+    void application
+      .evaluate(async ({ webContents }, expression) => {
+        const contents = webContents
+          .getAllWebContents()
+          .find((candidate) => candidate.getURL().startsWith("t3code"));
+        if (!contents) throw new Error("Electron application renderer is unavailable.");
+        return await contents.executeJavaScript(expression);
+      }, source)
+      .then(
+        (value) => {
+          clearTimeout(timeout);
+          resolve(value as T);
+        },
+        (error: unknown) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      );
+  });
 }
 
 async function waitForDesktopRenderer(
@@ -312,6 +335,7 @@ function safeDesktopStylesheetHref(href: string | null): string | null {
 
 interface DesktopSurfaceEvidence {
   readonly stylesheetInventory: ReadonlyArray<StylesheetRecord>;
+  readonly stylesheetMetrics: StylesheetMetrics;
   readonly dom: string;
   readonly styles: string;
   readonly ariaSnapshot: string;
@@ -321,11 +345,17 @@ interface DesktopSurfaceEvidence {
 
 async function collectDesktopSurfaceEvidence(
   application: ElectronApplication,
+  stylesheetProbe?: StylesheetProbe,
 ): Promise<DesktopSurfaceEvidence> {
+  const probe =
+    stylesheetProbe ??
+    decodeStylesheetProbe(
+      await desktopRendererEvaluate<unknown>(application, STYLESHEET_PROBE_SCRIPT),
+    );
+  const stylesheetMetrics = stylesheetMetricsFromProbe(probe);
   const pageData = await desktopRendererEvaluate<{
     readonly dom: string;
     readonly styles: string;
-    readonly stylesheets: ReadonlyArray<StylesheetRecord>;
     readonly console: ReadonlyArray<string>;
   }>(
     application,
@@ -387,16 +417,6 @@ async function collectDesktopSurfaceEvidence(
       return {
         dom: clone.outerHTML,
         styles,
-        stylesheets: [...document.styleSheets].map((sheet) => {
-          let ruleCount = null;
-          let readable = true;
-          try {
-            ruleCount = sheet.cssRules?.length ?? 0;
-          } catch {
-            readable = false;
-          }
-          return { href: sheet.href, ruleCount, readable };
-        }),
         console: [...(window.__T3_APPEARANCE_CONSOLE__ ?? [])],
       };
     })()`,
@@ -417,10 +437,11 @@ async function collectDesktopSurfaceEvidence(
     }
   });
   return {
-    stylesheetInventory: pageData.stylesheets.map((sheet) => ({
+    stylesheetInventory: probe.records.map((sheet) => ({
       ...sheet,
       href: safeDesktopStylesheetHref(sheet.href),
     })),
+    stylesheetMetrics,
     dom: redactActualSurfaceLog(pageData.dom),
     styles: redactActualSurfaceLog(pageData.styles),
     ariaSnapshot: redactActualSurfaceLog(JSON.stringify(nativeEvidence.accessibility, null, 2)),
@@ -909,16 +930,20 @@ export async function runDesktopAppearanceDriver(
           sampleIndex: sampleIndex++,
         });
       }
+      const stylesheetProbe = decodeStylesheetProbe(
+        await desktopRendererEvaluate<unknown>(session.app, STYLESHEET_PROBE_SCRIPT),
+      );
+      const stylesheetMetrics = stylesheetMetricsFromProbe(stylesheetProbe);
       samples.push({
         kind: "stylesheet-count",
         client: "desktop",
         appearance,
-        value: await desktopRendererEvaluate<number>(session.app, `document.styleSheets.length`),
+        value: stylesheetMetrics.total,
         unit: "count",
         sampleIndex: sampleIndex++,
       });
       if (collectVisual) {
-        const evidence = await collectDesktopSurfaceEvidence(session.app);
+        const evidence = await collectDesktopSurfaceEvidence(session.app, stylesheetProbe);
         const visualRoot = `visual/settings-theme-library/${appearance}`;
         artifacts.push(
           { path: `${visualRoot}/screenshot.png`, content: evidence.screenshot },
@@ -930,6 +955,10 @@ export async function runDesktopAppearanceDriver(
             content: json(evidence.stylesheetInventory),
           },
           { path: `${visualRoot}/console.json`, content: json(evidence.console) },
+          {
+            path: `${visualRoot}/stylesheet-metrics.json`,
+            content: json(evidence.stylesheetMetrics),
+          },
           {
             path: `${visualRoot}/native-theme.json`,
             content: json(await nativeTheme(session.app)),

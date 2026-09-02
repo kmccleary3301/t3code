@@ -5,7 +5,7 @@ import {
   type AppearancePersistedState,
   type AppearanceStorageAdapter,
 } from "@t3tools/client-runtime/appearance";
-import { normalizeAppearance } from "@t3tools/shared/appearance";
+import { appearanceBytesSha256, normalizeAppearance } from "@t3tools/shared/appearance";
 import { T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
 import JSZip from "jszip";
 
@@ -73,6 +73,48 @@ describe("browser appearance package workflows", () => {
     expect(result.status).toBe("applied");
     expect(destinationStorage.state.packages[T3_CHAT_THEME.id]?.enabled).toBe(false);
     expect(review.replacing).toBe(false);
+  });
+  it("rejects JSON assets whose hash matches but MIME signature does not", async () => {
+    const sourceStorage = new MemoryStorage();
+    const sourceRuntime = await runtimeWithStorage(sourceStorage);
+    await sourceRuntime.execute({
+      type: "install",
+      package: { input: T3_CHAT_THEME, sourceId: T3_CHAT_THEME.id },
+      activate: true,
+    });
+    const stored = sourceStorage.state.packages[T3_CHAT_THEME.id];
+    if (stored === undefined) throw new Error("missing fixture package");
+    const bytes = Uint8Array.from([1, 2]);
+    const declaration = {
+      id: "logo",
+      kind: "image",
+      path: "images/logo.png",
+      sha256: appearanceBytesSha256(bytes),
+      mimeType: "image/png",
+      sizeBytes: bytes.byteLength,
+      platforms: ["web"],
+    } as const;
+    const forged = {
+      ...stored,
+      manifest: { ...stored.manifest, assets: [declaration] },
+      profile: { ...stored.profile, assets: [declaration] },
+      assets: [
+        {
+          id: declaration.id,
+          path: declaration.path,
+          sha256: declaration.sha256,
+          mimeType: declaration.mimeType,
+          sizeBytes: declaration.sizeBytes,
+          dataBase64: "AQI=",
+        },
+      ],
+    };
+    await expect(
+      inspectBrowserAppearancePackage(
+        "theme.t3appearance.json",
+        new TextEncoder().encode(serializeBrowserAppearancePackage(forged)),
+      ),
+    ).rejects.toThrow("MIME signature");
   });
 
   it("imports a bounded ZIP and rejects traversal entries", async () => {

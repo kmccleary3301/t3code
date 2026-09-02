@@ -923,6 +923,88 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Forced-colors is an owned-surface contract, not an appearance escape hatch.
+   Keep T3 chrome legible with system colors while leaving embedded preview
+   documents and native window chrome to their owners. */
+@media (forced-colors: active) {
+  [data-t3-app] {
+    --background: Canvas;
+    --foreground: CanvasText;
+    --card: Canvas;
+    --card-foreground: CanvasText;
+    --popover: Canvas;
+    --popover-foreground: CanvasText;
+    --border: CanvasText;
+    --input: CanvasText;
+    --ring: Highlight;
+    --accent: Highlight;
+    --accent-foreground: HighlightText;
+    --muted: Canvas;
+    --muted-foreground: CanvasText;
+    --sidebar: Canvas;
+    --sidebar-foreground: CanvasText;
+    --sidebar-border: CanvasText;
+  }
+
+  [data-t3-app]
+    :where(
+      [data-t3-surface="app-shell"],
+      [data-t3-surface="route-chat"],
+      [data-t3-surface="route-settings"],
+      [data-t3-surface="route-pairing"],
+      [data-t3-surface="route-connect"],
+      [data-t3-surface="route-auth"],
+      [data-t3-surface="route-error"],
+      [data-t3-surface="overlay"],
+      [data-t3-surface="toolbar"],
+      [data-t3-surface="sidebar"],
+      [data-t3-surface="tabs"],
+      [data-t3-surface="composer"],
+      [data-t3-surface="settings"],
+      [data-t3-surface="menu"],
+      [data-t3-surface="popover"],
+      [data-t3-surface="dialog"],
+      [data-t3-surface="terminal"],
+      [data-t3-surface="files"],
+      [data-t3-surface="diff"],
+      [data-t3-surface="preview"]
+    ) {
+    forced-color-adjust: none;
+    background-color: Canvas;
+    color: CanvasText;
+    border-color: CanvasText;
+  }
+
+  [data-t3-app] :where(button, input, textarea, select, a) {
+    color: ButtonText;
+    border-color: ButtonText;
+  }
+
+  [data-t3-app]
+    :where(
+      [data-t3-part="send-button"],
+      [data-t3-part="stop-button"],
+      [data-t3-part="mode-control"],
+      [data-t3-part="permission-control"],
+      [data-t3-part="model-selector"]
+    ) {
+    forced-color-adjust: none;
+    background-color: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+  }
+
+  [data-t3-app] :where(button, input, textarea, select, a, [tabindex]):focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  [data-t3-app] :where(:disabled, [aria-disabled="true"], [data-disabled]) {
+    color: GrayText;
+    border-color: GrayText;
+  }
+}
+
 /* Safe-area inset utilities for surfaces that opt into edge-to-edge rendering.
    Insets resolve to 0 when the browser already constrains the layout viewport
    to the safe area. */

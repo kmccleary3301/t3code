@@ -2,6 +2,7 @@ import {
   appearanceBytesSha256,
   appearanceSha256,
   hashNormalizedAppearanceProfile,
+  matchesAppearanceAssetSignature,
   type AppearanceDiagnostic,
   type AppearanceManifestV2,
   type NormalizedAppearanceProfile,
@@ -14,6 +15,7 @@ import { resolveAppearancePrecedence } from "./precedence.ts";
 import {
   decodeAppearancePersistedState,
   decodeAppearancePreview,
+  ENVIRONMENT_PALETTE_TRUST,
   type AppearanceApplyAdapter,
   type AppearanceBroadcastAdapter,
   type AppearanceCommand,
@@ -392,14 +394,19 @@ function previewPackageIntegrityDiagnostic(
       declaration === undefined ||
       declaration.path !== asset.path ||
       declaration.sizeBytes !== asset.sizeBytes ||
-      declaration.sha256 !== asset.sha256
+      declaration.sha256 !== asset.sha256 ||
+      declaration.mimeType !== asset.mimeType
     ) {
       return diagnostic(`Appearance preview package '${id}' has inconsistent asset '${asset.id}'.`);
     }
     try {
       const decoded = globalThis.atob(asset.dataBase64);
       const bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
-      if (bytes.byteLength !== asset.sizeBytes || appearanceBytesSha256(bytes) !== asset.sha256) {
+      if (
+        bytes.byteLength !== asset.sizeBytes ||
+        appearanceBytesSha256(bytes) !== asset.sha256 ||
+        !matchesAppearanceAssetSignature(asset.mimeType, bytes)
+      ) {
         return diagnostic(`Appearance preview package '${id}' has invalid asset '${asset.id}'.`);
       }
     } catch {
@@ -600,10 +607,20 @@ async function candidateFor(
   } else if (command.type === "environment-packages") {
     const environment: AppearanceStoredPackage[] = [];
     for (const packageInput of command.packages) {
-      const normalized = normalizePackage(compiler, packageInput, true);
+      const normalized = normalizePackage(
+        compiler,
+        { ...packageInput, trust: ENVIRONMENT_PALETTE_TRUST },
+        true,
+      );
       if ("diagnostic" in normalized)
         return { status: "failure", diagnostics: [normalized.diagnostic] };
-      const packageValue = normalized.package;
+      const packageValue: AppearanceStoredPackage = {
+        ...normalized.package,
+        profile: {
+          ...normalized.package.profile,
+          trust: ENVIRONMENT_PALETTE_TRUST,
+        },
+      };
       if (
         packageValue.profile.capabilities.includes("shared-css") ||
         packageValue.profile.capabilities.includes("desktop-css") ||

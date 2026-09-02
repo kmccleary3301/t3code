@@ -20,7 +20,14 @@ import {
   NormalizedAppearanceProfileSchema,
   STRICT_APPEARANCE_PARSE_OPTIONS,
 } from "@t3tools/shared/appearance";
+
 import type { AppearanceLegacyInputAdapter } from "./migration.ts";
+export const ENVIRONMENT_PALETTE_TRUST = {
+  class: "environment-palette",
+  allowSharedCss: false,
+  allowDesktopCss: false,
+  allowAdvancedSnippet: false,
+} as const satisfies AppearanceTrust;
 
 export type AppearanceId = string;
 export type AppearanceVariant = "light" | "dark";
@@ -414,6 +421,16 @@ export const AppearancePersistedStateSchema = Schema.Struct({
   diagnostics: Schema.Array(AppearanceDiagnosticSchema),
   migration: AppearanceMigrationMarkerSchema,
 });
+function isEnvironmentPalettePackage(value: AppearanceStoredPackage): boolean {
+  const trust = value.profile.trust;
+  return (
+    trust.class === ENVIRONMENT_PALETTE_TRUST.class &&
+    trust.allowSharedCss === ENVIRONMENT_PALETTE_TRUST.allowSharedCss &&
+    trust.allowDesktopCss === ENVIRONMENT_PALETTE_TRUST.allowDesktopCss &&
+    trust.allowAdvancedSnippet === ENVIRONMENT_PALETTE_TRUST.allowAdvancedSnippet
+  );
+}
+
 const decodePersistedState = Schema.decodeUnknownSync(AppearancePersistedStateSchema);
 
 export function decodeAppearancePreview(input: unknown): AppearancePreview | null {
@@ -452,6 +469,9 @@ export function decodeAppearancePersistedState(input: unknown): AppearancePersis
     if (snippetIds.size !== state.snippets.length) return null;
     const environmentIds = state.environmentPackages.map((value) => value.profile.metadata.id);
     if (new Set(environmentIds).size !== environmentIds.length) return null;
+    if (state.environmentPackages.some((value) => !isEnvironmentPalettePackage(value))) {
+      return null;
+    }
     return state;
   } catch {
     return null;

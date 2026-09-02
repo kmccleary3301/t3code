@@ -31,7 +31,7 @@ import { runDesktopAppearanceDriver } from "./appearance-evidence-desktop.ts";
 import type { AppearanceDriverResult, DriverArtifact } from "./appearance-evidence-web.ts";
 
 export const APPEARANCE_CONTRACT_IDENTITY_SHA256 =
-  "f474031d280c1b9cd95cdf6c731cef60044ebeffd062988d95eed3dc2095d8ea" as const;
+  "54ccbab26ba43af981f9326000c04c98641b961ea6211e814668e908c53caa08" as const;
 const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 const NonEmpty = Schema.String.check(Schema.isPattern(/\S/u));
 const NonNegative = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));

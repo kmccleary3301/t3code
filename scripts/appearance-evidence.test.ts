@@ -36,6 +36,10 @@ import {
   validateSealedManifest,
   type EvidenceLeaf,
 } from "./appearance-evidence.ts";
+import {
+  stylesheetMetricsFromProbe,
+  type StylesheetProbe,
+} from "./appearance-evidence-playwright.ts";
 
 const EXPECTED_SCENE_IDS = `
 workspace-empty sidebar-populated names-long badges hover selected drag collapsed
@@ -378,6 +382,44 @@ it("validates identity, metric units, duplicate samples, and aggregate statistic
       },
     ]),
   );
+  const stylesheetProbe = {
+    records: [
+      { kind: "document", href: "https://example.test/app.css", ruleCount: 3, readable: true },
+      { kind: "managed-fallback", href: null, ruleCount: 2, readable: true },
+      { kind: "adopted", href: null, ruleCount: 4, readable: true },
+    ],
+    hasDuplicateAdoptedSheet: false,
+  } satisfies StylesheetProbe;
+  const stylesheetMetrics = stylesheetMetricsFromProbe(stylesheetProbe);
+  assert.deepStrictEqual(stylesheetMetrics, {
+    ordinaryDocumentSheets: 2,
+    adoptedConstructableSheets: 1,
+    managedFallbackAppearanceStyles: 1,
+    total: 3,
+  });
+  assert.equal(
+    canonicalJson({ ...stylesheetMetrics }),
+    '{"adoptedConstructableSheets":1,"managedFallbackAppearanceStyles":1,"ordinaryDocumentSheets":2,"total":3}',
+  );
+  assert.throws(
+    () =>
+      stylesheetMetricsFromProbe({
+        ...stylesheetProbe,
+        hasDuplicateAdoptedSheet: true,
+      }),
+    /Duplicate adopted appearance stylesheet cannot pass/u,
+  );
+  assert.throws(
+    () =>
+      stylesheetMetricsFromProbe({
+        ...stylesheetProbe,
+        records: [
+          ...stylesheetProbe.records,
+          { kind: "managed-fallback", href: null, ruleCount: 2, readable: true },
+        ],
+      }),
+    /Multiple managed fallback appearance styles cannot pass/u,
+  );
 });
 
 it("allows only explicit toolchain environment keys and redacts evidence output", () => {
@@ -478,10 +520,16 @@ it("requires explicit approval, disposable state, identities, and smoke labeling
     coldCount: 5,
     pairCount: 10,
   });
+  const oldContractIdentity =
+    "f474031d280c1b9cd95cdf6c731cef60044ebeffd062988d95eed3dc2095d8ea" as const;
+  assert.equal(
+    contractIdentity,
+    "54ccbab26ba43af981f9326000c04c98641b961ea6211e814668e908c53caa08",
+  );
   assert.throws(
     () =>
       parseAppearanceEvidenceArgs(
-        baseArgs.map((arg) => (arg === contractIdentity ? "a".repeat(64) : arg)),
+        baseArgs.map((arg) => (arg === contractIdentity ? oldContractIdentity : arg)),
       ),
     /must match the reviewed appearance contract/u,
   );

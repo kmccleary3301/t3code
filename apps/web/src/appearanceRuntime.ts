@@ -863,22 +863,92 @@ async function applyWebAppearance(compiled: AppearanceCompiledOutput): Promise<v
         ...(asset.style === undefined ? {} : { style: asset.style }),
         ...(asset.weight === undefined ? {} : { weight: asset.weight }),
       }));
-    void appearanceFontLoads.load(requests).then(
-      (result) => setAppearanceFontLoadDiagnostics(result.diagnostics),
-      (error: unknown) =>
-        setAppearanceFontLoadDiagnostics([
-          {
-            family: "appearance",
-            code: "font-load-failed",
-            message: `Appearance font loading failed unexpectedly: ${
-              error instanceof Error ? error.message : "unknown error"
-            }`,
-            recovery: "Retry appearance font loading; fallback stacks remain available.",
-          },
-        ]),
-    );
+    try {
+      const result = await appearanceFontLoads.load(requests);
+      setAppearanceFontLoadDiagnostics(result.diagnostics);
+    } catch (error: unknown) {
+      setAppearanceFontLoadDiagnostics([
+        {
+          family: "appearance",
+          code: "font-load-failed",
+          message: `Appearance font loading failed unexpectedly: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+          recovery: "Retry appearance font loading; fallback stacks remain available.",
+        },
+      ]);
+    }
+  } else {
+    setAppearanceFontLoadDiagnostics([]);
   }
 }
+
+/**
+ * Keep the initial document hidden until the complete compiled profile (or
+ * builtin recovery) is installed. The inline document boot only has enough
+ * information for a bounded color hint; this gate prevents that hint from
+ * becoming a visible partial profile.
+ */
+export function revealAppearanceStartup(): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.appearanceStartup = "ready";
+  document.documentElement.removeAttribute("data-appearance-startup");
+}
+
+export function applyBuiltinAppearanceForStartup(): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  let dark = false;
+  try {
+    dark =
+      typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  } catch {
+    dark = false;
+  }
+  clearNormalizedSyntaxTheme();
+  delete root.dataset.themeId;
+  delete root.dataset.t3AppearanceActive;
+  root.dataset.appearanceSafeMode = "true";
+  root.classList.toggle("dark", dark);
+  root.style.colorScheme = dark ? "dark" : "light";
+  const background = dark ? "#0a0a0a" : "#ffffff";
+  root.style.backgroundColor = background;
+  if (document.body !== null) document.body.style.backgroundColor = background;
+  for (const name of Array.from({ length: root.style.length }, (_, index) =>
+    root.style.item(index),
+  )) {
+    if (name.startsWith("--app-theme-") || name.startsWith("--t3-"))
+      root.style.removeProperty(name);
+  }
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    meta.setAttribute("content", background);
+  }
+  document.querySelector<HTMLStyleElement>("style[data-t3-appearance-atomic]")?.remove();
+  removeLegacyAppearanceStyles();
+  if (appearanceAdoptedSheet !== null && "adoptedStyleSheets" in document) {
+    document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+      (sheet) => sheet !== appearanceAdoptedSheet,
+    );
+  }
+  appearanceAdoptedSheet = null;
+  appearanceAdoptedRawSignature = null;
+  appearanceAdoptedRootLayerIds = [];
+  setAppearanceFontLoadDiagnostics([]);
+}
+
+export async function initializeAppearanceStartup(): Promise<"profile" | "recovery"> {
+  try {
+    await getAppearanceRuntime();
+    return "profile";
+  } catch (error: unknown) {
+    applyBuiltinAppearanceForStartup();
+    console.error("Appearance startup failed; showing builtin recovery.", error);
+    return "recovery";
+  } finally {
+    revealAppearanceStartup();
+  }
+}
+
 function browserAppearanceRecoveryRequest(): "safe" | "reset" | null {
   if (typeof location === "undefined") return null;
   const value = new URLSearchParams(location.search).get("t3-appearance");

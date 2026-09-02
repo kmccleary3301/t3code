@@ -16,9 +16,12 @@ import {
   installAppearanceInstrumentation,
   metricDelta,
   readInstrumentationSnapshot,
+  readStylesheetProbe,
+  stylesheetMetricsFromProbe,
   switchAppearance,
   waitForAppearanceSurface,
   type AppearanceMode,
+  type StylesheetProbe,
 } from "./appearance-evidence-playwright.ts";
 import type { MetricSample } from "./appearance-evidence.ts";
 
@@ -310,16 +313,23 @@ export async function runWebAppearanceDriver(
           sampleIndex: sampleIndex++,
         });
       }
+      const stylesheetProbe: StylesheetProbe = await readStylesheetProbe(session.page);
+      const stylesheetMetrics = stylesheetMetricsFromProbe(stylesheetProbe);
       samples.push({
         kind: "stylesheet-count",
         client: "web",
         appearance,
-        value: await session.page.evaluate(() => document.styleSheets.length),
+        value: stylesheetMetrics.total,
         unit: "count",
         sampleIndex: sampleIndex++,
       });
       if (collectVisual) {
-        const evidence = await collectSurfaceEvidence(session.page, readiness, session.messages);
+        const evidence = await collectSurfaceEvidence(
+          session.page,
+          readiness,
+          session.messages,
+          stylesheetProbe,
+        );
         const visualRoot = `visual/settings-theme-library/${appearance}`;
         artifacts.push(
           { path: `${visualRoot}/screenshot.png`, content: evidence.screenshot },
@@ -331,6 +341,10 @@ export async function runWebAppearanceDriver(
             content: json(evidence.stylesheetInventory),
           },
           { path: `${visualRoot}/console.json`, content: json(evidence.console) },
+          {
+            path: `${visualRoot}/stylesheet-metrics.json`,
+            content: json(evidence.stylesheetMetrics),
+          },
         );
       }
       if (collectWarmSwitches) {

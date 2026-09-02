@@ -148,6 +148,30 @@ export const T3_VISIBLE_STATE_SEMANTICS = [
 
 export type T3VisibleState = (typeof T3_VISIBLE_STATE_SEMANTICS)[number];
 
+/** Stable T3-owned surfaces that retain explicit system-color coverage in forced-colors mode. */
+export const T3_FORCED_COLORS_SURFACES = [
+  "app-shell",
+  "route-chat",
+  "route-settings",
+  "route-pairing",
+  "route-connect",
+  "route-auth",
+  "route-error",
+  "overlay",
+  "toolbar",
+  "sidebar",
+  "tabs",
+  "composer",
+  "settings",
+  "menu",
+  "popover",
+  "dialog",
+  "terminal",
+  "files",
+  "diff",
+  "preview",
+] as const satisfies readonly T3Surface[];
+
 export type T3StateSemantic =
   | "aria"
   | "data-state"
@@ -411,28 +435,7 @@ export const T3_STATE_COVERAGE = [
     state: "high-contrast",
     semantic: "media",
     selector: "@media (forced-colors: active)",
-    surfaces: [
-      "app-shell",
-      "route-chat",
-      "route-settings",
-      "route-pairing",
-      "route-connect",
-      "route-auth",
-      "route-error",
-      "overlay",
-      "toolbar",
-      "sidebar",
-      "tabs",
-      "composer",
-      "settings",
-      "menu",
-      "popover",
-      "dialog",
-      "terminal",
-      "files",
-      "diff",
-      "preview",
-    ],
+    surfaces: T3_FORCED_COLORS_SURFACES,
     evidence: "index.css forced-colors media rules and system color keywords",
     nonApplicable: "Remote preview documents and native OS chrome are outside T3 DOM ownership.",
   },

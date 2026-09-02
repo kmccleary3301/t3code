@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - Host-side fixtures own disposable servers and filesystem state.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
@@ -124,6 +125,30 @@ export async function waitForPort(
     await delay(500);
   }
   throw new Error(`${label} did not begin listening on port ${port} within ${timeoutMs}ms.`);
+}
+
+export async function waitForHttpReady(
+  port: number,
+  label = "Process",
+  timeoutMs = 60_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ready = await new Promise<boolean>((resolve) => {
+      const request = NodeHttp.get({ host: "127.0.0.1", port, path: "/" }, (response) => {
+        response.resume();
+        resolve((response.statusCode ?? 500) < 500);
+      });
+      request.once("error", () => resolve(false));
+      request.setTimeout(1_000, () => {
+        request.destroy();
+        resolve(false);
+      });
+    });
+    if (ready) return;
+    await delay(250);
+  }
+  throw new Error(`${label} did not respond over HTTP within ${timeoutMs}ms.`);
 }
 
 export async function waitForFileContent(
@@ -355,6 +380,7 @@ export async function createActualSurfaceEnvironment(input: {
     });
     try {
       await waitForPort(port, `${input.label} server`);
+      await waitForHttpReady(port, `${input.label} server`);
       await input.prepare?.();
       return { port, server };
     } catch (error) {
