@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 
 import {
   createActualSurfaceChildEnv,
+  commandOutput,
   createActualSurfaceEnvironment,
   stopActualSurfaceProcess,
   reserveAvailablePort,
@@ -44,6 +45,7 @@ export interface DesktopDriverOptions {
   readonly coldCount: number;
   readonly pairCount: number;
 }
+const GRACEFUL_ELECTRON_SHUTDOWN_TIMEOUT_MS = 15_000;
 
 function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -52,21 +54,104 @@ interface ElectronLaunchCommand {
   readonly electronPath: string;
   readonly args: ReadonlyArray<string>;
 }
+
+async function captureDescendantProcessIds(rootPid: number): Promise<ReadonlyArray<number>> {
+  if (NodeProcess.platform === "win32") return [];
+  const output = await commandOutput("ps", ["-axo", "pid=,ppid="]).catch(() => "");
+  const children = new Map<number, number[]>();
+  for (const line of output.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/u.exec(line);
+    if (match === null) continue;
+    const pid = Number(match[1]);
+    const parentPid = Number(match[2]);
+    const siblings = children.get(parentPid);
+    if (siblings === undefined) children.set(parentPid, [pid]);
+    else siblings.push(pid);
+  }
+  const descendants: number[] = [];
+  const visit = (parentPid: number): void => {
+    for (const pid of children.get(parentPid) ?? []) {
+      visit(pid);
+      descendants.push(pid);
+    }
+  };
+  visit(rootPid);
+  return descendants;
+}
+
+async function captureCommandProcessIds(commandFragment: string): Promise<ReadonlySet<number>> {
+  if (NodeProcess.platform === "win32") return new Set();
+  const output = await commandOutput("ps", ["-ww", "-axo", "pid=,command="]).catch(() => "");
+  const processIds = new Set<number>();
+  for (const line of output.split("\n")) {
+    const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
+    if (match !== null && match[2]?.includes(commandFragment)) {
+      processIds.add(Number(match[1]));
+    }
+  }
+  return processIds;
+}
+
+async function stopCapturedDescendants(processIds: ReadonlyArray<number>): Promise<void> {
+  if (NodeProcess.platform === "win32" || processIds.length === 0) return;
+  for (const pid of processIds) {
+    try {
+      NodeProcess.kill(pid, "SIGTERM");
+    } catch {
+      // A gracefully stopped child is already gone.
+    }
+  }
+  await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
+  for (const pid of processIds) {
+    try {
+      NodeProcess.kill(pid, "SIGKILL");
+    } catch {
+      // A child that handled SIGTERM needs no forced cleanup.
+    }
+  }
+}
+
+async function stopNewCommandProcesses(
+  commandFragment: string,
+  preexistingProcessIds: ReadonlySet<number>,
+): Promise<void> {
+  const currentProcessIds = await captureCommandProcessIds(commandFragment);
+  const roots = [...currentProcessIds].filter((pid) => !preexistingProcessIds.has(pid));
+  const processIds = new Set<number>();
+  for (const rootPid of roots) {
+    for (const descendantPid of await captureDescendantProcessIds(rootPid)) {
+      processIds.add(descendantPid);
+    }
+    processIds.add(rootPid);
+  }
+  await stopCapturedDescendants([...processIds]);
+}
+
 async function closeElectronApplication(application: ElectronApplication): Promise<void> {
   const child = application.process();
-  if (child.exitCode === null && child.signalCode === null) {
-    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  const descendantProcessIds =
+    child.pid === undefined ? [] : await captureDescendantProcessIds(child.pid);
+  try {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      await Promise.race([
+        application.evaluate(({ app }) => app.quit()).catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+      ]);
+      await Promise.race([
+        exited,
+        new Promise<void>((resolve) => setTimeout(resolve, GRACEFUL_ELECTRON_SHUTDOWN_TIMEOUT_MS)),
+      ]);
+      if (child.exitCode === null && child.signalCode === null)
+        await stopActualSurfaceProcess(child);
+    }
     await Promise.race([
-      application.evaluate(({ app }) => app.exit(0)).catch(() => undefined),
+      application.close().catch(() => undefined),
       new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
     ]);
-    await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 3_000))]);
-    if (child.exitCode === null && child.signalCode === null) await stopActualSurfaceProcess(child);
+  } finally {
+    await stopCapturedDescendants(descendantProcessIds);
   }
-  await Promise.race([
-    application.close().catch(() => undefined),
-    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-  ]);
 }
 interface DesktopRouterBlockerObservation {
   readonly stage:
@@ -663,11 +748,20 @@ async function launchDesktop(appearance: AppearanceMode): Promise<{
   let environment: Awaited<ReturnType<typeof createActualSurfaceEnvironment>> | undefined;
   let app: ElectronApplication | undefined;
   let runtimeVersion = "Electron unknown";
+  let backendCommandFragment: string | undefined;
+  let preexistingBackendProcessIds: ReadonlySet<number> = new Set();
   const dispose = async (): Promise<void> => {
     const failures: unknown[] = [];
     if (app) {
       try {
         await closeElectronApplication(app);
+      } catch (cause) {
+        failures.push(cause);
+      }
+    }
+    if (backendCommandFragment !== undefined) {
+      try {
+        await stopNewCommandProcesses(backendCommandFragment, preexistingBackendProcessIds);
       } catch (cause) {
         failures.push(cause);
       }
@@ -717,6 +811,8 @@ async function launchDesktop(appearance: AppearanceMode): Promise<{
       "apps",
       "desktop",
     );
+    backendCommandFragment = NodePath.resolve(desktopRoot, "..", "server", "dist", "bin.mjs");
+    preexistingBackendProcessIds = await captureCommandProcessIds(backendCommandFragment);
     const launchCommand = await resolveEvidenceElectronLaunchCommand([
       `--user-data-dir=${NodePath.join(baseDir, "electron-user-data")}`,
       `--t3code-dev-root=${desktopRoot}`,
