@@ -39,7 +39,11 @@ import {
   type StylesheetRecord,
 } from "./appearance-evidence-playwright.ts";
 import type { MetricSample } from "./appearance-evidence.ts";
-import type { DriverArtifact, AppearanceDriverResult } from "./appearance-evidence-web.ts";
+import {
+  appearanceModeInitScript,
+  type DriverArtifact,
+  type AppearanceDriverResult,
+} from "./appearance-evidence-web.ts";
 
 export interface DesktopDriverOptions {
   readonly measure: boolean;
@@ -492,6 +496,32 @@ async function readDesktopAppearanceReadiness(
   return { ...readiness, animationFrames: 2 };
 }
 
+async function waitForDesktopThemeQuiescence(application: ElectronApplication): Promise<void> {
+  const deadline = performance.now() + 5_000;
+  let previousSignature: string | undefined;
+  let consecutiveMatchingSamples = 0;
+  while (consecutiveMatchingSamples < 8) {
+    const [native, rendererDark] = await Promise.all([
+      application.evaluate(({ nativeTheme }) => ({
+        source: nativeTheme.themeSource,
+        dark: nativeTheme.shouldUseDarkColors,
+      })),
+      desktopRendererEvaluate<boolean>(
+        application,
+        `document.documentElement.classList.contains("dark")`,
+      ),
+    ]);
+    const signature = `${native.source}:${native.dark}:${rendererDark}`;
+    consecutiveMatchingSamples =
+      signature === previousSignature ? consecutiveMatchingSamples + 1 : 1;
+    previousSignature = signature;
+    if (performance.now() >= deadline) {
+      throw new Error("Desktop native and renderer themes did not become quiescent.");
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 async function waitForDesktopThemeSynchronization(
   application: ElectronApplication,
   appearance: AppearanceMode,
@@ -507,15 +537,10 @@ async function waitForDesktopThemeSynchronization(
         `document.documentElement.classList.contains("dark")`,
       ),
     ]);
-    if (nativeDark !== expectedDark) {
-      await application.evaluate(({ nativeTheme }, mode) => {
-        nativeTheme.themeSource = mode;
-      }, appearance);
-      consecutiveMatchingSamples = 0;
-    } else {
-      consecutiveMatchingSamples =
-        rendererDark === expectedDark ? consecutiveMatchingSamples + 1 : 0;
-    }
+    consecutiveMatchingSamples =
+      nativeDark === expectedDark && rendererDark === expectedDark
+        ? consecutiveMatchingSamples + 1
+        : 0;
     if (performance.now() >= synchronizationDeadline) {
       throw new Error(`Desktop native and renderer themes did not stabilize to ${appearance}.`);
     }
@@ -531,8 +556,10 @@ async function switchDesktopAppearance(
   readonly before: InstrumentationSnapshot;
   readonly after: InstrumentationSnapshot;
 }> {
+  await waitForDesktopThemeQuiescence(application);
   const before = await readDesktopInstrumentation(application);
-  const elapsedMs = await desktopRendererEvaluate<number>(
+  const started = performance.now();
+  await desktopRendererEvaluate<void>(
     application,
     `(async () => {
       const appearance = ${JSON.stringify(appearance)};
@@ -540,7 +567,6 @@ async function switchDesktopAppearance(
         (candidate) => candidate.getAttribute("aria-label") === "Use " + appearance + " mode",
       );
       if (!control) throw new Error("Desktop appearance mode control was not present.");
-      const started = performance.now();
       control.click();
       while (document.documentElement.classList.contains("dark") !== (appearance === "dark")) {
         await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -548,10 +574,10 @@ async function switchDesktopAppearance(
       for (let index = 0; index < 2; index += 1) {
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
-      return Math.max(0, performance.now() - started);
     })()`,
   );
   await waitForDesktopThemeSynchronization(application, appearance);
+  const elapsedMs = Math.max(0, performance.now() - started);
   return {
     elapsedMs,
     before,
@@ -846,6 +872,7 @@ async function preflightDesktopRouter(
   launchCommand: ElectronLaunchCommand,
   cwd: string,
   env: Readonly<Record<string, string>>,
+  appearance: AppearanceMode,
 ): Promise<DesktopAppearanceBlockedError | null> {
   const runtimeVersion = electronRuntimeVersion(launchCommand.electronPath);
   const infrastructureBlocker = (
@@ -868,9 +895,7 @@ async function preflightDesktopRouter(
       runtimeVersion,
       cause === undefined ? undefined : { cause },
     );
-  const preflightArgs = launchCommand.args.map((argument) =>
-    argument.startsWith("--user-data-dir=") ? `${argument}-preflight` : argument,
-  );
+  const preflightArgs = launchCommand.args;
   const port = await reserveAvailablePort();
   const child = NodeChildProcess.spawn(
     launchCommand.electronPath,
@@ -889,6 +914,7 @@ async function preflightDesktopRouter(
     ownedDescendants = await captureOwnedDescendants(child);
     const connected = await connectToElectronRenderer(port, child);
     browser = connected.browser;
+    await connected.page.evaluate(appearanceModeInitScript(appearance));
     ownedDescendants = mergeProcessIdentities(
       ownedDescendants,
       await captureOwnedDescendants(child),
@@ -1071,7 +1097,12 @@ async function launchDesktop(appearance: AppearanceMode): Promise<{
       NodePath.join("dist-electron", "main.cjs"),
     ]);
     runtimeVersion = electronRuntimeVersion(launchCommand.electronPath);
-    const preflightBlocker = await preflightDesktopRouter(launchCommand, desktopRoot, childEnv);
+    const preflightBlocker = await preflightDesktopRouter(
+      launchCommand,
+      desktopRoot,
+      childEnv,
+      appearance,
+    );
     if (preflightBlocker) throw preflightBlocker;
     const clientStarted = performance.now();
     app = await electron.launch({
@@ -1138,12 +1169,19 @@ async function launchDesktop(appearance: AppearanceMode): Promise<{
         window.location.hash.includes("/settings"))`,
     );
     await desktopRendererEvaluate<void>(app, `window.location.hash = "/settings/appearance"`);
-    await readDesktopAppearanceReadiness(app);
+    await waitForDesktopThemeSynchronization(app, appearance);
+    const readiness = await readDesktopAppearanceReadiness(app);
+    if (readiness.resolvedAppearance !== appearance) {
+      throw new Error(
+        `Expected cold ${appearance} appearance, got ${readiness.resolvedAppearance}.`,
+      );
+    }
+    const coldStartupMs = performance.now() - clientStarted;
     await switchDesktopAppearance(app, appearance);
     return {
       app,
       runtimeVersion,
-      coldStartupMs: performance.now() - clientStarted,
+      coldStartupMs,
       dispose,
     };
   } catch (error) {
