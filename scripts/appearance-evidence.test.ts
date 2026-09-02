@@ -491,6 +491,18 @@ it("attributes renderer metrics by operation timestamps instead of observer deli
     compileDurationMs: 3,
     stylesheetReplacementDurationMs: 2,
   });
+
+  assert.throws(
+    () =>
+      metricDelta(before, {
+        ...after,
+        dropped: {
+          ...dropped,
+          appearanceOperations: 1,
+        },
+      }),
+    /overflowed appearanceOperations during the measured interval/u,
+  );
 });
 
 it("allows only explicit toolchain environment keys and redacts evidence output", () => {

@@ -521,6 +521,13 @@ export function metricDelta(
   readonly compileDurationMs: number;
   readonly stylesheetReplacementDurationMs: number;
 } {
+  for (const kind of ["reactCommits", "longTasks", "appearanceOperations"] as const) {
+    if (before.dropped[kind] !== after.dropped[kind]) {
+      throw new Error(
+        `Appearance instrumentation overflowed ${kind} during the measured interval.`,
+      );
+    }
+  }
   const inWindow = (startTime: number) =>
     startTime >= before.sampledAt && startTime <= after.sampledAt;
   const newTasks = after.longTasks.filter((entry) => inWindow(entry.startTime));
