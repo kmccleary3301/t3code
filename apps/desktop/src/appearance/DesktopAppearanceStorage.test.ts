@@ -42,6 +42,20 @@ function waitForFilesystem(milliseconds: number): Promise<void> {
   setTimeout(resolve, milliseconds);
   return promise;
 }
+async function waitForWatchUpdates(
+  updates: ReadonlyArray<AppearancePersistedState>,
+  expectedLength: number,
+  ready: () => boolean = () => true,
+  timeout = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (updates.length < expectedLength || !ready()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for ${expectedLength} watcher updates.`);
+    }
+    await waitForFilesystem(25);
+  }
+}
 function forgeZipUncompressedSize(bytes: Uint8Array, size: number): Uint8Array {
   const forged = bytes.slice();
   const view = new DataView(forged.buffer, forged.byteOffset, forged.byteLength);
@@ -727,7 +741,11 @@ describe("DesktopAppearanceStorage", () => {
       JSON.stringify(packageManifest(nextCss)) + "\n",
       { mode: 0o600 },
     );
-    await waitForFilesystem(1_000);
+    await waitForWatchUpdates(
+      updates,
+      1,
+      () => runtime.getSnapshot().revision === before.revision + 1,
+    );
     expect(updates).toHaveLength(1);
     expect(updates[0]?.revision).toBe(before.revision + 1);
     expect(updates[0]?.packages["watch-package"]?.desktopCss).toBe(nextCss);
@@ -818,7 +836,7 @@ describe("DesktopAppearanceStorage", () => {
     const manifestPath = Path.join(packagePath, "manifest.json");
     const cssPath = Path.join(packagePath, "desktop.css");
     await writeFile(cssPath, "partial", { mode: 0o600 });
-    await waitForFilesystem(2_000);
+    await waitForWatchUpdates(updates, 1);
     expect(updates).toHaveLength(1);
     expect(updates[0]?.packages["watch-package"]?.desktopCss).toBe(firstCss);
     expect(updates[0]?.packages["watch-package"]?.enabled).toBe(false);
@@ -834,7 +852,7 @@ describe("DesktopAppearanceStorage", () => {
     await rename(cssTemporaryPath, cssPath);
     await writeFile(manifestTemporaryPath, nextManifest, { mode: 0o600 });
     await rename(manifestTemporaryPath, manifestPath);
-    await waitForFilesystem(2_000);
+    await waitForWatchUpdates(updates, 2);
     stop();
     expect(updates).toHaveLength(2);
     expect(updates[1]?.revision).toBe(before.revision + 2);
