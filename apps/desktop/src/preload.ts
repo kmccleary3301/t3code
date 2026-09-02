@@ -1,5 +1,5 @@
-import { DesktopAppearanceWatchEventSchema } from "@t3tools/contracts";
 import type {
+  DesktopAppearanceWatchEvent,
   DesktopBridge,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
@@ -7,9 +7,39 @@ import type {
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
-import * as Schema from "effect/Schema";
 
 import * as IpcChannels from "./ipc/channels.ts";
+function isDesktopAppearanceWatchReason(
+  reason: unknown,
+): reason is DesktopAppearanceWatchEvent["reason"] {
+  return (
+    reason === "external-change" ||
+    reason === "safe-mode" ||
+    reason === "reset" ||
+    reason === "install" ||
+    reason === "transaction"
+  );
+}
+
+function isDesktopAppearanceWatchEvent(value: unknown): value is DesktopAppearanceWatchEvent {
+  if (typeof value !== "object" || value === null) return false;
+  const event = value as { readonly reason?: unknown; readonly state?: unknown };
+  if (!isDesktopAppearanceWatchReason(event.reason)) return false;
+  if (typeof event.state !== "object" || event.state === null) return false;
+  const state = event.state as {
+    readonly revision?: unknown;
+    readonly safeMode?: unknown;
+    readonly checksum?: unknown;
+  };
+  return (
+    typeof state.revision === "number" &&
+    Number.isSafeInteger(state.revision) &&
+    state.revision >= 0 &&
+    typeof state.safeMode === "boolean" &&
+    typeof state.checksum === "string" &&
+    /^[0-9a-f]{64}$/u.test(state.checksum)
+  );
+}
 
 exposeClerkBridge({ passkeys: true });
 
@@ -72,7 +102,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   onAppearanceWatchEvent: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, raw: unknown) => {
       try {
-        listener(Schema.decodeUnknownSync(DesktopAppearanceWatchEventSchema)(raw));
+        if (isDesktopAppearanceWatchEvent(raw)) listener(raw);
       } catch {
         // Main-process payloads still cross an untrusted serialization boundary.
       }
