@@ -34,6 +34,7 @@ export const APPEARANCE_CONTRACT_IDENTITY_SHA256 =
   "54ccbab26ba43af981f9326000c04c98641b961ea6211e814668e908c53caa08" as const;
 const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 const NonEmpty = Schema.String.check(Schema.isPattern(/\S/u));
+const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const NonNegative = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));
 const Client = Schema.Literals(["web", "desktop", "ios", "android"]);
 const MetricAppearance = Schema.Literals(["light", "dark"]);
@@ -50,7 +51,7 @@ export type MetricKind = typeof MetricKind.Type;
 export const ArtifactIdentitySchema = Schema.Struct({
   baseCommit: Schema.String.check(Schema.isPattern(/^[0-9a-f]{7,64}$/u)),
   trackedDiffSha256: Sha256,
-  untrackedProductManifestSha256: Schema.NullOr(Sha256),
+  untrackedProductManifestSha256: Sha256,
   contractIdentitySha256: Sha256,
 });
 export type ArtifactIdentity = typeof ArtifactIdentitySchema.Type;
@@ -197,7 +198,7 @@ export function hashProductInputs(
 export function createArtifactIdentity(input: {
   readonly baseCommit: string;
   readonly trackedDiffSha256: string;
-  readonly untrackedProductManifestSha256: string | null;
+  readonly untrackedProductManifestSha256: string;
   readonly contractIdentitySha256: string;
 }): ArtifactIdentity {
   return Schema.decodeUnknownSync(ArtifactIdentitySchema)(input);
@@ -804,7 +805,7 @@ async function hostArtifactIdentity(
     baseCommit,
     trackedDiffSha256: sha256Hex(diff),
     untrackedProductManifestSha256:
-      untrackedFiles.length === 0 ? null : hashProductInputs(untrackedFiles),
+      untrackedFiles.length === 0 ? EMPTY_SHA256 : hashProductInputs(untrackedFiles),
     contractIdentitySha256,
   });
 }

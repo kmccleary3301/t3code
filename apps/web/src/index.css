@@ -928,22 +928,22 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    documents and native window chrome to their owners. */
 @media (forced-colors: active) {
   [data-t3-app] {
-    --background: Canvas;
-    --foreground: CanvasText;
-    --card: Canvas;
-    --card-foreground: CanvasText;
-    --popover: Canvas;
-    --popover-foreground: CanvasText;
-    --border: CanvasText;
-    --input: CanvasText;
-    --ring: Highlight;
-    --accent: Highlight;
-    --accent-foreground: HighlightText;
-    --muted: Canvas;
-    --muted-foreground: CanvasText;
-    --sidebar: Canvas;
-    --sidebar-foreground: CanvasText;
-    --sidebar-border: CanvasText;
+    --background: Canvas !important;
+    --foreground: CanvasText !important;
+    --card: Canvas !important;
+    --card-foreground: CanvasText !important;
+    --popover: Canvas !important;
+    --popover-foreground: CanvasText !important;
+    --border: CanvasText !important;
+    --input: CanvasText !important;
+    --ring: Highlight !important;
+    --accent: Highlight !important;
+    --accent-foreground: HighlightText !important;
+    --muted: Canvas !important;
+    --muted-foreground: CanvasText !important;
+    --sidebar: Canvas !important;
+    --sidebar-foreground: CanvasText !important;
+    --sidebar-border: CanvasText !important;
   }
 
   [data-t3-app]
@@ -969,15 +969,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       [data-t3-surface="diff"],
       [data-t3-surface="preview"]
     ) {
-    forced-color-adjust: none;
-    background-color: Canvas;
-    color: CanvasText;
-    border-color: CanvasText;
+    forced-color-adjust: none !important;
+    background-color: Canvas !important;
+    color: CanvasText !important;
+    border-color: CanvasText !important;
   }
 
   [data-t3-app] :where(button, input, textarea, select, a) {
-    color: ButtonText;
-    border-color: ButtonText;
+    color: ButtonText !important;
+    border-color: ButtonText !important;
   }
 
   [data-t3-app]
@@ -988,20 +988,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       [data-t3-part="permission-control"],
       [data-t3-part="model-selector"]
     ) {
-    forced-color-adjust: none;
-    background-color: Highlight;
-    color: HighlightText;
-    border-color: Highlight;
+    forced-color-adjust: none !important;
+    background-color: Highlight !important;
+    color: HighlightText !important;
+    border-color: Highlight !important;
   }
 
   [data-t3-app] :where(button, input, textarea, select, a, [tabindex]):focus-visible {
-    outline: 2px solid Highlight;
-    outline-offset: 2px;
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px !important;
   }
 
   [data-t3-app] :where(:disabled, [aria-disabled="true"], [data-disabled]) {
-    color: GrayText;
-    border-color: GrayText;
+    color: GrayText !important;
+    border-color: GrayText !important;
   }
 }
 

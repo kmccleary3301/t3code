@@ -66,6 +66,8 @@ import { AppearanceAssetRegistry, type AppearanceAssetLease } from "./appearance
 
 const APPEARANCE_STYLE_ID = "t3-appearance-runtime";
 const APPEARANCE_LAYER_ATTRIBUTE = "data-t3-appearance-layer";
+const APPEARANCE_STARTUP_TIMEOUT_MS = 10_000;
+const APPEARANCE_MANAGED_SHEET_PROPERTY = "__t3AppearanceManaged";
 const APPEARANCE_ROOT_LAYER_ATTRIBUTE = "data-t3-appearance-root-layer";
 type WebAppearanceLayerId =
   | "order"
@@ -94,6 +96,7 @@ function isWebAppearanceCompiledOutput(
 const LEGACY_THEME_STORAGE_KEY = "t3code:theme";
 const appearanceFontLoads = new AppearanceFontLoadCache();
 const appearanceAssets = new AppearanceAssetRegistry();
+let suppressPendingStartupApply = false;
 const COLOR_ROLE_SET = new Set<string>(THEME_COLOR_ROLES);
 
 const BUILTIN_TRUST: AppearanceTrust = {
@@ -742,6 +745,7 @@ function applyConstructableAppearanceSheet(
     return true;
   }
   const nextSheet = new CSSStyleSheet();
+  Object.defineProperty(nextSheet, APPEARANCE_MANAGED_SHEET_PROPERTY, { value: true });
   nextSheet.replaceSync(css);
   const adopted = document.adoptedStyleSheets.filter((sheet) => sheet !== appearanceAdoptedSheet);
   if (css.length > 0) adopted.push(nextSheet);
@@ -813,6 +817,7 @@ function applyWebAppearanceLayers(compiled: AppearanceCompiledOutput): void {
 
 async function applyWebAppearance(compiled: AppearanceCompiledOutput): Promise<void> {
   if (typeof document === "undefined") return;
+  if (suppressPendingStartupApply) return;
   const root = document.documentElement;
   const bootVariables = Array.from({ length: root.style.length }, (_, index) =>
     root.style.item(index),
@@ -863,21 +868,20 @@ async function applyWebAppearance(compiled: AppearanceCompiledOutput): Promise<v
         ...(asset.style === undefined ? {} : { style: asset.style }),
         ...(asset.weight === undefined ? {} : { weight: asset.weight }),
       }));
-    try {
-      const result = await appearanceFontLoads.load(requests);
-      setAppearanceFontLoadDiagnostics(result.diagnostics);
-    } catch (error: unknown) {
-      setAppearanceFontLoadDiagnostics([
-        {
-          family: "appearance",
-          code: "font-load-failed",
-          message: `Appearance font loading failed unexpectedly: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-          recovery: "Retry appearance font loading; fallback stacks remain available.",
-        },
-      ]);
-    }
+    void appearanceFontLoads.load(requests).then(
+      (result) => setAppearanceFontLoadDiagnostics(result.diagnostics),
+      (error: unknown) =>
+        setAppearanceFontLoadDiagnostics([
+          {
+            family: "appearance",
+            code: "font-load-failed",
+            message: `Appearance font loading failed unexpectedly: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+            recovery: "Retry appearance font loading; fallback stacks remain available.",
+          },
+        ]),
+    );
   } else {
     setAppearanceFontLoadDiagnostics([]);
   }
@@ -935,16 +939,39 @@ export function applyBuiltinAppearanceForStartup(): void {
   appearanceAdoptedRootLayerIds = [];
   setAppearanceFontLoadDiagnostics([]);
 }
-
 export async function initializeAppearanceStartup(): Promise<"profile" | "recovery"> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const runtime = getAppearanceRuntime();
   try {
-    await getAppearanceRuntime();
-    return "profile";
+    const result = await Promise.race([
+      runtime.then(() => "profile" as const),
+      new Promise<"timeout">((resolve) => {
+        timeout = setTimeout(() => {
+          suppressPendingStartupApply = true;
+          resolve("timeout");
+        }, APPEARANCE_STARTUP_TIMEOUT_MS);
+      }),
+    ]);
+    if (result === "profile") return result;
+    void runtime.then(
+      () => {
+        suppressPendingStartupApply = false;
+      },
+      () => {
+        suppressPendingStartupApply = false;
+      },
+    );
+    applyBuiltinAppearanceForStartup();
+    console.error(
+      `Appearance startup exceeded ${APPEARANCE_STARTUP_TIMEOUT_MS}ms; showing builtin recovery.`,
+    );
+    return "recovery";
   } catch (error: unknown) {
     applyBuiltinAppearanceForStartup();
     console.error("Appearance startup failed; showing builtin recovery.", error);
     return "recovery";
   } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
     revealAppearanceStartup();
   }
 }

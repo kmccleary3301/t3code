@@ -245,9 +245,6 @@
         height: 64px;
         object-fit: contain;
       }
-      html[data-appearance-startup="pending"] #root {
-        visibility: hidden;
-      }
     </style>
     <title>T3 Code (Alpha)</title>
   </head>
@@ -259,6 +256,29 @@
         </div>
       </div>
     </div>
+    <script>
+      (() => {
+        const revealStartupFailure = () => {
+          const root = document.documentElement;
+          if (root.dataset.appearanceStartup !== "pending") return;
+          root.dataset.appearanceStartup = "recovery";
+          const card = document.getElementById("boot-shell-card");
+          if (card === null) return;
+          const message = document.createElement("p");
+          message.setAttribute("role", "alert");
+          message.textContent = "T3 Code could not start. Reload to try again.";
+          card.replaceChildren(message);
+        };
+        window.addEventListener(
+          "error",
+          (event) => {
+            if (event.target instanceof HTMLScriptElement) revealStartupFailure();
+          },
+          true,
+        );
+        window.setTimeout(revealStartupFailure, 15_000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

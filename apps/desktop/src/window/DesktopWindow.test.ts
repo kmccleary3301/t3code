@@ -77,12 +77,17 @@ const environmentInput = {
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
-function makeFakeBrowserWindow() {
+function makeFakeBrowserWindow(
+  options: { readonly executeJavaScript?: (source: string) => Promise<unknown> } = {},
+) {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
   const webContents = {
     copyImageAt: vi.fn(),
+    ...(options.executeJavaScript === undefined
+      ? {}
+      : { executeJavaScript: vi.fn(options.executeJavaScript) }),
     getURL: vi.fn(() => "t3code-dev://app/"),
     getZoomLevel: vi.fn(() => zoomLevel),
     setZoomLevel: vi.fn((level: number) => {
@@ -815,6 +820,45 @@ describe("DesktopWindow", () => {
         readyToShow();
         assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
         startup({}, APPEARANCE_STARTUP_FAILED_CHANNEL);
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not let a late ready message bypass startup recovery cleanup", () =>
+    Effect.gen(function* () {
+      let finishCleanup: (() => void) | undefined;
+      const cleanup = new Promise<void>((resolve) => {
+        finishCleanup = resolve;
+      });
+      const fakeWindow = makeFakeBrowserWindow({
+        executeJavaScript: () => cleanup,
+      });
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        const startup = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startup) {
+          return yield* Effect.die("window startup listeners were not registered");
+        }
+        readyToShow();
+        startup({}, APPEARANCE_STARTUP_FAILED_CHANNEL);
+        startup({}, APPEARANCE_STARTUP_READY_CHANNEL);
+        yield* Effect.yieldNow;
+        assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
+
+        finishCleanup?.();
+        yield* Effect.promise(() => cleanup);
+        yield* Effect.yieldNow;
         assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
       }).pipe(Effect.provide(layer));
     }),

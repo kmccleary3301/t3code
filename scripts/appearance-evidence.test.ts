@@ -75,7 +75,8 @@ const ALL_CLIENTS: ReadonlyArray<SceneClient> = ["web", "desktop", "ios", "andro
 const identity = createArtifactIdentity({
   baseCommit: "b5f2523",
   trackedDiffSha256: "a".repeat(64),
-  untrackedProductManifestSha256: null,
+  untrackedProductManifestSha256:
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   contractIdentitySha256: "c".repeat(64),
 });
 
@@ -250,7 +251,10 @@ it("plans every applicable row as ready, blocked-product, or blocked-external", 
 });
 
 it("validates identity, metric units, duplicate samples, and aggregate statistics", () => {
-  assert.equal(identity.untrackedProductManifestSha256, null);
+  assert.equal(
+    identity.untrackedProductManifestSha256,
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  );
   assert.deepStrictEqual(identity, createArtifactIdentity(identity));
   assert.equal(createRuntimeIdentity({ node: null }).node, null);
   const productFiles = [

@@ -937,16 +937,26 @@ export const make = Effect.gen(function* () {
               window.webContents,
               `(() => {
                 const root = document.documentElement;
+                const dark = typeof window.matchMedia === "function"
+                  && window.matchMedia("(prefers-color-scheme: dark)").matches;
+                const background = dark ? "#0a0a0a" : "#ffffff";
                 root.dataset.appearanceSafeMode = "true";
                 delete root.dataset.themeId;
                 delete root.dataset.t3AppearanceActive;
                 root.removeAttribute("data-appearance-startup");
-                root.style.removeProperty("background-color");
-                root.style.removeProperty("color-scheme");
+                root.classList.toggle("dark", dark);
+                root.style.backgroundColor = background;
+                root.style.colorScheme = dark ? "dark" : "light";
+                if (document.body !== null) document.body.style.backgroundColor = background;
                 for (const name of Array.from({length: root.style.length}, (_, index) => root.style.item(index))) {
                   if (name.startsWith("--app-theme-") || name.startsWith("--t3-")) root.style.removeProperty(name);
                 }
                 document.querySelector("style[data-t3-appearance-atomic]")?.remove();
+                if ("adoptedStyleSheets" in document) {
+                  document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+                    (sheet) => sheet.__t3AppearanceManaged !== true
+                  );
+                }
               })()`,
             ),
           catch: () => undefined,
@@ -969,10 +979,9 @@ export const make = Effect.gen(function* () {
       ),
     );
     window.webContents.on("ipc-message", (_event, channel) => {
-      if (
-        channel === APPEARANCE_STARTUP_READY_CHANNEL ||
-        channel === APPEARANCE_STARTUP_FAILED_CHANNEL
-      ) {
+      if (channel === APPEARANCE_STARTUP_FAILED_CHANNEL) {
+        rendererStartupFailure?.();
+      } else if (channel === APPEARANCE_STARTUP_READY_CHANNEL && !rendererStartupRecoveryStarted) {
         markAppearanceStartupReady();
       }
     });

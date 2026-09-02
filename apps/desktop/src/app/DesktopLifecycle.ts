@@ -222,14 +222,20 @@ export const make = DesktopLifecycle.of({
         },
       );
     });
-    yield* electronApp.on("activate", () => {
+    const activateMainWindow = (span: string) => {
       void runEffect(
         Effect.gen(function* () {
           const state = yield* DesktopState.DesktopState;
           if (yield* Ref.get(state.quitting)) return;
           yield* desktopWindow.activate;
-        }).pipe(Effect.withSpan("desktop.lifecycle.activate")),
+        }).pipe(Effect.withSpan(span)),
       );
+    };
+    yield* electronApp.on("activate", () => {
+      activateMainWindow("desktop.lifecycle.activate");
+    });
+    yield* electronApp.on("second-instance", () => {
+      activateMainWindow("desktop.lifecycle.secondInstance");
     });
     yield* electronApp.on("window-all-closed", () => {
       void runEffect(

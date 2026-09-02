@@ -55,16 +55,24 @@ function revealBuiltinAppearance(): void {
   const dark =
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const background = dark ? "#0a0a0a" : "#ffffff";
   root.classList.toggle("dark", dark);
   root.dataset.appearanceSafeMode = "true";
   delete root.dataset.themeId;
   delete root.dataset.t3AppearanceActive;
-  root.style.removeProperty("color-scheme");
-  root.style.removeProperty("background-color");
-  document.body?.style.removeProperty("background-color");
+  root.style.colorScheme = dark ? "dark" : "light";
+  root.style.backgroundColor = background;
+  if (document.body !== null) document.body.style.backgroundColor = background;
   root.removeAttribute("data-appearance-startup");
   root.dataset.appearanceStartup = "recovery";
   document.querySelector<HTMLStyleElement>("style[data-t3-appearance-atomic]")?.remove();
+  if ("adoptedStyleSheets" in document) {
+    document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+      (sheet) =>
+        (sheet as CSSStyleSheet & { readonly __t3AppearanceManaged?: boolean })
+          .__t3AppearanceManaged !== true,
+    );
+  }
   for (const name of Array.from({ length: root.style.length }, (_, index) =>
     root.style.item(index),
   )) {
@@ -93,7 +101,9 @@ function reportAppearanceStartupFailure(): void {
 }
 
 function handleAppearanceStartupError(event: ErrorEvent): void {
-  if (event.error !== undefined) reportAppearanceStartupFailure();
+  if (event.error !== undefined || event.target instanceof HTMLScriptElement) {
+    reportAppearanceStartupFailure();
+  }
 }
 
 function handleAppearanceStartupMessage(event: MessageEvent): void {
