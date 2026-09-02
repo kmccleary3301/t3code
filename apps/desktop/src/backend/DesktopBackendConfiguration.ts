@@ -499,9 +499,18 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       ...buildObservabilityFragment(input.observabilitySettings),
     };
 
+    const evidenceProcessTitle = process.env.T3CODE_EVIDENCE_PROCESS_TITLE;
+    const backendArgs =
+      evidenceProcessTitle !== undefined &&
+      /^t3code-evidence-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+        evidenceProcessTitle,
+      )
+        ? [`--title=${evidenceProcessTitle}`, environment.backendEntryPath, "--bootstrap-fd", "3"]
+        : [environment.backendEntryPath, "--bootstrap-fd", "3"];
+
     return {
       executablePath: process.execPath,
-      args: [environment.backendEntryPath, "--bootstrap-fd", "3"],
+      args: backendArgs,
       entryPath: environment.backendEntryPath,
       cwd: environment.backendCwd,
       env: {

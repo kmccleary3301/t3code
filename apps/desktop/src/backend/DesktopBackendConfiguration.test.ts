@@ -257,6 +257,29 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
+  it.effect("adds only validated evidence ownership titles to the backend command", () =>
+    Effect.gen(function* () {
+      const previous = process.env.T3CODE_EVIDENCE_PROCESS_TITLE;
+      try {
+        const validTitle = "t3code-evidence-12345678-1234-4567-8abc-123456789abc";
+        process.env.T3CODE_EVIDENCE_PROCESS_TITLE = validTitle;
+        yield* withHarness(
+          Effect.gen(function* () {
+            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+            const titled = yield* configuration.resolvePrimary;
+            assert.deepEqual(titled.args.slice(0, 2), [`--title=${validTitle}`, titled.entryPath]);
+
+            process.env.T3CODE_EVIDENCE_PROCESS_TITLE = "--inspect";
+            const rejected = yield* configuration.resolvePrimary;
+            assert.deepEqual(rejected.args, [rejected.entryPath, "--bootstrap-fd", "3"]);
+          }),
+        );
+      } finally {
+        restoreEnv("T3CODE_EVIDENCE_PROCESS_TITLE", previous);
+      }
+    }),
+  );
+
   it.effect("resolvePrimary starts from server.asar without materializing the WSL tree", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
