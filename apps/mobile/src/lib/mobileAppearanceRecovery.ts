@@ -6,9 +6,10 @@ export type MobileAppearanceRecoveryAction = "safe" | "reset";
 /** Parse only the two documented recovery URLs before any custom appearance is mounted. */
 export function parseMobileAppearanceRecoveryUrl(
   url: string | null | undefined,
+  scheme = "t3code",
 ): MobileAppearanceRecoveryAction | null {
-  if (url === MOBILE_APPEARANCE_SAFE_URL) return "safe";
-  if (url === MOBILE_APPEARANCE_RESET_URL) return "reset";
+  if (url === `${scheme}://appearance/safe`) return "safe";
+  if (url === `${scheme}://appearance/reset`) return "reset";
   return null;
 }
 

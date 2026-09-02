@@ -14,6 +14,21 @@ describe("parseMobileAppearanceRecoveryUrl", () => {
     expect(parseMobileAppearanceRecoveryUrl(MOBILE_APPEARANCE_RESET_URL)).toBe("reset");
   });
 
+  it("recognizes recovery links for the configured product scheme", () => {
+    expect(
+      parseMobileAppearanceRecoveryUrl(
+        "t3code-pi-omp-preview://appearance/safe",
+        "t3code-pi-omp-preview",
+      ),
+    ).toBe("safe");
+    expect(
+      parseMobileAppearanceRecoveryUrl(
+        "t3code-pi-omp-preview://appearance/reset",
+        "t3code-pi-omp-preview",
+      ),
+    ).toBe("reset");
+  });
+
   it("rejects lookalike links before custom appearance application", () => {
     for (const value of [
       "t3code://appearance/safe/",
@@ -25,6 +40,9 @@ describe("parseMobileAppearanceRecoveryUrl", () => {
     ]) {
       expect(parseMobileAppearanceRecoveryUrl(value)).toBeNull();
     }
+    expect(
+      parseMobileAppearanceRecoveryUrl("t3code-pi-omp-preview://appearance/safe", "t3code-pi-omp"),
+    ).toBeNull();
   });
 });
 

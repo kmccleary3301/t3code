@@ -1,4 +1,5 @@
 import { BlurTargetView } from "expo-blur";
+import Constants from "expo-constants";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useMemo, useState } from "react";
@@ -48,6 +49,10 @@ void SplashScreen.preventAutoHideAsync().catch(() => {
   // The native module can be unavailable in non-native test environments.
 });
 
+const configuredSchemes = Constants.expoConfig?.scheme;
+const configuredAppScheme =
+  (Array.isArray(configuredSchemes) ? configuredSchemes[0] : configuredSchemes) || "t3code";
+
 const appLinking = {
   prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
   // The Expo dev client launches the app via
@@ -59,7 +64,7 @@ const appLinking = {
   filter: (url: string) =>
     !url.includes("expo-development-client") &&
     !url.includes("://expo-sharing") &&
-    parseMobileAppearanceRecoveryUrl(url) === null,
+    parseMobileAppearanceRecoveryUrl(url, configuredAppScheme) === null,
 };
 
 const Navigation = createStaticNavigation(RootStack);
@@ -82,7 +87,7 @@ export default function App() {
     let active = true;
     let receivedRecoveryUrl = false;
     const openRecoveryUrl = (url: string | null | undefined) => {
-      const action = parseMobileAppearanceRecoveryUrl(url);
+      const action = parseMobileAppearanceRecoveryUrl(url, configuredAppScheme);
       if (action === null) return false;
       receivedRecoveryUrl = true;
       setRecoveryAction(action);
