@@ -6,7 +6,7 @@ import {
   resolveMobileCodeSurface,
 } from "../../../../lib/appearancePreferences";
 import { useUniwindTheme } from "../../../../lib/useUniwindTheme";
-import { getProfileTerminalTheme } from "../../../terminal/terminalTheme";
+import { getMobileTerminalTheme, getProfileTerminalTheme } from "../../../terminal/terminalTheme";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 
 /** Hairline between a section's preview surface and its control rows. */
@@ -54,8 +54,16 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
  * on the shared card background so it reads like the other previews.
  */
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
-  const { themeAppearance: scheme, profile, appearanceOutput } = useAppearancePreferences();
-  const theme = getProfileTerminalTheme(profile, scheme);
+  const {
+    themeAppearance: scheme,
+    themeId,
+    profile,
+    appearanceOutput,
+  } = useAppearancePreferences();
+  const theme =
+    profile === undefined
+      ? getMobileTerminalTheme(themeId, scheme)
+      : getProfileTerminalTheme(profile, scheme);
   const terminalTypography = appearanceOutput.typographyPreferences.terminal;
   const lineHeight = Math.round(
     props.fontSize * (theme.lineHeight ?? terminalTypography.lineHeight),

@@ -17,6 +17,7 @@ import {
 } from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
+  getMobileTerminalTheme,
   getProfileTerminalTheme,
   type TerminalTheme,
 } from "./terminalTheme";
@@ -72,9 +73,13 @@ function nativeLigatureVariant(enabled: boolean): NonNullable<TextStyle["fontVar
 }
 
 const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: TerminalSurfaceProps) {
-  const { themeAppearance, profile, appearanceOutput } = useAppearancePreferences();
+  const { themeAppearance, themeId, profile, appearanceOutput } = useAppearancePreferences();
   const fontSize = props.fontSize ?? appearanceOutput.rendererPalettes.terminal.fontSize;
-  const theme = props.theme ?? getProfileTerminalTheme(profile, themeAppearance);
+  const theme =
+    props.theme ??
+    (profile === undefined
+      ? getMobileTerminalTheme(themeId, themeAppearance)
+      : getProfileTerminalTheme(profile, themeAppearance));
   const terminalTypography = appearanceOutput.typographyPreferences.terminal;
   const terminalLineHeight = theme.lineHeight ?? terminalTypography.lineHeight ?? 1.35;
   const terminalLetterSpacing =
@@ -191,9 +196,13 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
   );
 });
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
-  const { themeAppearance, profile, appearanceOutput } = useAppearancePreferences();
+  const { themeAppearance, themeId, profile, appearanceOutput } = useAppearancePreferences();
   const fontSize = props.fontSize ?? appearanceOutput.rendererPalettes.terminal.fontSize;
-  const theme = props.theme ?? getProfileTerminalTheme(profile, themeAppearance);
+  const theme =
+    props.theme ??
+    (profile === undefined
+      ? getMobileTerminalTheme(themeId, themeAppearance)
+      : getProfileTerminalTheme(profile, themeAppearance));
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
   const hasNativeSurface = Boolean(NativeTerminalSurfaceView);

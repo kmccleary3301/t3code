@@ -110,6 +110,12 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly cursor?: string;
   }) => Effect.Effect<ProviderNativeHistoryPage, ProviderServiceError>;
+  readonly readNativeHistoryBySession?: (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly sessionId: string;
+    readonly cwd: string;
+    readonly cursor?: string;
+  }) => Effect.Effect<ProviderNativeHistoryPage, ProviderServiceError>;
   readonly readSubagentTranscript?: (input: {
     readonly threadId: ThreadId;
     readonly subagentId: string;

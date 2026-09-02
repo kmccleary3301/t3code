@@ -88,6 +88,13 @@ describe("Provider native session management", () => {
       }),
     ).toEqual({ providerInstanceId: "pi", sessionId: "session-1" });
     expect(
+      decodeProviderNativeSessionOpenInput({
+        providerInstanceId: "omp",
+        sessionId: "session-2",
+        indexOnly: true,
+      }),
+    ).toEqual({ providerInstanceId: "omp", sessionId: "session-2", indexOnly: true });
+    expect(
       decodeProviderNativeSessionRenameInput({
         providerInstanceId: "pi",
         sessionId: "session-1",

@@ -145,6 +145,14 @@ export interface ProviderAdapterShape<TError> {
     cursor?: string,
   ) => Effect.Effect<ProviderNativeHistoryPage, TError | ProviderNativeSessionError>;
   /**
+   * Read one bounded page from a durable native session without launching it.
+   */
+  readonly readNativeHistoryBySession?: (input: {
+    readonly sessionId: string;
+    readonly cwd: string;
+    readonly cursor?: string;
+  }) => Effect.Effect<ProviderNativeHistoryPage, TError | ProviderNativeSessionError>;
+  /**
    * Read an incremental transcript page for one provider-native subagent.
    *
    * Adapters omit this method when their runtime cannot expose child sessions.

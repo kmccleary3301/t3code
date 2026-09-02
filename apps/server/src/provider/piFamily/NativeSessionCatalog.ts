@@ -471,6 +471,7 @@ export function readPiFamilyNativeHistoryMessages(
   config: PiFamilySessionCatalogConfig,
   sessionId: string,
   cwd: string,
+  options?: { readonly maxBytes?: number },
 ): Effect.Effect<ReadonlyArray<ProviderNativeHistoryMessage>, ProviderNativeSessionError> {
   const root = resolvePiFamilySessionDirectory(config);
   return Effect.tryPromise({
@@ -484,11 +485,24 @@ export function readPiFamilyNativeHistoryMessages(
       }
       const nodes = new Map<string, NativeHistoryNode>();
       let leafId: string | undefined;
+      const maxBytes = options?.maxBytes;
+      const start =
+        maxBytes === undefined
+          ? 0
+          : Math.max(0, (await NodeFSP.stat(filePath)).size - Math.max(1, maxBytes));
+      let skipPartialFirstLine = start > 0;
       const lines = NodeReadline.createInterface({
-        input: NodeFS.createReadStream(filePath, { encoding: "utf8" }),
+        input: NodeFS.createReadStream(filePath, {
+          encoding: "utf8",
+          ...(start > 0 ? { start } : {}),
+        }),
         crlfDelay: Number.POSITIVE_INFINITY,
       });
       for await (const line of lines) {
+        if (skipPartialFirstLine) {
+          skipPartialFirstLine = false;
+          continue;
+        }
         const record = parseRecord(line);
         if (record === undefined || typeof record.id !== "string") continue;
         const parentId =

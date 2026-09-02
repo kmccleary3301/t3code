@@ -2,17 +2,12 @@ import { BlurTargetView } from "expo-blur";
 import Constants from "expo-constants";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, SafeAreaView, StatusBar, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import {
-  createStaticNavigation,
-  DarkTheme,
-  DefaultTheme,
-  type Theme,
-} from "@react-navigation/native";
+import { createStaticNavigation } from "@react-navigation/native";
 import { RegistryContext } from "@effect/atom-react";
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
@@ -42,6 +37,7 @@ import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
+import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
 
 import "../global.css";
 
@@ -243,23 +239,8 @@ const recoveryStyles = StyleSheet.create({
 });
 
 function AppContent() {
-  const { themeAppearance, nativeAppearance } = useAppearancePreferences();
-  const navigationTheme = useMemo<Theme>(() => {
-    const base = themeAppearance === "dark" ? DarkTheme : DefaultTheme;
-    return {
-      ...base,
-      dark: nativeAppearance.navigation.dark,
-      colors: {
-        ...base.colors,
-        primary: nativeAppearance.navigation.primary,
-        background: nativeAppearance.navigation.background,
-        card: nativeAppearance.navigation.card,
-        text: nativeAppearance.navigation.text,
-        border: nativeAppearance.navigation.border,
-        notification: nativeAppearance.navigation.notification,
-      },
-    };
-  }, [nativeAppearance, themeAppearance]);
+  const { themeAppearance } = useAppearancePreferences();
+  const navigationTheme = useMobileNavigationTheme();
 
   return (
     <>
@@ -269,7 +250,7 @@ function AppContent() {
           <SafeAreaProvider>
             <StatusBar
               barStyle={themeAppearance === "dark" ? "light-content" : "dark-content"}
-              backgroundColor={nativeAppearance.navigation.background}
+              backgroundColor={navigationTheme.colors.background}
               translucent
             />
             <BlurTargetView ref={appBlurTargetRef} style={{ flex: 1 }}>

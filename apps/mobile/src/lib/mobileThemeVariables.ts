@@ -11,6 +11,7 @@ import {
 const defaults = defaultThemeVariables as Readonly<
   Record<MobileThemeAppearance, MobileThemeVariables>
 >;
+export type MobileRuntimeVariables = Readonly<Record<string, string | number>>;
 
 /**
  * Complete palette for native and third-party APIs that cannot consume a
@@ -24,4 +25,12 @@ export function getMobileThemeRuntimeVariables(
   return themeId === DEFAULT_MOBILE_THEME_ID
     ? defaults[appearance]
     : getMobileThemeVariables(themeId, appearance);
+}
+
+export function resolveMobileThemeRuntimeVariables(
+  themeId: MobileThemeId,
+  appearance: MobileThemeAppearance,
+  portableProfileVariables?: MobileRuntimeVariables,
+): MobileRuntimeVariables {
+  return portableProfileVariables ?? getMobileThemeRuntimeVariables(themeId, appearance);
 }

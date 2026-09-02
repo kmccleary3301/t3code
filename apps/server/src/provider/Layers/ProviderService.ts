@@ -1115,6 +1115,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     }
     return yield* routed.adapter.readNativeHistory(routed.threadId, input.cursor);
   });
+  const readNativeHistoryBySession: ProviderServiceMethod<"readNativeHistoryBySession"> = Effect.fn(
+    "readNativeHistoryBySession",
+  )(function* (input) {
+    const adapter = yield* registry.getByInstance(input.providerInstanceId);
+    if (adapter.readNativeHistoryBySession === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "unsupported",
+        message: `Provider '${adapter.provider}' has no offline native history reader.`,
+      });
+    }
+    return yield* adapter.readNativeHistoryBySession({
+      sessionId: input.sessionId,
+      cwd: input.cwd,
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    });
+  });
   const readSubagentTranscript: ProviderServiceMethod<"readSubagentTranscript"> = Effect.fn(
     "readSubagentTranscript",
   )(function* (input) {
@@ -1368,6 +1384,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getInstanceInfo,
     listNativeSessions,
     readNativeHistory,
+    readNativeHistoryBySession,
     readSubagentTranscript,
     renameNativeSession,
     forkNativeSession,

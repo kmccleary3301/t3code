@@ -164,6 +164,8 @@ function appendBoundedUtf8Tail(
   return combined.slice(start);
 }
 
+const OFFLINE_NATIVE_HISTORY_MAX_BYTES = 2 * 1024 * 1024;
+
 let idCounter = 0;
 
 const randomId = (): string =>
@@ -2385,6 +2387,36 @@ export const makePiFamilyAdapter = (
       return listPiFamilyNativeSessions(config, config.instanceId, input.cwd);
     };
 
+    const pageNativeHistory = (
+      messages: ReadonlyArray<ProviderNativeHistoryMessage>,
+      cursor?: string,
+      pageSize = 64,
+    ): Effect.Effect<ProviderNativeHistoryPage, ProviderNativeSessionError> => {
+      const offset = cursor === undefined ? 0 : Number(cursor);
+      if (!Number.isSafeInteger(offset) || offset < 0) {
+        return Effect.fail(
+          new ProviderNativeSessionError({
+            code: "invalid",
+            message: "Native history cursor is invalid.",
+          }),
+        );
+      }
+      const pageMessages = messages.slice(offset, offset + pageSize);
+      const nextOffset = offset + pageMessages.length;
+      return Effect.succeed({
+        messages: pageMessages,
+        ...(nextOffset < messages.length ? { nextCursor: String(nextOffset) } : {}),
+        totalMessages: messages.length,
+      });
+    };
+    const readNativeHistoryBySession = (input: {
+      readonly sessionId: string;
+      readonly cwd: string;
+      readonly cursor?: string;
+    }): Effect.Effect<ProviderNativeHistoryPage, ProviderNativeSessionError> =>
+      readPiFamilyNativeHistoryMessages(config, input.sessionId, input.cwd, {
+        maxBytes: OFFLINE_NATIVE_HISTORY_MAX_BYTES,
+      }).pipe(Effect.flatMap((messages) => pageNativeHistory(messages, input.cursor, 256)));
     const readNativeHistory = (
       threadId: ThreadId,
       cursor?: string,
@@ -2401,13 +2433,6 @@ export const makePiFamilyAdapter = (
             message: `${config.runtime.toUpperCase()} did not report a native session id.`,
           });
         }
-        const offset = cursor === undefined ? 0 : Number(cursor);
-        if (!Number.isSafeInteger(offset) || offset < 0) {
-          return yield* new ProviderNativeSessionError({
-            code: "invalid",
-            message: "Native history cursor is invalid.",
-          });
-        }
         const messages =
           session.nativeHistoryMessages ??
           (yield* readPiFamilyNativeHistoryMessages(
@@ -2416,13 +2441,7 @@ export const makePiFamilyAdapter = (
             session.session.cwd ?? config.cwd,
           ));
         session.nativeHistoryMessages = messages;
-        const pageMessages = messages.slice(offset, offset + 64);
-        const nextOffset = offset + pageMessages.length;
-        return {
-          messages: pageMessages,
-          ...(nextOffset < messages.length ? { nextCursor: String(nextOffset) } : {}),
-          totalMessages: messages.length,
-        };
+        return yield* pageNativeHistory(messages, cursor);
       });
     const readSubagentTranscript = (
       threadId: ThreadId,
@@ -2703,6 +2722,7 @@ export const makePiFamilyAdapter = (
       readThread,
       listNativeSessions,
       readNativeHistory,
+      readNativeHistoryBySession,
       readSubagentTranscript,
       renameNativeSession,
       forkNativeSession,

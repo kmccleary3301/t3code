@@ -27,10 +27,12 @@ import * as Schema from "effect/Schema";
 
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { ProviderServiceError } from "../Errors.ts";
 import * as NativeSessionCoordinator from "../Services/NativeSessionCoordinator.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
+import type { ProviderNativeHistoryPage } from "../Services/ProviderAdapter.ts";
 import { appendNativeHistoryPage, type ImportedNativeTurn } from "./NativeHistoryImport.ts";
 
 const isNativeSessionError = Schema.is(ProviderNativeSessionError);
@@ -135,6 +137,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
 
   const importHistory = Effect.fn("NativeSessionCoordinator.importHistory")(function* (
     threadId: ThreadId,
+    readPage: (cursor?: string) => Effect.Effect<ProviderNativeHistoryPage, ProviderServiceError>,
   ) {
     let cursor: string | undefined;
     let pageIndex = 0;
@@ -143,17 +146,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     let currentTurn: ImportedNativeTurn | null = null;
     let totalMessages = 0;
     do {
-      const readNativeHistory = providerService.readNativeHistory;
-      if (readNativeHistory === undefined) {
-        return yield* new ProviderNativeSessionError({
-          code: "unsupported",
-          message: "This server has no native history reader.",
-        });
-      }
-      const page = yield* readNativeHistory({
-        threadId,
-        ...(cursor === undefined ? {} : { cursor }),
-      });
+      const page = yield* readPage(cursor);
       totalMessages = page.totalMessages;
       const imported = appendNativeHistoryPage({
         threadId,
@@ -198,6 +191,12 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     const provider = providers.find(
       (candidate) => candidate.instanceId === input.providerInstanceId,
     );
+    if (provider === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "not_found",
+        message: `Provider instance '${input.providerInstanceId}' was not found.`,
+      });
+    }
     const existingProject = Option.getOrUndefined(
       yield* snapshots.getActiveProjectByWorkspaceRoot(workspaceRoot),
     );
@@ -271,9 +270,22 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     const baseThreadId = ThreadId.make(
       nativeThreadBaseId(input.providerInstanceId, input.sessionId),
     );
-    const deterministicThread = readModel.threads.find(
+    let deterministicThread = readModel.threads.find(
       (thread) => thread.id === baseThreadId && thread.deletedAt === null,
     );
+    if (
+      input.indexOnly === true &&
+      existingBinding === undefined &&
+      deterministicThread !== undefined
+    ) {
+      yield* engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(`native-thread-retry-delete:${deterministicThread.id}`),
+        threadId: deterministicThread.id,
+      });
+      readModel = yield* snapshots.getCommandReadModel();
+      deterministicThread = undefined;
+    }
     let thread: Pick<OrchestrationThread, "id" | "modelSelection" | "archivedAt"> | undefined =
       boundThread ?? deterministicThread;
 
@@ -305,6 +317,9 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     }
 
     const threadId = thread.id;
+    if (input.indexOnly === true && existingBinding !== undefined && boundThread !== undefined) {
+      return { projectId: project.id, threadId };
+    }
     const activeSession = (yield* providerService.listSessions()).find(
       (session) => session.threadId === threadId,
     );
@@ -319,6 +334,53 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
         code: "invalid",
         message: `Thread '${threadId}' is already bound to a different provider session.`,
       });
+    }
+    if (input.indexOnly === true) {
+      const readNativeHistoryBySession = providerService.readNativeHistoryBySession;
+      if (readNativeHistoryBySession === undefined) {
+        return yield* new ProviderNativeSessionError({
+          code: "unsupported",
+          message: "This server has no offline native history reader.",
+        });
+      }
+      const nativeHistoryMessageCount = yield* importHistory(threadId, (cursor) =>
+        readNativeHistoryBySession({
+          providerInstanceId: input.providerInstanceId,
+          sessionId: input.sessionId,
+          cwd: workspaceRoot,
+          ...(cursor === undefined ? {} : { cursor }),
+        }),
+      );
+      const currentBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      if (currentBinding === undefined) {
+        yield* directory.upsert({
+          threadId,
+          provider: provider.driver,
+          providerInstanceId: input.providerInstanceId,
+          runtimeMode: "full-access",
+          status: "stopped",
+          resumeCursor: {
+            kind: "native-session",
+            runtime: summary.runtime,
+            sessionId: input.sessionId,
+          },
+          runtimePayload: {
+            cwd: workspaceRoot,
+            model: modelSelection.model,
+            activeTurnId: null,
+            lastError: null,
+            modelSelection,
+            nativeHistoryMessageCount,
+          },
+        });
+      } else {
+        const runtimePayload = asRecord(currentBinding.runtimePayload);
+        yield* directory.upsert({
+          ...currentBinding,
+          runtimePayload: { ...runtimePayload, nativeHistoryMessageCount },
+        });
+      }
+      return { projectId: project.id, threadId };
     }
     const session =
       activeSession ??
@@ -345,7 +407,19 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       });
     }
 
-    const nativeHistoryMessageCount = yield* importHistory(threadId);
+    const readNativeHistory = providerService.readNativeHistory;
+    if (readNativeHistory === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "unsupported",
+        message: "This server has no native history reader.",
+      });
+    }
+    const nativeHistoryMessageCount = yield* importHistory(threadId, (cursor) =>
+      readNativeHistory({
+        threadId,
+        ...(cursor === undefined ? {} : { cursor }),
+      }),
+    );
     const currentBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
     if (currentBinding !== undefined) {
       const runtimePayload = asRecord(currentBinding.runtimePayload);

@@ -18,6 +18,7 @@
     "start:marketing": "vp run --filter @t3tools/marketing preview",
     "start:mock-update-server": "node scripts/mock-update-server.ts",
     "appearance-evidence": "node scripts/appearance-evidence.ts",
+    "index:omp-sessions": "node scripts/index-omp-sessions.ts",
     "screenshots:mobile": "node scripts/mobile-showcase.ts",
     "icons:export": "node scripts/export-brand-icons.ts",
     "icons:check": "node scripts/export-brand-icons.ts --check",

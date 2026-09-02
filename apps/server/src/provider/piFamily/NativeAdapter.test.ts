@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -340,6 +344,70 @@ const nextEvent = (stream: Stream.Stream<ProviderRuntimeEvent>) =>
   Stream.runHead(stream).pipe(Effect.timeout("2 seconds"));
 
 describe("Pi-family native adapter", () => {
+  it.effect("reads durable OMP history without starting a process", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-omp-offline-"))),
+      (temporaryDirectory) =>
+        Effect.gen(function* () {
+          const workspace = NodePath.join(temporaryDirectory, "workspace");
+          const sessionsDirectory = NodePath.join(
+            temporaryDirectory,
+            "agent",
+            "sessions",
+            "project",
+          );
+          yield* Effect.promise(() => NodeFSP.mkdir(sessionsDirectory, { recursive: true }));
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(
+              NodePath.join(sessionsDirectory, "offline.jsonl"),
+              [
+                {
+                  type: "session",
+                  id: "offline-session",
+                  cwd: workspace,
+                  timestamp: "2026-09-02T00:00:00.000Z",
+                },
+                {
+                  type: "message",
+                  id: "offline-user",
+                  parentId: "offline-session",
+                  timestamp: "2026-09-02T00:00:01.000Z",
+                  message: { role: "user", content: "Indexed without launch" },
+                },
+              ]
+                .map((line) => JSON.stringify(line))
+                .join("\n") + "\n",
+            ),
+          );
+          const adapter = yield* makePiFamilyAdapter({
+            provider: ProviderDriverKind.make("omp"),
+            runtime: "omp",
+            binaryPath: "/definitely/missing/omp",
+            cwd: workspace,
+            agentDirectory: NodePath.join(temporaryDirectory, "agent"),
+            requestTimeoutMs: 2_000,
+            startupTimeoutMs: 2_000,
+            maxLineBytes: 1_048_576,
+            maxMessageBytes: 67_108_864,
+            stderrLimitBytes: 16_384,
+            instanceId: ProviderInstanceId.make("omp-offline-instance"),
+          });
+          const readHistory = adapter.readNativeHistoryBySession;
+          assert.isDefined(readHistory);
+          const page = yield* readHistory({
+            sessionId: "offline-session",
+            cwd: workspace,
+          });
+          assert.deepEqual(
+            page.messages.map((message) => message.text),
+            ["Indexed without launch"],
+          );
+          assert.equal(page.totalMessages, 1);
+        }).pipe(Effect.scoped),
+      (temporaryDirectory) =>
+        Effect.promise(() => NodeFSP.rm(temporaryDirectory, { recursive: true, force: true })),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
   it.effect("records native boundary bytes in channel order and captures process exit", () =>
     Effect.gen(function* () {
       const provider = ProviderDriverKind.make("pi");

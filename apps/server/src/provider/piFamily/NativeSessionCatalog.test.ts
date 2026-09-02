@@ -154,6 +154,14 @@ describe("NativeSessionCatalog", () => {
         "/workspace",
       );
       expect(history.map(({ text }) => text)).toEqual(["continue this", "done"]);
+      const boundedHistory = yield* readPiFamilyNativeHistoryMessages(
+        config(temporaryDirectory),
+        "session-1",
+        "/workspace",
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - Exact byte size of the JSONL fixture row.
+        { maxBytes: Buffer.byteLength(JSON.stringify(lines[4])) + 10 },
+      );
+      expect(boundedHistory.map(({ text }) => text)).toEqual(["done"]);
 
       const allSessions = yield* listPiFamilyNativeSessions(
         config(temporaryDirectory),

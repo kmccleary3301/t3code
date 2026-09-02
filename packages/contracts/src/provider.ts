@@ -109,6 +109,7 @@ export type ProviderNativeSessionListResult = typeof ProviderNativeSessionListRe
 export const ProviderNativeSessionOpenInput = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   sessionId: TrimmedNonEmptyString,
+  indexOnly: Schema.optional(Schema.Boolean),
 });
 export type ProviderNativeSessionOpenInput = typeof ProviderNativeSessionOpenInput.Type;
 

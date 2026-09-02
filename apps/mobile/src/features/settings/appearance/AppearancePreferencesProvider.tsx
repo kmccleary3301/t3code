@@ -47,13 +47,13 @@ import {
   type MobileThemeRuntimeState,
 } from "../../../lib/mobileThemeRuntime";
 import { cacheTerminalFontSize } from "../../terminal/terminalUiState";
+import { resolveMobileThemeRuntimeVariables } from "../../../lib/mobileThemeVariables";
 
 interface AppearancePreferencesContextValue {
   /** Effective values with base-size derivation applied. Use this for rendering. */
   readonly appearance: ResolvedAppearance;
   readonly appearanceOutput: MobileAppearanceOutput;
-  readonly nativeAppearance: MobileAppearanceOutput["native"];
-  readonly profile: NormalizedAppearanceProfile;
+  readonly profile?: NormalizedAppearanceProfile;
   readonly themeId: MobileThemeId;
   readonly themeIds: MobileThemeIds;
   readonly themeMode: MobileThemeMode;
@@ -93,13 +93,11 @@ export function AppearancePreferencesProvider(props: {
   );
   const storedProfile = storedPreferences?.appearanceProfile;
   const profile =
-    props.skipPortableProfile || storedProfile === undefined
-      ? BUILT_IN_APPEARANCE_PROFILE
-      : storedProfile;
+    props.skipPortableProfile || storedProfile === undefined ? undefined : storedProfile;
   const themeMode = normalizeMobileThemeMode(storedPreferences?.themeMode);
   const themeAppearance = themeMode === "system" ? systemColorScheme : themeMode;
   const appearanceOutput = useMemo(
-    () => compileMobileAppearance(profile, themeAppearance),
+    () => compileMobileAppearance(profile ?? BUILT_IN_APPEARANCE_PROFILE, themeAppearance),
     [profile, themeAppearance],
   );
   const resolvedThemeIds = resolveMobileThemeIds(storedPreferences ?? {});
@@ -109,6 +107,15 @@ export function AppearancePreferencesProvider(props: {
   );
   const themeId = themeIds[themeAppearance];
   const activeThemeName = getMobileUniwindThemeName(themeId, themeAppearance);
+  const uniwindVariables = useMemo(
+    () =>
+      resolveMobileThemeRuntimeVariables(
+        themeId,
+        themeAppearance,
+        profile === undefined ? undefined : appearanceOutput.uniwindVariables,
+      ),
+    [appearanceOutput.uniwindVariables, profile, themeAppearance, themeId],
+  );
   const { baseFontSize, codeFontSize, codeWordBreak, terminalFontSize } = preferences;
   const appearance = useMemo(
     () => resolveAppearance({ baseFontSize, codeFontSize, codeWordBreak, terminalFontSize }),
@@ -169,7 +176,7 @@ export function AppearancePreferencesProvider(props: {
   useLayoutEffect(() => {
     selectedThemeIdsRef.current = themeIds;
     syncThemeRuntime(runtimeState);
-    Uniwind.updateCSSVariables(activeThemeName, appearanceOutput.uniwindVariables);
+    Uniwind.updateCSSVariables(activeThemeName, uniwindVariables);
     cacheTerminalFontSize(
       appearance.isTerminalFontSizeCustom
         ? appearance.terminalFontSize
@@ -179,7 +186,7 @@ export function AppearancePreferencesProvider(props: {
     activeThemeName,
     appearance.terminalFontSize,
     appearance.isTerminalFontSizeCustom,
-    appearanceOutput.uniwindVariables,
+    uniwindVariables,
     appearanceOutput.rendererPalettes.terminal.fontSize,
     runtimeState,
     syncThemeRuntime,
@@ -272,7 +279,6 @@ export function AppearancePreferencesProvider(props: {
     (): AppearancePreferencesContextValue => ({
       appearance,
       appearanceOutput,
-      nativeAppearance: appearanceOutput.native,
       profile,
       themeId,
       themeIds,
