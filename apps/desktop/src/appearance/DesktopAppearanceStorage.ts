@@ -1696,10 +1696,13 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
     signal?: AbortSignal,
   ): Promise<void> {
     checkAbort(signal);
-    await this.ensureDirectory(this.packagesRoot);
-    const temporaryPath = this.contained(
-      "appearance",
-      "packages",
+    const targetParent = this.containedRelative(
+      this.appearanceRoot,
+      Path.relative(this.appearanceRoot, Path.dirname(target)),
+    );
+    await this.ensureDirectory(targetParent);
+    const temporaryPath = this.containedRelative(
+      targetParent,
       `.${Path.basename(target)}.${process.pid}.${randomUUID()}.tmp`,
     );
     await this.ensureDirectory(temporaryPath);
@@ -1765,7 +1768,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
       }
       try {
         await FileSystem.rename(temporaryPath, target);
-        await this.syncDirectory(this.packagesRoot);
+        await this.syncDirectory(targetParent);
       } catch (error) {
         if (backupPath !== null) await FileSystem.rename(backupPath, target).catch(() => undefined);
         throw error;
