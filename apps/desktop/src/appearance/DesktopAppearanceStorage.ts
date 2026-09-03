@@ -47,7 +47,7 @@ const MAX_STATE_DIAGNOSTICS = 1024;
 const MAX_PATH_DEPTH = 8;
 const WATCH_DEBOUNCE_MS = 80;
 const STABILITY_INTERVAL_MS = 25;
-const WINDOWS_RENAME_RETRY_DELAYS_MS = [20, 50, 100, 200, 400, 800] as const;
+const WINDOWS_RENAME_RETRY_DELAYS_MS = [100, 200, 400, 800, 1_600, 3_200, 6_400] as const;
 const STORAGE_SCHEMA = "t3.appearance/storage/v1";
 const PACKAGE_SCHEMA = "t3.appearance/package/v1";
 
