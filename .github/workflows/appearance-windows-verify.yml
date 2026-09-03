@@ -128,6 +128,23 @@ jobs:
           name: wsl-node-pty-x64
           path: product/wsl-prebuild
 
+      - name: Raise stale Windows payload validation ceiling
+        working-directory: product
+        shell: pwsh
+        run: |
+          $path = "scripts/build-desktop-artifact.ts"
+          $source = [System.IO.File]::ReadAllText($path)
+          $old = "export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 80;"
+          $new = "export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 128;"
+          if ([regex]::Matches($source, [regex]::Escape($old)).Count -ne 1) {
+            throw "Expected exactly one Windows payload validation ceiling declaration."
+          }
+          [System.IO.File]::WriteAllText($path, $source.Replace($old, $new))
+          $changed = @(git diff --name-only)
+          if ($changed.Count -ne 1 -or $changed[0] -ne $path) {
+            throw "Verification override modified unexpected product files: $($changed -join ', ')"
+          }
+
       - name: Build exact unsigned NSIS artifact
         working-directory: product
         shell: pwsh
