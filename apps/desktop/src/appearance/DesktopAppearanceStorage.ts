@@ -1219,7 +1219,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
     const moved: Array<{ readonly id: string; readonly hadPrevious: boolean }> = [];
     try {
       for (const [id, value] of changed) {
-        await this.writePackageDirectory(value, Path.join(stagedRoot, id), signal);
+        await this.stagePackageDirectory(value, Path.join(stagedRoot, id), signal);
       }
       for (const id of affected) {
         checkAbort(signal);
@@ -1720,6 +1720,74 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
     return candidate;
   }
 
+  private async writePackageDirectoryContents(
+    value: AppearanceStoredPackage,
+    target: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.writeBytesAtomic(
+      Path.join(target, "package.json"),
+      bytesFor(JSON.stringify(packageDocument(value)) + "\n"),
+      signal,
+    );
+    await this.writeBytesAtomic(
+      Path.join(target, "manifest.json"),
+      bytesFor(JSON.stringify(value.manifest) + "\n"),
+      signal,
+    );
+    await this.writeBytesAtomic(
+      Path.join(target, "diagnostics.json"),
+      bytesFor(JSON.stringify(value.diagnostics) + "\n"),
+      signal,
+    );
+    const sharedCssPath = value.manifest.styles?.web?.path;
+    if (value.sharedCss !== undefined && sharedCssPath !== undefined)
+      await this.writeBytesAtomic(
+        this.containedRelative(target, sharedCssPath),
+        bytesFor(value.sharedCss),
+        signal,
+      );
+    const desktopCssPath = value.manifest.styles?.desktop?.path;
+    if (value.desktopCss !== undefined && desktopCssPath !== undefined)
+      await this.writeBytesAtomic(
+        this.containedRelative(target, desktopCssPath),
+        bytesFor(value.desktopCss),
+        signal,
+      );
+    for (const asset of value.assets) {
+      const assetPath = this.containedRelative(target, asset.path);
+      const data = decodeBase64(asset.dataBase64);
+      if (
+        data === null ||
+        data.byteLength !== asset.sizeBytes ||
+        sha256Bytes(data) !== asset.sha256
+      )
+        throw new DesktopAppearanceStorageError(
+          "unsafe-package",
+          "Asset checksum does not match its bytes.",
+          asset.path,
+        );
+      if (data.byteLength > MAX_PACKAGE_BYTES)
+        throw new DesktopAppearanceStorageError(
+          "unsafe-package",
+          "Asset exceeds package bounds.",
+          asset.path,
+        );
+      await this.writeBytesAtomic(assetPath, data, signal);
+    }
+    await this.chmodTree(target);
+  }
+
+  private async stagePackageDirectory(
+    value: AppearanceStoredPackage,
+    target: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    checkAbort(signal);
+    await this.ensureDirectory(target);
+    await this.writePackageDirectoryContents(value, target, signal);
+  }
+
   private async writePackageDirectory(
     value: AppearanceStoredPackage,
     target: string,
@@ -1737,57 +1805,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
     );
     await this.ensureDirectory(temporaryPath);
     try {
-      await this.writeBytesAtomic(
-        Path.join(temporaryPath, "package.json"),
-        bytesFor(JSON.stringify(packageDocument(value)) + "\n"),
-        signal,
-      );
-      await this.writeBytesAtomic(
-        Path.join(temporaryPath, "manifest.json"),
-        bytesFor(JSON.stringify(value.manifest) + "\n"),
-        signal,
-      );
-      await this.writeBytesAtomic(
-        Path.join(temporaryPath, "diagnostics.json"),
-        bytesFor(JSON.stringify(value.diagnostics) + "\n"),
-        signal,
-      );
-      const sharedCssPath = value.manifest.styles?.web?.path;
-      if (value.sharedCss !== undefined && sharedCssPath !== undefined)
-        await this.writeBytesAtomic(
-          this.containedRelative(temporaryPath, sharedCssPath),
-          bytesFor(value.sharedCss),
-          signal,
-        );
-      const desktopCssPath = value.manifest.styles?.desktop?.path;
-      if (value.desktopCss !== undefined && desktopCssPath !== undefined)
-        await this.writeBytesAtomic(
-          this.containedRelative(temporaryPath, desktopCssPath),
-          bytesFor(value.desktopCss),
-          signal,
-        );
-      for (const asset of value.assets) {
-        const assetPath = this.containedRelative(temporaryPath, asset.path);
-        const data = decodeBase64(asset.dataBase64);
-        if (
-          data === null ||
-          data.byteLength !== asset.sizeBytes ||
-          sha256Bytes(data) !== asset.sha256
-        )
-          throw new DesktopAppearanceStorageError(
-            "unsafe-package",
-            "Asset checksum does not match its bytes.",
-            asset.path,
-          );
-        if (data.byteLength > MAX_PACKAGE_BYTES)
-          throw new DesktopAppearanceStorageError(
-            "unsafe-package",
-            "Asset exceeds package bounds.",
-            asset.path,
-          );
-        await this.writeBytesAtomic(assetPath, data, signal);
-      }
-      await this.chmodTree(temporaryPath);
+      await this.writePackageDirectoryContents(value, temporaryPath, signal);
       let backupPath: string | null = null;
       try {
         await this.assertOwned(target, true);
