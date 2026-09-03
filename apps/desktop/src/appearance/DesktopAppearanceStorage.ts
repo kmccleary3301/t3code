@@ -47,6 +47,7 @@ const MAX_STATE_DIAGNOSTICS = 1024;
 const MAX_PATH_DEPTH = 8;
 const WATCH_DEBOUNCE_MS = 80;
 const STABILITY_INTERVAL_MS = 25;
+const WINDOWS_RENAME_RETRY_DELAYS_MS = [20, 50, 100, 200, 400, 800] as const;
 const STORAGE_SCHEMA = "t3.appearance/storage/v1";
 const PACKAGE_SCHEMA = "t3.appearance/package/v1";
 
@@ -345,6 +346,16 @@ function packageId(value: AppearanceStoredPackage): string {
 
 function isMissing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isTransientWindowsRenameError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return (
+    error.code === "EACCES" ||
+    error.code === "EBUSY" ||
+    error.code === "ENOTEMPTY" ||
+    error.code === "EPERM"
+  );
 }
 
 function desktopPlatform(
@@ -807,7 +818,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
       let committed: AppearancePersistedState | null = null;
       try {
         await this.assertOwned(this.packagesRoot, true);
-        await FileSystem.rename(this.packagesRoot, stagedPackages);
+        await this.renamePath(this.packagesRoot, stagedPackages);
         moved = true;
         await this.ensureDirectory(this.packagesRoot);
         await this.writeStateFile(current, stagedState, signal);
@@ -826,37 +837,37 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
         let stagedPackagesPublished = false;
         let stagedStatePublished = false;
         try {
-          await FileSystem.rename(this.quarantinePackagesPath, priorPackages)
+          await this.renamePath(this.quarantinePackagesPath, priorPackages)
             .then(() => {
               priorPackagesMoved = true;
             })
             .catch((error: unknown) => {
               if (!isMissing(error)) throw error;
             });
-          await FileSystem.rename(this.quarantineStatePath, priorState)
+          await this.renamePath(this.quarantineStatePath, priorState)
             .then(() => {
               priorStateMoved = true;
             })
             .catch((error: unknown) => {
               if (!isMissing(error)) throw error;
             });
-          await FileSystem.rename(stagedPackages, this.quarantinePackagesPath);
+          await this.renamePath(stagedPackages, this.quarantinePackagesPath);
           stagedPackagesPublished = true;
-          await FileSystem.rename(stagedState, this.quarantineStatePath);
+          await this.renamePath(stagedState, this.quarantineStatePath);
           stagedStatePublished = true;
         } catch (publishError) {
           if (stagedStatePublished) {
-            await FileSystem.rename(this.quarantineStatePath, stagedState);
+            await this.renamePath(this.quarantineStatePath, stagedState);
           }
           if (stagedPackagesPublished) {
-            await FileSystem.rename(this.quarantinePackagesPath, stagedPackages);
+            await this.renamePath(this.quarantinePackagesPath, stagedPackages);
           }
-          if (priorStateMoved) await FileSystem.rename(priorState, this.quarantineStatePath);
+          if (priorStateMoved) await this.renamePath(priorState, this.quarantineStatePath);
           if (priorPackagesMoved) {
-            await FileSystem.rename(priorPackages, this.quarantinePackagesPath);
+            await this.renamePath(priorPackages, this.quarantinePackagesPath);
           }
           await FileSystem.rm(this.packagesRoot, { recursive: true, force: true });
-          await FileSystem.rename(stagedPackages, this.packagesRoot);
+          await this.renamePath(stagedPackages, this.packagesRoot);
           await FileSystem.rm(stagedState, { force: true }).catch(() => undefined);
           const rollbackState: AppearancePersistedState = {
             ...current,
@@ -873,7 +884,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
           await FileSystem.rm(this.packagesRoot, { recursive: true, force: true }).catch(
             () => undefined,
           );
-          await FileSystem.rename(stagedPackages, this.packagesRoot).catch(() => undefined);
+          await this.renamePath(stagedPackages, this.packagesRoot).catch(() => undefined);
           await FileSystem.rm(stagedState, { force: true }).catch(() => undefined);
         }
         throw error;
@@ -906,9 +917,9 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
       let committed = false;
       try {
         await this.assertOwned(this.packagesRoot, true);
-        await FileSystem.rename(this.packagesRoot, discarded);
+        await this.renamePath(this.packagesRoot, discarded);
         movedCurrent = true;
-        await FileSystem.rename(this.quarantinePackagesPath, this.packagesRoot);
+        await this.renamePath(this.quarantinePackagesPath, this.packagesRoot);
         const next: AppearancePersistedState = {
           ...recovery.state,
           revision: Math.max(current.revision + 1, Date.now()),
@@ -921,10 +932,10 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
         return next;
       } catch (error) {
         if (movedCurrent && !committed) {
-          await FileSystem.rename(this.packagesRoot, this.quarantinePackagesPath).catch(
+          await this.renamePath(this.packagesRoot, this.quarantinePackagesPath).catch(
             () => undefined,
           );
-          await FileSystem.rename(discarded, this.packagesRoot).catch(() => undefined);
+          await this.renamePath(discarded, this.packagesRoot).catch(() => undefined);
         }
         throw error;
       }
@@ -1113,7 +1124,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
       await handle.close();
       handle = undefined;
       await FileSystem.chmod(temporaryPath, 0o600);
-      await FileSystem.rename(temporaryPath, path);
+      await this.renamePath(temporaryPath, path);
       await FileSystem.chmod(path, 0o600);
       await this.syncDirectory(parent);
     } finally {
@@ -1146,7 +1157,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
       await handle.close();
       handle = undefined;
       checkAbort(signal);
-      await FileSystem.rename(temporaryPath, path);
+      await this.renamePath(temporaryPath, path);
     } finally {
       if (handle !== undefined) await handle.close().catch(() => undefined);
       await FileSystem.rm(temporaryPath, { force: true }).catch(() => undefined);
@@ -1162,6 +1173,25 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
       // Some platforms do not permit fsync on directory handles.
     }
   }
+
+  private async renamePath(source: string, target: string, signal?: AbortSignal): Promise<void> {
+    const retryDelays =
+      this.hostPlatform === "win32" ? WINDOWS_RENAME_RETRY_DELAYS_MS : ([] as const);
+    let retryIndex = 0;
+    while (true) {
+      checkAbort(signal);
+      try {
+        await FileSystem.rename(source, target);
+        return;
+      } catch (error) {
+        const delay = retryDelays[retryIndex];
+        retryIndex += 1;
+        if (delay === undefined || !isTransientWindowsRenameError(error)) throw error;
+        await wait(delay);
+      }
+    }
+  }
+
   private async persistPackageTransaction(
     current: AppearancePersistedState,
     next: AppearancePersistedState,
@@ -1198,14 +1228,14 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
         let hadPrevious = false;
         try {
           await this.assertOwned(target, true);
-          await FileSystem.rename(target, backup);
+          await this.renamePath(target, backup);
           hadPrevious = true;
         } catch (error: unknown) {
           if (!isNotFound(error)) throw error;
         }
         moved.push({ id, hadPrevious });
         if (next.packages[id] !== undefined) {
-          await FileSystem.rename(Path.join(stagedRoot, id), target);
+          await this.renamePath(Path.join(stagedRoot, id), target);
         }
       }
       await this.syncDirectory(this.packagesRoot);
@@ -1215,7 +1245,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
         const target = this.packagePath(entry.id);
         await FileSystem.rm(target, { recursive: true, force: true }).catch(() => undefined);
         if (entry.hadPrevious) {
-          await FileSystem.rename(Path.join(backupRoot, entry.id), target).catch(() => undefined);
+          await this.renamePath(Path.join(backupRoot, entry.id), target).catch(() => undefined);
         }
       }
       await this.syncDirectory(this.packagesRoot);
@@ -1300,7 +1330,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
       "quarantine",
       `${Path.basename(path)}-${Date.now()}-${randomUUID()}`,
     );
-    await FileSystem.rename(path, target);
+    await this.renamePath(path, target);
     await FileSystem.chmod(target, 0o600);
   }
 
@@ -1575,7 +1605,7 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
         "quarantine",
         `${Path.basename(candidate)}-${Date.now()}-${randomUUID()}`,
       );
-      await FileSystem.rename(candidate, target);
+      await this.renamePath(candidate, target);
       if (stat.isDirectory()) await this.chmodTree(target);
       else await FileSystem.chmod(target, 0o600);
     } catch (error: unknown) {
@@ -1762,15 +1792,15 @@ export class DesktopAppearanceStorage implements AppearanceStorageAdapter {
       try {
         await this.assertOwned(target, true);
         backupPath = `${target}.previous-${randomUUID()}`;
-        await FileSystem.rename(target, backupPath);
+        await this.renamePath(target, backupPath);
       } catch (error: unknown) {
         if (!isNotFound(error)) throw error;
       }
       try {
-        await FileSystem.rename(temporaryPath, target);
+        await this.renamePath(temporaryPath, target);
         await this.syncDirectory(targetParent);
       } catch (error) {
-        if (backupPath !== null) await FileSystem.rename(backupPath, target).catch(() => undefined);
+        if (backupPath !== null) await this.renamePath(backupPath, target).catch(() => undefined);
         throw error;
       }
       if (backupPath !== null) await FileSystem.rm(backupPath, { recursive: true, force: true });
