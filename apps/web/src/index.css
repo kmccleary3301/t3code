@@ -1908,7 +1908,7 @@ code {
   max-width: min(100%, var(--t3-size-sidebar-max, 480px));
 }
 
-form[data-t3-surface="composer"] {
+[data-slot="composer-shell"] {
   width: min(
     100%,
     clamp(
@@ -1917,6 +1917,11 @@ form[data-t3-surface="composer"] {
       var(--t3-size-composer-max, 1200px)
     )
   );
+  max-width: 100%;
+}
+
+form[data-t3-surface="composer"] {
+  width: 100%;
   max-width: 100%;
   padding-inline: min(var(--t3-content-gutter, 24px), 1rem);
 }
