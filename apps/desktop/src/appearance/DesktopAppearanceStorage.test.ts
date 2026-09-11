@@ -835,7 +835,13 @@ describe("DesktopAppearanceStorage", () => {
       JSON.stringify(packageManifest(nextCss)) + "\n",
       { mode: 0o600 },
     );
-    await waitForFilesystem(700);
+    const rollbackDeadline = Date.now() + 10_000;
+    while ((await readFile(Path.join(packagePath, "desktop.css"), "utf8")) !== firstCss) {
+      if (Date.now() >= rollbackDeadline) {
+        throw new Error("Timed out waiting for watcher rollback of desktop.css");
+      }
+      await waitForFilesystem(25);
+    }
     stop();
     await rm(backupPath, { recursive: true });
 
@@ -926,7 +932,11 @@ describe("DesktopAppearanceStorage", () => {
       JSON.stringify(packageManifest(greenCss, "styles/theme.css")) + "\n",
       { mode: 0o600 },
     );
-    await waitForFilesystem(700);
+    await waitForWatchUpdates(
+      updates,
+      1,
+      () => updates.at(-1)?.packages["watch-package"]?.desktopCss === greenCss,
+    );
     stop();
 
     expect(updates.length).toBeGreaterThan(0);
@@ -998,7 +1008,11 @@ describe("DesktopAppearanceStorage", () => {
       `${JSON.stringify(nextHealthyManifest)}\n`,
       { mode: 0o600 },
     );
-    await waitForFilesystem(1_000);
+    await waitForWatchUpdates(
+      updates,
+      1,
+      () => updates.at(-1)?.packages["healthy-package"]?.desktopCss === nextHealthyCss,
+    );
     stop();
 
     const current = await storage.load();
