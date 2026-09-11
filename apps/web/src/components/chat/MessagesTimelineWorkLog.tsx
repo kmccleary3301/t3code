@@ -723,7 +723,7 @@ function ToolActivityDetail(props: { threadRef: ScopedThreadRef; activityId: str
     );
   }
   return (
-    <div className="max-h-[36rem] space-y-3 overflow-auto" data-t3-part="tool-activity-detail">
+    <div className="max-h-[36rem] space-y-3 overflow-auto" data-t3-part="tool-output">
       {result.value.kind === "tool.updated" ? (
         <p className="text-xs text-muted-foreground">
           Live preview. Complete output appears when the tool finishes.
