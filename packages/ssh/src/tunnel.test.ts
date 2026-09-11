@@ -1,7 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off - exercises real POSIX shells and HTTP processes.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - exercises real POSIX shells and HTTP processes.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeHTTP from "node:http";
+import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTimers from "node:timers";
@@ -238,7 +238,7 @@ function isProcessAlive(pid: number): boolean {
 
 function requestStatus(origin: string): Promise<number> {
   const { promise, resolve, reject } = Promise.withResolvers<number>();
-  const request = NodeHTTP.get(new URL(origin), (response) => {
+  const request = NodeHttp.get(new URL(origin), (response) => {
     response.resume();
     response.once("end", () => resolve(response.statusCode ?? 0));
   });

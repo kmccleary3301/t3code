@@ -149,7 +149,11 @@ private fun closeSession(session: Session): Throwable? =
     error
   }
 
-private fun executeChannel(channel: ChannelExec, command: String, stdin: String?): Map<String, Any> {
+private fun executeChannel(
+  channel: ChannelExec,
+  command: String,
+  stdin: String?
+): Map<String, Any> {
   val deadlineNanos = System.nanoTime() + COMMAND_TIMEOUT_MS * 1_000_000L
   var result: Map<String, Any>? = null
   var failure: Throwable? = null
@@ -246,12 +250,25 @@ class T3SshModule : Module() {
       }
     }
 
-    AsyncFunction("connect") { host: String, port: Int, username: String, password: String?, privateKey: String?, passphrase: String?, expectedFingerprint: String? ->
+    AsyncFunction("connect") {
+        host: String,
+        port: Int,
+        username: String,
+        password: String?,
+        privateKey: String?,
+        passphrase: String?,
+        expectedFingerprint: String?
+      ->
       require(!password.isNullOrBlank() || !privateKey.isNullOrBlank()) { "T3_SSH_AUTH_REQUIRED" }
       val jsch = JSch()
       if (!privateKey.isNullOrBlank()) {
         try {
-          jsch.addIdentity("t3-mobile", privateKey.toByteArray(Charsets.UTF_8), null, passphrase?.toByteArray(Charsets.UTF_8))
+          jsch.addIdentity(
+            "t3-mobile",
+            privateKey.toByteArray(Charsets.UTF_8),
+            null,
+            passphrase?.toByteArray(Charsets.UTF_8)
+          )
         } catch (error: JSchException) {
           throw Exception("T3_SSH_AUTH:Private key could not be loaded.", error)
         }
@@ -274,10 +291,20 @@ class T3SshModule : Module() {
         closeSession(session)?.let(error::addSuppressed)
         val fingerprint = repository.fingerprint
         if (fingerprint != null && fingerprint != expectedFingerprint) {
-          val code = if (expectedFingerprint.isNullOrBlank()) "T3_SSH_HOST_KEY_REQUIRED" else "T3_SSH_HOST_KEY_MISMATCH"
+          val code =
+            if (expectedFingerprint.isNullOrBlank()) {
+              "T3_SSH_HOST_KEY_REQUIRED"
+            } else {
+              "T3_SSH_HOST_KEY_MISMATCH"
+            }
           throw Exception("$code:Received $fingerprint", error)
         }
-        if (error is JSchException && (error.message?.startsWith("Auth fail") == true || error.message?.startsWith("Auth cancel") == true)) {
+        if (error is JSchException &&
+          (
+            error.message?.startsWith("Auth fail") == true ||
+              error.message?.startsWith("Auth cancel") == true
+            )
+        ) {
           throw Exception("T3_SSH_AUTH:SSH authentication failed.", error)
         }
         throw error

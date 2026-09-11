@@ -11,24 +11,24 @@ import {
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Queue from "effect/Queue";
-import cp from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import readline from "node:readline";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeReadline from "node:readline";
+import * as NodeURL from "node:url";
 import { makePiFamilyAdapter } from "./NativeAdapter.ts";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 
 function resolveOmpBinaryPath(): string | undefined {
   if (process.env.SKIP_OMP_LIVE_TESTS === "1") {
     return undefined;
   }
   if (process.env.OMP_BINARY !== undefined) {
-    const binaryPath = path.resolve(process.env.OMP_BINARY);
+    const binaryPath = NodePath.resolve(process.env.OMP_BINARY);
     try {
-      fs.accessSync(binaryPath, fs.constants.X_OK);
+      NodeFS.accessSync(binaryPath, NodeFS.constants.X_OK);
     } catch (err) {
       throw new Error(
         `Configured OMP_BINARY is missing or not executable (${binaryPath}): ${err instanceof Error ? err.message : String(err)}`,
@@ -36,18 +36,18 @@ function resolveOmpBinaryPath(): string | undefined {
     }
     return binaryPath;
   }
-  const candidateWorktreePath = path.resolve(
+  const candidateWorktreePath = NodePath.resolve(
     __dirname,
     "../../../../../../omp-integration/packages/coding-agent/dist/omp",
   );
-  if (fs.existsSync(candidateWorktreePath)) {
+  if (NodeFS.existsSync(candidateWorktreePath)) {
     return candidateWorktreePath;
   }
-  const candidateRootPath = path.resolve(
+  const candidateRootPath = NodePath.resolve(
     process.cwd(),
     "../omp-integration/packages/coding-agent/dist/omp",
   );
-  if (fs.existsSync(candidateRootPath)) {
+  if (NodeFS.existsSync(candidateRootPath)) {
     return candidateRootPath;
   }
   return undefined;
@@ -60,9 +60,9 @@ describe.skipIf(!ompBinary)("OMP live question round-trip with capability gating
     Effect.gen(function* () {
       assert.ok(ompBinary, "OMP binary must be resolved");
       const binaryPath = ompBinary;
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-ext-gated-"));
-      const extFile = path.join(tempDir, "ext.mjs");
-      fs.writeFileSync(
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "omp-ext-gated-"));
+      const extFile = NodePath.join(tempDir, "ext.mjs");
+      NodeFS.writeFileSync(
         extFile,
         `
 export default function(pi) {
@@ -173,7 +173,7 @@ export default function(pi) {
 
         yield* adapter.stopSession(threadId);
       } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -181,9 +181,9 @@ export default function(pi) {
   it("falls back to select when host omits askDialog capability", async () => {
     assert.ok(ompBinary, "OMP binary must be resolved");
     const binaryPath = ompBinary;
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-ext-fallback-"));
-    const extFile = path.join(tempDir, "ext.mjs");
-    fs.writeFileSync(
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "omp-ext-fallback-"));
+    const extFile = NodePath.join(tempDir, "ext.mjs");
+    NodeFS.writeFileSync(
       extFile,
       `
 export default function(pi) {
@@ -213,12 +213,12 @@ export default function(pi) {
 `,
     );
 
-    const child = cp.spawn(binaryPath, ["--mode", "rpc", "--extension", extFile], {
+    const child = NodeChildProcess.spawn(binaryPath, ["--mode", "rpc", "--extension", extFile], {
       cwd: tempDir,
       stdio: ["pipe", "pipe", "inherit"],
     });
 
-    const rl = readline.createInterface({ input: child.stdout });
+    const rl = NodeReadline.createInterface({ input: child.stdout });
 
     let selectReceived = false;
     let fallbackNotifyReceived = false;
@@ -296,7 +296,7 @@ export default function(pi) {
     } finally {
       child.kill("SIGTERM");
       rl.close();
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });
