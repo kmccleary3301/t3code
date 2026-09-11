@@ -1039,13 +1039,22 @@ describe("DesktopAppearanceStorage", () => {
     await cp(source.revealPath("watch-package"), targetPackagePath, { recursive: true });
     const copiedManifest = await readFile(Path.join(targetPackagePath, "manifest.json"));
     await writeFile(Path.join(targetPackagePath, "manifest.json"), copiedManifest, { mode: 0o600 });
-    await waitForFilesystem(1_000);
+    await waitForWatchUpdates(
+      updates,
+      1,
+      () => updates.at(-1)?.packages["watch-package"]?.enabled === false,
+    );
     expect((await target.load()).packages["watch-package"]?.enabled).toBe(false);
 
     expect(updates.at(-1)?.packages["watch-package"]?.enabled).toBe(false);
     expect(updates.at(-1)?.order).toContain("watch-package");
+    const removalUpdateCount = updates.length + 1;
     await rm(targetPackagePath, { recursive: true });
-    await waitForFilesystem(1_000);
+    await waitForWatchUpdates(
+      updates,
+      removalUpdateCount,
+      () => updates.at(-1)?.packages["watch-package"] === undefined,
+    );
     stop();
     expect(updates.at(-1)?.packages["watch-package"]).toBeUndefined();
   });
