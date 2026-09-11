@@ -1903,14 +1903,29 @@ export const makePiFamilyAdapter = (
         totalMessages: messages.length,
       });
     };
+    const offlineHistoryCache = new Map<string, ReadonlyArray<ProviderNativeHistoryMessage>>();
     const readNativeHistoryBySession = (input: {
       readonly sessionId: string;
       readonly cwd: string;
       readonly cursor?: string;
-    }): Effect.Effect<ProviderNativeHistoryPage, ProviderNativeSessionError> =>
-      readPiFamilyNativeHistoryMessages(config, input.sessionId, input.cwd).pipe(
-        Effect.flatMap((messages) => pageNativeHistory(messages, input.cursor, 256)),
+    }): Effect.Effect<ProviderNativeHistoryPage, ProviderNativeSessionError> => {
+      const cacheKey = `${config.instanceId}:${input.sessionId}`;
+      if (input.cursor === undefined) {
+        offlineHistoryCache.delete(cacheKey);
+      }
+      const cached = offlineHistoryCache.get(cacheKey);
+      if (cached !== undefined && input.cursor !== undefined) {
+        return pageNativeHistory(cached, input.cursor, 1024);
+      }
+      return readPiFamilyNativeHistoryMessages(config, input.sessionId, input.cwd).pipe(
+        Effect.tap((messages) =>
+          Effect.sync(() => {
+            offlineHistoryCache.set(cacheKey, messages);
+          }),
+        ),
+        Effect.flatMap((messages) => pageNativeHistory(messages, input.cursor, 1024)),
       );
+    };
     const readNativeHistory = (
       threadId: ThreadId,
       cursor?: string,
@@ -1927,6 +1942,9 @@ export const makePiFamilyAdapter = (
             message: `${config.runtime.toUpperCase()} did not report a native session id.`,
           });
         }
+        if (cursor === undefined) {
+          delete session.nativeHistoryMessages;
+        }
         const messages =
           session.nativeHistoryMessages ??
           (yield* readPiFamilyNativeHistoryMessages(
@@ -1935,7 +1953,7 @@ export const makePiFamilyAdapter = (
             session.session.cwd ?? config.cwd,
           ));
         session.nativeHistoryMessages = messages;
-        return yield* pageNativeHistory(messages, cursor);
+        return yield* pageNativeHistory(messages, cursor, 1024);
       });
     const readSubagentTranscript = (
       threadId: ThreadId,

@@ -468,6 +468,14 @@ async function findSessionFile(
   );
   return matching.sort(compareSessionCatalogEntries)[0]?.filePath;
 }
+export async function findPiFamilySessionFile(
+  config: PiFamilySessionCatalogConfig,
+  sessionId: string,
+  cwd: string,
+): Promise<string | undefined> {
+  const root = resolvePiFamilySessionDirectory(config);
+  return await findSessionFile(root, sessionId, cwd);
+}
 
 export function readPiFamilyNativeSubagentTranscript(
   config: PiFamilySessionCatalogConfig,

@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
@@ -1527,6 +1528,7 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
+              yield* nativeSessionCoordinator.syncThread(input.threadId).pipe(Effect.ignore);
               const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
                 event.aggregateKind === "thread" &&
                 event.aggregateId === input.threadId &&
@@ -1545,6 +1547,12 @@ const makeWsRpcLayer = (
               const liveBuffer = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
               yield* Effect.forkScoped(
                 liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+              );
+              yield* Effect.forkScoped(
+                Effect.repeat(
+                  nativeSessionCoordinator.syncThread(input.threadId).pipe(Effect.ignore),
+                  Schedule.spaced("1.5 seconds"),
+                ),
               );
               // Take the first queued event immediately, then include only
               // events already available up to the per-frame cap. This keeps

@@ -4,6 +4,7 @@ import {
   ChatImageAttachment,
   CommandId,
   ProjectId,
+  ProviderInstanceId,
   ProviderNativeSessionError,
   ProviderNativeSessionResumeCursor,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -596,6 +597,8 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       if (activeThread !== undefined && nativeThreadHasActiveTurn(activeThread)) {
         return { projectId: project.id, threadId };
       }
+      yield* syncThreadInternal(threadId);
+      return { projectId: project.id, threadId };
     }
     if (input.indexOnly === true) {
       const readNativeHistoryBySession = providerService.readNativeHistoryBySession;
@@ -704,6 +707,72 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
         binding.resumeCursor.sessionId === input.sessionId,
     )?.threadId;
   });
+  const syncThreadInternal = Effect.fn("NativeSessionCoordinator.syncThreadInternal")(function* (
+    threadId: ThreadId,
+  ) {
+    const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+    let providerInstanceId: string | undefined = binding?.providerInstanceId;
+    let sessionId: string | undefined =
+      binding !== undefined && isNativeResumeCursor(binding.resumeCursor)
+        ? binding.resumeCursor.sessionId
+        : undefined;
+
+    if (providerInstanceId === undefined || sessionId === undefined) {
+      const match = /^native:([^:]+):(.+)$/.exec(threadId);
+      if (match && match[1] && match[2]) {
+        providerInstanceId = match[1];
+        sessionId = match[2];
+      }
+    }
+
+    if (providerInstanceId === undefined || sessionId === undefined) {
+      return { synced: false };
+    }
+
+    const readNativeHistoryBySession = providerService.readNativeHistoryBySession;
+    if (readNativeHistoryBySession === undefined) {
+      return { synced: false };
+    }
+
+    const commandReadModel = yield* snapshots.getCommandReadModel();
+    const thread = commandReadModel.threads.find((t) => t.id === threadId);
+    let workspaceRoot = (binding?.runtimePayload as Record<string, unknown> | undefined)?.cwd as
+      | string
+      | undefined;
+    if (workspaceRoot === undefined && thread !== undefined) {
+      const project = commandReadModel.projects.find((p) => p.id === thread.projectId);
+      if (project !== undefined) {
+        workspaceRoot = project.workspaceRoot;
+      }
+    }
+    if (workspaceRoot === undefined) {
+      workspaceRoot = serverConfig.cwd;
+    }
+
+    const nativeHistoryMessageCount = yield* importHistory(threadId, (cursor) =>
+      readNativeHistoryBySession({
+        providerInstanceId: ProviderInstanceId.make(providerInstanceId!),
+        sessionId: sessionId!,
+        cwd: workspaceRoot!,
+        ...(cursor === undefined ? {} : { cursor }),
+      }),
+    ).pipe(Effect.orElseSucceed(() => undefined));
+
+    if (nativeHistoryMessageCount === undefined) {
+      return { synced: false };
+    }
+
+    const currentBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+    if (currentBinding !== undefined) {
+      const runtimePayload = asRecord(currentBinding.runtimePayload);
+      yield* directory.upsert({
+        ...currentBinding,
+        runtimePayload: { ...runtimePayload, nativeHistoryMessageCount },
+      });
+    }
+
+    return { synced: true, messageCount: nativeHistoryMessageCount };
+  });
 
   const renameInternal = Effect.fn("NativeSessionCoordinator.renameInternal")(function* (
     input: ProviderNativeSessionRenameInput,
@@ -802,6 +871,10 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     list: (input) => listInternal(input).pipe(Effect.mapError(asNativeSessionError)),
     open: (input) =>
       openSemaphore.withPermits(1)(openInternal(input)).pipe(Effect.mapError(asNativeSessionError)),
+    syncThread: (threadId) =>
+      openSemaphore
+        .withPermits(1)(syncThreadInternal(threadId))
+        .pipe(Effect.mapError(asNativeSessionError)),
     rename: (input) =>
       openSemaphore
         .withPermits(1)(renameInternal(input))

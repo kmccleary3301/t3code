@@ -14,7 +14,13 @@ import {
   type ProviderNativeSessionStopResult,
   type ProviderSubagentTranscriptReadInput,
   type ProviderSubagentTranscriptReadResult,
+  type ThreadId,
 } from "@t3tools/contracts";
+
+export interface ProviderNativeSessionSyncResult {
+  readonly synced: boolean;
+  readonly messageCount?: number;
+}
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
@@ -25,6 +31,9 @@ export interface NativeSessionCoordinatorShape {
   readonly open: (
     input: ProviderNativeSessionOpenInput,
   ) => Effect.Effect<ProviderNativeSessionOpenResult, ProviderNativeSessionError>;
+  readonly syncThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderNativeSessionSyncResult, ProviderNativeSessionError>;
   readonly rename: (
     input: ProviderNativeSessionRenameInput,
   ) => Effect.Effect<ProviderNativeSessionRenameResult, ProviderNativeSessionError>;
@@ -60,6 +69,7 @@ export class NativeSessionCoordinator extends Context.Reference<NativeSessionCoo
             message: "Native session coordination is unavailable.",
           }),
         ),
+      syncThread: () => Effect.succeed({ synced: false }),
       rename: () =>
         Effect.fail(
           new ProviderNativeSessionError({

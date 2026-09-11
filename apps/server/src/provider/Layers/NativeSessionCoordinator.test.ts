@@ -1,8 +1,9 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
-import { ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -14,6 +15,14 @@ import {
   materializeNativeHistoryImages,
   nativeThreadHasActiveTurn,
 } from "./NativeSessionCoordinator.ts";
+import { NativeSessionCoordinatorLive } from "./NativeSessionCoordinator.ts";
+import * as ProviderService from "../Services/ProviderService.ts";
+import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
+import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
+import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import * as NativeSessionCoordinator from "../Services/NativeSessionCoordinator.ts";
 
 const nativeImageTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-native-history-image-",
@@ -158,4 +167,101 @@ describe("nativeThreadHasActiveTurn", () => {
     expect(nativeThreadHasActiveTurn({ session: null })).toBe(false);
     expect(nativeThreadHasActiveTurn(undefined)).toBe(false);
   });
+});
+
+describe("NativeSessionCoordinator syncThread", () => {
+  it.effect("defaults to unsynced for unbound or uncoordinated threads", () =>
+    Effect.gen(function* () {
+      const coordinator = NativeSessionCoordinator.NativeSessionCoordinator.defaultValue();
+      const result = yield* coordinator.syncThread(ThreadId.make("thread-1"));
+      expect(result).toEqual({ synced: false });
+    }),
+  );
+
+  it.effect("syncs bound native session threads and imports history", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: any[] = [];
+      const mockProviderService = Layer.succeed(ProviderService.ProviderService, {
+        readNativeHistoryBySession: vi.fn(({ sessionId }: { sessionId: string }) =>
+          Effect.succeed({
+            messages: [
+              {
+                role: "user" as const,
+                text: `synced message for ${sessionId}`,
+                timestamp: "2026-09-11T12:00:00.000Z",
+              },
+            ],
+            totalMessages: 1,
+          }),
+        ),
+      } as unknown as ProviderService.ProviderServiceShape);
+      const mockProviderRegistry = Layer.succeed(ProviderRegistry.ProviderRegistry, {
+        getProviders: Effect.succeed([]),
+      } as unknown as ProviderRegistry.ProviderRegistryShape);
+      const mockDirectory = Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, {
+        getBinding: vi.fn((threadId: ThreadId) =>
+          threadId === "native:omp:session-1"
+            ? Effect.succeed(
+                Option.some({
+                  threadId,
+                  provider: ProviderDriverKind.make("omp"),
+                  providerInstanceId: ProviderInstanceId.make("omp"),
+                  runtimeMode: "full-access" as const,
+                  status: "stopped" as const,
+                  resumeCursor: {
+                    kind: "native-session" as const,
+                    runtime: "omp" as const,
+                    sessionId: "session-1",
+                  },
+                  runtimePayload: { cwd: "/workspace" },
+                }),
+              )
+            : Effect.succeed(Option.none()),
+        ),
+        upsert: vi.fn(() => Effect.void),
+        listBindings: vi.fn(() => Effect.succeed([])),
+      } as unknown as ProviderSessionDirectory.ProviderSessionDirectoryShape);
+      const mockSnapshots = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        getCommandReadModel: () => Effect.succeed({ threads: [], projects: [] }),
+        getThreadDetailById: () => Effect.succeed(Option.none()),
+      } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQueryShape);
+      const mockTurnRepo = Layer.succeed(ProjectionTurnRepository, {
+        listByThreadId: () => Effect.succeed([]),
+      } as unknown as any);
+      const mockEngine = Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
+        dispatch: vi.fn((cmd: any) => {
+          dispatchedCommands.push(cmd);
+          return Effect.void;
+        }),
+      } as unknown as OrchestrationEngine.OrchestrationEngineShape);
+
+      const testLayer = NativeSessionCoordinatorLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            mockProviderService,
+            mockProviderRegistry,
+            mockDirectory,
+            mockSnapshots,
+            mockTurnRepo,
+            mockEngine,
+            nativeImageTestLayer,
+          ),
+        ),
+      );
+      const coordinator = yield* NativeSessionCoordinator.NativeSessionCoordinator.pipe(
+        Effect.provide(testLayer),
+      );
+      const nonNative = yield* coordinator.syncThread(ThreadId.make("thread-regular"));
+      expect(nonNative).toEqual({ synced: false });
+
+      const nativeSync = yield* coordinator.syncThread(ThreadId.make("native:omp:session-1"));
+      expect(nativeSync).toEqual({ synced: true, messageCount: 1 });
+      expect(dispatchedCommands.some((c) => c.type === "thread.native-history.import")).toBe(true);
+
+      const unboundNativeSync = yield* coordinator.syncThread(
+        ThreadId.make("native:omp:session-2"),
+      );
+      expect(unboundNativeSync).toEqual({ synced: true, messageCount: 1 });
+    }),
+  );
 });
