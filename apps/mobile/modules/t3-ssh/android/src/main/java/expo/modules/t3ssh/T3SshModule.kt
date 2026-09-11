@@ -1,3 +1,13 @@
+@file:Suppress(
+  "CyclomaticComplexMethod",
+  "InstanceOfCheckForException",
+  "LongMethod",
+  "ReturnCount",
+  "SwallowedException",
+  "TooGenericExceptionCaught",
+  "TooGenericExceptionThrown",
+)
+
 package expo.modules.t3ssh
 
 import android.util.Base64
