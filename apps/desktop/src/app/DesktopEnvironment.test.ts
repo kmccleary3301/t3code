@@ -93,7 +93,7 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.isDevelopment, false);
-      assert.equal(environment.displayName, "KM Code (Local)");
+      assert.equal(environment.displayName, "KM Code");
       assert.equal(environment.legacyUserDataDirName, "T3 Code (Alpha)");
       assert.equal(environment.stateDir, "/tmp/t3/userdata");
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");

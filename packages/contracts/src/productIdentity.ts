@@ -91,5 +91,5 @@ export function resolveProductDisplayName(
   stage: ProductBuildStage,
 ): string {
   const identity = resolveProductIdentity(profile);
-  return `${identity.baseName} (${stage})`;
+  return stage === "Local" ? identity.baseName : `${identity.baseName} (${stage})`;
 }

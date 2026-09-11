@@ -3199,7 +3199,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "KM Code desktop build",
-    author: "T3 Tools",
+    author: BUILD_PRODUCT_PROFILE === "pi-omp" ? "Kyle McCleary" : "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,

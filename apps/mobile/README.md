@@ -12,7 +12,7 @@ This app has three variants:
 
 - `development`: Expo dev client, installable side-by-side as `KM Code (Dev)`
 - `preview`: persistent internal preview build, installable side-by-side as `KM Code (Preview)`
-- `production`: local/store-style build as `KM Code (Local)`
+- `production`: local/store-style build as `KM Code`
 
 Run commands from `apps/mobile`.
 

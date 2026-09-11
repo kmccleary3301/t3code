@@ -40,8 +40,8 @@ it("keeps legacy display names available for state migration", () => {
   );
 });
 
-it("formats profile names with the stage qualifier owned by the contract", () => {
-  assert.equal(resolveProductDisplayName("upstream", "Local"), "KM Code (Local)");
+it("uses the unqualified stable name and qualifies non-stable stages", () => {
+  assert.equal(resolveProductDisplayName("upstream", "Local"), "KM Code");
   assert.equal(resolveProductDisplayName("pi-omp", "Nightly"), "KM Code (Nightly)");
 });
 
