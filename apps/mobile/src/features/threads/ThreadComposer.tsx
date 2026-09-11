@@ -8,6 +8,7 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import {
@@ -40,6 +41,7 @@ import Animated, {
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { useThreadDetail } from "../../state/use-thread-detail";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
@@ -342,6 +344,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  const threadDetailState = useThreadDetail({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+  });
+  const threadActivities = Option.getOrNull(threadDetailState.data)?.activities ?? null;
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
 
   const composerMenu = useComposerCommandMenu({
@@ -350,6 +357,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     environmentId: props.environmentId,
     projectCwd: props.projectCwd,
     selectedProviderStatus,
+    threadActivities,
     hasThread: true,
     onChangeDraftMessage: props.onChangeDraftMessage,
     onUpdateInteractionMode: props.onUpdateInteractionMode,
@@ -446,7 +454,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       armAgentAwarenessLiveActivityForLocalWork({
         environmentId: props.environmentId,
         threadTitle: props.selectedThread.title,
-        projectTitle: props.environmentLabel ?? "T3 Code",
+        projectTitle: props.environmentLabel ?? "KM Code",
       });
     } finally {
       inFlightThreadIdsRef.current.delete(threadKey);
@@ -572,12 +580,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         className="relative w-full self-center"
         style={{ maxWidth: props.contentMaxWidth }}
       >
-        {!voiceInput.isBusy && composerMenu.trigger && composerMenu.items.length > 0 ? (
+        {!voiceInput.isBusy &&
+        composerMenu.trigger &&
+        (composerMenu.items.length > 0 || composerMenu.isLoading || composerMenu.error !== null) ? (
           <View className="absolute inset-x-0 bottom-full z-10 mb-2">
             <ComposerCommandPopover
               items={composerMenu.items}
               triggerKind={composerMenu.trigger.kind}
               isLoading={composerMenu.isLoading}
+              error={composerMenu.error}
               onSelect={composerMenu.onSelect}
             />
           </View>

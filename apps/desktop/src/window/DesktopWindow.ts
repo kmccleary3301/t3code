@@ -10,7 +10,11 @@ import * as Electron from "electron";
 
 import type { AppearancePersistedState } from "@t3tools/client-runtime/appearance";
 import { resolveAppearanceState } from "@t3tools/client-runtime/appearance";
-import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  parseProductProfile,
+  resolveProductIdentity,
+} from "@t3tools/contracts";
 import {
   HostProcessArguments,
   HostProcessEnvironment,
@@ -40,6 +44,9 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import { makeQuitHoldHandler } from "./QuitHold.ts";
 
 const TITLEBAR_HEIGHT = 40;
+const DESKTOP_PRODUCT_NAME = resolveProductIdentity(
+  parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+).baseName;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
@@ -52,7 +59,7 @@ const RENDERER_RECOVERY_WINDOW_MS = 60_000;
 const APPEARANCE_STARTUP_TIMEOUT_MS = 30_000;
 const APPEARANCE_RECOVERY_DOCUMENT_TIMEOUT_MS = 2_000;
 const APPEARANCE_RECOVERY_DOCUMENT_URL = `data:text/html;charset=utf-8,${encodeURIComponent(
-  `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>T3 Code recovery</title><style>html{color-scheme:light dark;background:Canvas;color:CanvasText;font:16px system-ui}body{min-height:100vh;margin:0;display:grid;place-items:center}main{max-width:32rem;padding:2rem}</style></head><body><main role="alert"><h1>T3 Code could not start</h1><p>Close and reopen the app to try again. Use appearance safe mode if the problem continues.</p></main></body></html>`,
+  `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>${DESKTOP_PRODUCT_NAME} recovery</title><style>html{color-scheme:light dark;background:Canvas;color:CanvasText;font:16px system-ui}body{min-height:100vh;margin:0;display:grid;place-items:center}main{max-width:32rem;padding:2rem}</style></head><body><main role="alert"><h1>${DESKTOP_PRODUCT_NAME} could not start</h1><p>Close and reopen the app to try again. Use appearance safe mode if the problem continues.</p></main></body></html>`,
 )}`;
 const SAFE_APPEARANCE_STATE: AppearancePersistedState = {
   revision: 0,

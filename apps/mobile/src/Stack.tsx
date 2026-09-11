@@ -30,9 +30,11 @@ import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
+import { AgentsRouteScreen } from "./features/threads/AgentsRouteScreen";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
+import { ConnectionsSshRouteScreen } from "./features/connection/ConnectionsSshRouteScreen";
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
@@ -480,6 +482,11 @@ export const RootStack = createNativeStackNavigator({
       linking: THREAD_LINKING_PREFIX,
       options: GLASS_HEADER_OPTIONS,
     }),
+    ThreadAgents: createNativeStackScreen({
+      screen: AgentsRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/agents`,
+      options: SOLID_HEADER_OPTIONS,
+    }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/terminal`,
@@ -627,6 +634,15 @@ export const RootStack = createNativeStackNavigator({
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.7],
+        sheetGrabberVisible: true,
+      },
+    }),
+    ConnectionsSsh: createNativeStackScreen({
+      screen: ConnectionsSshRouteScreen,
+      linking: "connections/ssh",
+      options: {
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        sheetAllowedDetents: [0.75, 0.95],
         sheetGrabberVisible: true,
       },
     }),

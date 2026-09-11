@@ -14,8 +14,11 @@ import {
   NonNegativeInt,
   ThreadId,
   ProviderInterruptTurnInput,
+  ProviderNativeCommandError,
+  ProviderNativeCommandsInput,
   ProviderNativeSessionError,
   ProviderNativeSessionListInput,
+  ProviderNativeSessionResumeCursor,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
@@ -137,6 +140,8 @@ function toRuntimeStatus(session: ProviderSession): "starting" | "running" | "st
       return "running";
   }
 }
+
+const isNativeSessionCursor = Schema.is(ProviderNativeSessionResumeCursor);
 
 function toRuntimePayloadFromSession(
   session: ProviderSession,
@@ -533,6 +538,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId: input.threadId,
         runtimeMode: binding.runtimeMode,
         isActive: false,
+        binding,
       } as const;
     }
 
@@ -621,7 +627,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (!instanceInfo.enabled) {
           return yield* toValidationError(
             "ProviderService.startSession",
-            `Provider instance '${resolvedInstanceId}' is disabled in T3 Code settings.`,
+            `Provider instance '${resolvedInstanceId}' is disabled in KM Code settings.`,
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
@@ -1081,6 +1087,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
+  const discoverNativeCommands: ProviderServiceMethod<"discoverNativeCommands"> = Effect.fn(
+    "discoverNativeCommands",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.discoverNativeCommands",
+      schema: ProviderNativeCommandsInput,
+      payload: rawInput,
+    });
+    const adapter = yield* registry.getByInstance(input.providerInstanceId).pipe(
+      Effect.mapError(
+        () =>
+          new ProviderNativeCommandError({
+            code: "unknown",
+            message: `Unknown provider instance '${input.providerInstanceId}'.`,
+          }),
+      ),
+    );
+    if (adapter.discoverNativeCommands === undefined) {
+      return yield* new ProviderNativeCommandError({
+        code: "unsupported",
+        message: `Provider '${adapter.provider}' does not support native command discovery.`,
+      });
+    }
+    return yield* adapter.discoverNativeCommands(input);
+  });
+
   const listNativeSessions: ProviderServiceMethod<"listNativeSessions"> = Effect.fn(
     "listNativeSessions",
   )(function* (rawInput) {
@@ -1139,6 +1171,26 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       operation: "ProviderService.readSubagentTranscript",
       allowRecovery: false,
     });
+    if (!routed.isActive && routed.adapter.readSubagentTranscriptBySession !== undefined) {
+      const nativeCursor = routed.binding.resumeCursor;
+      const cwd = readPersistedCwd(routed.binding.runtimePayload);
+      if (
+        !isNativeSessionCursor(nativeCursor) ||
+        nativeCursor.runtime !== routed.adapter.provider ||
+        cwd === undefined
+      ) {
+        return yield* new ProviderNativeSessionError({
+          code: "invalid",
+          message: `Thread '${input.threadId}' has no usable native session identity and workspace.`,
+        });
+      }
+      return yield* routed.adapter.readSubagentTranscriptBySession({
+        sessionId: nativeCursor.sessionId,
+        subagentId: input.subagentId,
+        cwd,
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      });
+    }
     if (routed.adapter.readSubagentTranscript === undefined) {
       return yield* new ProviderNativeSessionError({
         code: "unsupported",
@@ -1383,6 +1435,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getCapabilities,
     getInstanceInfo,
     listNativeSessions,
+    discoverNativeCommands,
     readNativeHistory,
     readNativeHistoryBySession,
     readSubagentTranscript,

@@ -40,6 +40,10 @@ export function serializeComposerFileLink(path: string): string {
   return `[${label}](${encodeMarkdownLinkDestination(path)})`;
 }
 
+export function providerSlashCommandInsertText(commandName: string, executable?: boolean): string {
+  return commandName === "skill:" && executable === false ? "/skill:" : `/${commandName} `;
+}
+
 function clampCursor(text: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return text.length;
   return Math.max(0, Math.min(text.length, Math.floor(cursor)));

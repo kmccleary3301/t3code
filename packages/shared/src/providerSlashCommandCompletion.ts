@@ -1,4 +1,83 @@
-import type { ServerProviderSlashCommand, ServerProviderSlashSubcommand } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  ServerProviderSlashCommand,
+  type OrchestrationThreadActivity,
+  type ServerProviderSlashSubcommand,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+export const ProviderCommandCatalog = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  slashCommands: Schema.Array(ServerProviderSlashCommand),
+});
+export const isProviderCommandCatalog = Schema.is(ProviderCommandCatalog);
+
+export function slashCommandFuzzyMatch(query: string, target: string): boolean {
+  if (query.length === 0) return true;
+  if (query.length > target.length) return false;
+
+  let queryIndex = 0;
+  for (const character of target) {
+    if (character === query[queryIndex]) {
+      queryIndex += 1;
+      if (queryIndex === query.length) return true;
+    }
+  }
+  return false;
+}
+
+export function slashCommandFuzzyScore(query: string, target: string): number {
+  if (query.length === 0) return 1;
+  if (target === query) return 100;
+  if (target.startsWith(query)) return 80;
+  if (target.includes(query)) return 60;
+
+  let queryIndex = 0;
+  let gaps = 0;
+  let lastMatchIndex = -1;
+  for (
+    let targetIndex = 0;
+    targetIndex < target.length && queryIndex < query.length;
+    targetIndex += 1
+  ) {
+    if (query[queryIndex] !== target[targetIndex]) continue;
+    if (lastMatchIndex >= 0 && targetIndex - lastMatchIndex > 1) gaps += 1;
+    lastMatchIndex = targetIndex;
+    queryIndex += 1;
+  }
+  if (queryIndex !== query.length) return 0;
+  return Math.max(1, 40 - gaps * 5);
+}
+
+export function scoreSlashCommandTextMatch(query: string, target: string): number {
+  if (query.length === 0) return 1;
+  if (query === target) return 1000;
+  if (target.startsWith(query)) return 900;
+  return slashCommandFuzzyMatch(query, target) ? slashCommandFuzzyScore(query, target) : 0;
+}
+
+export function slashCommandSkillBreakoutTier(lowerPrefix: string, lowerTarget: string): number {
+  if (lowerPrefix === lowerTarget) return 1000;
+  if (lowerTarget.startsWith(lowerPrefix)) return 900;
+  return 0;
+}
+
+export function providerSlashCommandsFromActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  providerInstanceId: ProviderInstanceId,
+): ReadonlyArray<ServerProviderSlashCommand> | undefined {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (
+      activity?.kind === "provider.commands.updated" &&
+      isProviderCommandCatalog(activity.payload) &&
+      activity.payload.providerInstanceId === providerInstanceId
+    ) {
+      return activity.payload.slashCommands;
+    }
+  }
+  return undefined;
+}
 
 export interface ProviderSlashArgumentCompletion {
   readonly key: string;
@@ -81,7 +160,9 @@ export function buildProviderSlashArgumentCompletions(input: {
   const commandSpace = input.query.indexOf(" ");
   if (commandSpace === -1) return null;
   const commandName = input.query.slice(0, commandSpace);
-  const command = input.commands.find((candidate) => candidate.name === commandName);
+  const command = input.commands.find(
+    (candidate) => candidate.name === commandName || candidate.aliases?.includes(commandName),
+  );
   if (!command) return { items: [], searchQuery: "" };
 
   const argumentText = input.query.slice(commandSpace + 1).trimStart();
@@ -91,16 +172,19 @@ export function buildProviderSlashArgumentCompletions(input: {
     .find((candidate) => argumentText.startsWith(`${candidate.name} `));
   if (!selectedSubcommand) {
     if (subcommands.length > 0) {
+      const lowerPrefix = argumentText.toLowerCase();
       return {
-        items: subcommands.map((subcommand) => ({
-          key: `${command.name}:${subcommand.name}`,
-          command,
-          insertText: `/${command.name} ${subcommand.name} `,
-          searchValue: subcommand.name,
-          label: `/${command.name} ${subcommand.name}`,
-          description: subcommandDescription(subcommand),
-        })),
-        searchQuery: argumentText,
+        items: subcommands
+          .filter((subcommand) => subcommand.name.toLowerCase().startsWith(lowerPrefix))
+          .map((subcommand) => ({
+            key: `${commandName}:${subcommand.name}`,
+            command,
+            insertText: `/${commandName} ${subcommand.name} `,
+            searchValue: subcommand.name,
+            label: `/${commandName} ${subcommand.name}`,
+            description: subcommandDescription(subcommand),
+          })),
+        searchQuery: "",
       };
     }
 
@@ -110,9 +194,9 @@ export function buildProviderSlashArgumentCompletions(input: {
     if (!choices) return { items: [], searchQuery: "" };
     return {
       items: choices.values.map((value) => ({
-        key: `${command.name}:${value}`,
+        key: `${commandName}:${value}`,
         command,
-        insertText: `/${command.name} ${choices.insertionPrefix}${value} `,
+        insertText: `/${commandName} ${choices.insertionPrefix}${value} `,
         searchValue: value,
         label: value,
         description: command.description ?? command.input?.hint ?? "Native command argument",
@@ -127,9 +211,9 @@ export function buildProviderSlashArgumentCompletions(input: {
   if (!choices) return { items: [], searchQuery: "" };
   return {
     items: choices.values.map((value) => ({
-      key: `${command.name}:${selectedSubcommand.name}:${value}`,
+      key: `${commandName}:${selectedSubcommand.name}:${value}`,
       command,
-      insertText: `/${command.name} ${selectedSubcommand.name} ${choices.insertionPrefix}${value} `,
+      insertText: `/${commandName} ${selectedSubcommand.name} ${choices.insertionPrefix}${value} `,
       searchValue: value,
       label: value,
       description: subcommandDescription(selectedSubcommand),

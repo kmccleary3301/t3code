@@ -550,7 +550,7 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Server URL",
-        description: "Leave blank to let T3 Code spawn the server when needed.",
+        description: "Leave blank to let KM Code spawn the server when needed.",
         providerSettingsForm: {
           placeholder: "http://127.0.0.1:4096",
           clearWhenEmpty: "omit",
@@ -611,7 +611,7 @@ const makePiFamilySettingsFields = (binaryFallback: string) => ({
     Schema.annotateKey({
       title: "Working directory",
       description:
-        "Working directory for native processes in this instance. Leave empty to use the T3 server working directory.",
+        "Working directory for native processes in this instance. Leave empty to use the KM Code server working directory.",
       providerSettingsForm: {
         placeholder: "/path/to/workspace",
         clearWhenEmpty: "omit",

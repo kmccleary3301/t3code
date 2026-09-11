@@ -213,18 +213,22 @@ export function mapPiFamilySlashCommands(rows: unknown): ReadonlyArray<ServerPro
     );
   }
 
-  const discovered: Array<{
-    readonly command: ServerProviderSlashCommand;
-    readonly aliases: ReadonlyArray<string>;
-  }> = [];
-  const primaryNames = new Set<string>();
+  const slashCommands: ServerProviderSlashCommand[] = [];
   for (const row of rows) {
     const nativeCommand = asRecord(row);
     const name = nonEmptyString(nativeCommand?.name);
-    if (name === undefined || primaryNames.has(name)) continue;
-    primaryNames.add(name);
+    if (name === undefined) continue;
+
     const description = nonEmptyString(nativeCommand?.description);
+    const matchDescription = nonEmptyString(nativeCommand?.matchDescription);
     const hint = nonEmptyString(asRecord(nativeCommand?.input)?.hint);
+    const icon = nonEmptyString(nativeCommand?.icon);
+    const usage =
+      typeof nativeCommand?.usage === "number" &&
+      Number.isInteger(nativeCommand.usage) &&
+      nativeCommand.usage >= 0
+        ? nativeCommand.usage
+        : undefined;
     const subcommands = Array.isArray(nativeCommand?.subcommands)
       ? nativeCommand.subcommands.flatMap((entry) => {
           const nativeSubcommand = asRecord(entry);
@@ -249,27 +253,29 @@ export function mapPiFamilySlashCommands(rows: unknown): ReadonlyArray<ServerPro
           return normalized === undefined ? [] : [normalized];
         })
       : [];
-    discovered.push({
-      command: {
-        name,
-        ...(description === undefined ? {} : { description }),
-        ...(hint === undefined ? {} : { input: { hint } }),
-        ...(subcommands.length === 0 ? {} : { subcommands }),
-      },
-      aliases,
+    const source =
+      nativeCommand?.source === "builtin" ||
+      nativeCommand?.source === "skill" ||
+      nativeCommand?.source === "extension" ||
+      nativeCommand?.source === "custom" ||
+      nativeCommand?.source === "mcp_prompt" ||
+      nativeCommand?.source === "file"
+        ? nativeCommand.source
+        : undefined;
+    slashCommands.push({
+      name,
+      ...(aliases.length === 0 ? {} : { aliases }),
+      ...(description === undefined ? {} : { description }),
+      ...(matchDescription === undefined ? {} : { matchDescription }),
+      ...(hint === undefined ? {} : { input: { hint } }),
+      ...(subcommands.length === 0 ? {} : { subcommands }),
+      ...(source === undefined ? {} : { source }),
+      ...(typeof nativeCommand?.executable === "boolean"
+        ? { executable: nativeCommand.executable }
+        : {}),
+      ...(icon === undefined ? {} : { icon }),
+      ...(usage === undefined ? {} : { usage }),
     });
-  }
-
-  const slashCommands: ServerProviderSlashCommand[] = [];
-  const emittedNames = new Set<string>();
-  for (const { command, aliases } of discovered) {
-    slashCommands.push(command);
-    emittedNames.add(command.name);
-    for (const alias of aliases) {
-      if (primaryNames.has(alias) || emittedNames.has(alias)) continue;
-      slashCommands.push({ ...command, name: alias });
-      emittedNames.add(alias);
-    }
   }
   return slashCommands;
 }
@@ -286,14 +292,21 @@ export function modelDiscoverySnapshotMessage(provider: string, error: unknown):
       : `${provider} native runtime is unsupported.`;
   }
   if (code === "protocol") {
-    return `${provider} returned invalid native RPC data. Configure a release in T3's supported compatibility range and refresh models.`;
+    return `${provider} returned invalid native RPC data. Configure a release in KM Code's supported compatibility range and refresh models.`;
   }
   if (code === "limit") return `${provider} model discovery exceeded its output limit.`;
   return `${provider} model discovery failed.`;
 }
 
-export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(function* (
+export const discoverPiFamilyModels = (config: PiFamilyModelDiscoveryConfig) =>
+  discoverPiFamilyCatalog(config, "models");
+
+export const discoverPiFamilyCommands = (config: PiFamilyModelDiscoveryConfig) =>
+  discoverPiFamilyCatalog(config, "commands").pipe(Effect.map((result) => result.slashCommands));
+
+const discoverPiFamilyCatalog = Effect.fn("discoverPiFamilyCatalog")(function* (
   config: PiFamilyModelDiscoveryConfig,
+  contents: "models" | "commands",
 ) {
   const requestTimeoutMs = boundedTimeout(config.requestTimeoutMs, 1);
   const startupTimeoutMs = boundedTimeout(config.startupTimeoutMs, 1);
@@ -308,10 +321,10 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
         ...config.environment,
         ...(config.agentDirectory ? { PI_CODING_AGENT_DIR: config.agentDirectory } : {}),
       };
-      const launchArguments = resolvePiFamilyLaunchArguments(
-        config.launchArguments,
-        config.trustMode,
-      );
+      const launchArguments = [
+        ...resolvePiFamilyLaunchArguments(config.launchArguments, config.trustMode),
+        "--no-session",
+      ];
       const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, launchArguments, {
         env: environment,
         extendEnv: true,
@@ -340,6 +353,7 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
         config.runtime === "omp"
           ? yield* Deferred.make<void, PiFamilyModelDiscoveryError>()
           : undefined;
+      let ompAvailableCommands: ReadonlyArray<unknown> | undefined;
       const decoder = new StrictJsonlDecoder(
         Math.min(Math.max(1, config.maxLineBytes), MAX_DISCOVERY_LINE_BYTES),
       );
@@ -381,6 +395,18 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
               catch: (cause) => asError(cause),
             });
             if (ready) yield* Deferred.succeed(ready, undefined).pipe(Effect.ignore);
+            return;
+          }
+          if (config.runtime === "omp" && frame.type === "available_commands_update") {
+            if (!Array.isArray(frame.commands)) {
+              return yield* Effect.fail(
+                new PiFamilyModelDiscoveryError(
+                  "protocol",
+                  "OMP emitted a malformed available command update.",
+                ),
+              );
+            }
+            ompAvailableCommands = frame.commands;
             return;
           }
           if (frame.type !== "response") return;
@@ -589,49 +615,56 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
         );
       }
 
-      const stateResponse = yield* request("get_state", { type: "get_state" });
-      const modelsResponse = yield* request("get_available_models", {
-        type: "get_available_models",
-      });
-      const stateData = asRecord(stateResponse.data);
-      const modelsData = asRecord(modelsResponse.data);
-      if (!stateData || !modelsData || !Array.isArray(modelsData.models)) {
-        return yield* Effect.fail(
-          new PiFamilyModelDiscoveryError(
-            "protocol",
-            "Native model discovery returned malformed response data.",
-          ),
-        );
+      let models: ReadonlyArray<ServerProviderModel> = [];
+      if (contents === "models") {
+        const stateResponse = yield* request("get_state", { type: "get_state" });
+        const modelsResponse = yield* request("get_available_models", {
+          type: "get_available_models",
+        });
+        const stateData = asRecord(stateResponse.data);
+        const modelsData = asRecord(modelsResponse.data);
+        if (!stateData || !modelsData || !Array.isArray(modelsData.models)) {
+          return yield* Effect.fail(
+            new PiFamilyModelDiscoveryError(
+              "protocol",
+              "Native model discovery returned malformed response data.",
+            ),
+          );
+        }
+        models = yield* Effect.try({
+          try: () =>
+            mapPiFamilyModels({
+              runtime: config.runtime,
+              rows: modelsData.models,
+              currentModel: stateData.model,
+              currentThinkingLevel: stateData.thinkingLevel,
+            }),
+          catch: (cause) =>
+            cause instanceof PiFamilyModelDiscoveryError
+              ? cause
+              : new PiFamilyModelDiscoveryError(
+                  "protocol",
+                  "Native model discovery returned invalid model data.",
+                ),
+        });
       }
-      const models = yield* Effect.try({
-        try: () =>
-          mapPiFamilyModels({
-            runtime: config.runtime,
-            rows: modelsData.models,
-            currentModel: stateData.model,
-            currentThinkingLevel: stateData.thinkingLevel,
-          }),
-        catch: (cause) =>
-          cause instanceof PiFamilyModelDiscoveryError
-            ? cause
-            : new PiFamilyModelDiscoveryError(
-                "protocol",
-                "Native model discovery returned invalid model data.",
-              ),
-      });
-      const commandRequest = config.runtime === "omp" ? "get_available_commands" : "get_commands";
-      const commandsResponse = yield* request(commandRequest, { type: commandRequest });
-      const commandsData = asRecord(commandsResponse.data);
-      if (!commandsData || !Array.isArray(commandsData.commands)) {
-        return yield* Effect.fail(
-          new PiFamilyModelDiscoveryError(
-            "protocol",
-            "Native command discovery returned malformed response data.",
-          ),
-        );
+      let commandRows = ompAvailableCommands;
+      if (commandRows === undefined) {
+        const commandRequest = config.runtime === "omp" ? "get_available_commands" : "get_commands";
+        const commandsResponse = yield* request(commandRequest, { type: commandRequest });
+        const commandsData = asRecord(commandsResponse.data);
+        if (!commandsData || !Array.isArray(commandsData.commands)) {
+          return yield* Effect.fail(
+            new PiFamilyModelDiscoveryError(
+              "protocol",
+              "Native command discovery returned malformed response data.",
+            ),
+          );
+        }
+        commandRows = commandsData.commands;
       }
       const slashCommands = yield* Effect.try({
-        try: () => mapPiFamilySlashCommands(commandsData.commands),
+        try: () => mapPiFamilySlashCommands(commandRows),
         catch: (cause) =>
           cause instanceof PiFamilyModelDiscoveryError
             ? cause

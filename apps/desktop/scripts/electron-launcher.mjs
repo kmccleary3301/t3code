@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "T3 Code (Dev)" instead of "electron"
+// This file mostly exists so development builds use the KM Code identity instead of Electron.
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -7,26 +7,28 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
+import {
+  parseProductProfile,
+  resolveProductDisplayName,
+  resolveProductIdentity,
+} from "@t3tools/contracts";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const isPiOmpProfile = process.env.T3_PRODUCT_PROFILE?.trim() === "pi-omp";
-const productBaseName = isPiOmpProfile ? "T3 Code Pi + OMP" : "T3 Code";
-const productBundleId = isPiOmpProfile ? "com.t3tools.t3code.piomp" : "com.t3tools.t3code";
-const productSchemes = isPiOmpProfile
-  ? ["t3code-pi-omp", "t3code-pi-omp-dev"]
-  : ["t3code", "t3code-dev"];
+const productIdentity = resolveProductIdentity(parseProductProfile(process.env.T3_PRODUCT_PROFILE));
+const productSchemes = [productIdentity.productionScheme, productIdentity.developmentScheme];
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 export const desktopDir = NodePath.resolve(__dirname, "..");
 const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export const APP_DISPLAY_NAME = isDevelopment
-  ? `${productBaseName} (Dev)`
-  : `${productBaseName} (Alpha)`;
+export const APP_DISPLAY_NAME = resolveProductDisplayName(
+  productIdentity.profile,
+  isDevelopment ? "Dev" : "Local",
+);
 export const APP_BUNDLE_ID = isDevelopment
-  ? `${productBundleId}.dev.${devBundleIdSuffix || "local"}`
-  : productBundleId;
+  ? `${productIdentity.bundleIdentifier}.dev.${devBundleIdSuffix || "local"}`
+  : productIdentity.bundleIdentifier;
 const APP_PROTOCOL_SCHEMES = isDevelopment ? [productSchemes[1]] : [productSchemes[0]];
 const LAUNCHER_VERSION = 15;
 const developmentMacIconPngPath = NodePath.join(
@@ -356,7 +358,7 @@ function buildMacLauncher(electronBinaryPath) {
   if (isDevelopment) {
     // Keep Electron's native executable inside the branded bundle. Launching the
     // node_modules copy makes macOS associate the process (and Dock label) with
-    // Electron.app even though this bundle's Info.plist has the T3 Code name.
+    // Electron.app even though this bundle's Info.plist has the KM Code name.
     // Its conventional executable name also keeps Electron's default-app runtime
     // in development mode instead of making app.isPackaged report true.
     writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath);

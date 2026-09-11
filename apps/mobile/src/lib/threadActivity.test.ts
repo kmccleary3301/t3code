@@ -433,7 +433,7 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
-  it("collapses matching tool lifecycle rows like desktop", () => {
+  it("keeps a native tool started row through completion without duplicate rows", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-2"),
       projectId: ProjectId.make("project-1"),
@@ -448,6 +448,20 @@ describe("buildThreadFeed", () => {
       },
       activities: [
         makeActivity({
+          id: EventId.make("tool-started"),
+          kind: "tool.started",
+          tone: "tool",
+          summary: "Run tests started",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            toolCallId: "call-1",
+            title: "Run tests",
+            itemType: "command_execution",
+            detail: "/bin/zsh -lc 'bun run test'",
+          },
+        }),
+        makeActivity({
           id: EventId.make("tool-updated"),
           kind: "tool.updated",
           tone: "tool",
@@ -455,6 +469,7 @@ describe("buildThreadFeed", () => {
           createdAt: "2026-04-01T00:00:01.000Z",
           turnId: TurnId.make("turn-1"),
           payload: {
+            toolCallId: "call-1",
             title: "Run tests",
             itemType: "command_execution",
             detail: "/bin/zsh -lc 'bun run test'",
@@ -468,6 +483,21 @@ describe("buildThreadFeed", () => {
           createdAt: "2026-04-01T00:00:02.000Z",
           turnId: TurnId.make("turn-1"),
           payload: {
+            toolCallId: "call-1",
+            title: "Run tests",
+            itemType: "command_execution",
+            detail: "/bin/zsh -lc 'bun run test'",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("tool-completed-duplicate"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Run tests completed",
+          createdAt: "2026-04-01T00:00:02.500Z",
+          turnId: TurnId.make("turn-1"),
+          payload: {
+            toolCallId: "call-1",
             title: "Run tests",
             itemType: "command_execution",
             detail: "/bin/zsh -lc 'bun run test'",
@@ -476,9 +506,7 @@ describe("buildThreadFeed", () => {
       ],
     });
 
-    const feed = buildThreadFeed(thread);
-    const group = feed[0];
-
+    const group = buildThreadFeed(thread)[0];
     expect(group).toMatchObject({
       type: "activity-group",
     });
@@ -488,8 +516,8 @@ describe("buildThreadFeed", () => {
 
     expect(group.activities).toHaveLength(1);
     expect(group.activities[0]).toMatchObject({
-      id: "tool-updated",
-      createdAt: "2026-04-01T00:00:01.000Z",
+      id: "tool-completed-duplicate",
+      createdAt: "2026-04-01T00:00:00.000Z",
       turnId: "turn-1",
       summary: "Run tests",
       detail: "bun run test",
@@ -497,11 +525,62 @@ describe("buildThreadFeed", () => {
       icon: "command",
       toolLike: true,
       status: "success",
+      lifecycleStatus: "completed",
     });
     expect(group.activities[0]?.getFullDetail()).toBe("/bin/zsh -lc 'bun run test'");
     expect(group.activities[0]?.getCopyText()).toBe(
       "Run tests\nbun run test\n/bin/zsh -lc 'bun run test'",
     );
+  });
+  it("shows a native started call while the turn is still running", () => {
+    const turnId = TurnId.make("turn-native-start");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: "2026-04-01T00:00:00.000Z",
+      startedAt: "2026-04-01T00:00:01.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const thread = makeThread({
+      id: ThreadId.make("thread-native-start"),
+      projectId: ProjectId.make("project-1"),
+      title: "Native start",
+      latestTurn,
+      activities: [
+        makeActivity({
+          id: EventId.make("native-start"),
+          kind: "tool.started",
+          tone: "tool",
+          summary: "Run tests started",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            toolCallId: "call-native-start",
+            title: "Run tests",
+            itemType: "command_execution",
+            data: { item: { command: ["bun", "run", "test"] } },
+          },
+        }),
+      ],
+    });
+
+    expect(
+      deriveThreadFeedPresentation(
+        buildThreadFeed(thread),
+        latestTurn,
+        new Set(),
+        new Set(),
+        latestTurn.startedAt,
+      ),
+    ).toMatchObject([
+      {
+        type: "work-toggle",
+        live: true,
+        hiddenCount: 1,
+        summary: "Running bun",
+      },
+    ]);
   });
 
   it("keeps MCP inputs available to expanded mobile work rows", () => {
@@ -1096,7 +1175,7 @@ describe("buildThreadFeed", () => {
     const toolActivity = (
       id: string,
       toolCallId: string,
-      kind: "tool.updated" | "tool.completed",
+      kind: "tool.started" | "tool.updated" | "tool.completed",
       status: "inProgress" | "completed",
       detail: string,
       nestedId = false,
@@ -1120,6 +1199,8 @@ describe("buildThreadFeed", () => {
       projectId: ProjectId.make("project-1"),
       title: "Parallel tools",
       activities: [
+        toolActivity("call-a-0", "call-a", "tool.started", "inProgress", "starting"),
+        toolActivity("call-b-0", "call-b", "tool.started", "inProgress", "starting", true),
         toolActivity("call-a-1", "call-a", "tool.updated", "inProgress", "starting"),
         toolActivity("call-b-2", "call-b", "tool.updated", "inProgress", "starting", true),
         toolActivity("call-a-3", "call-a", "tool.completed", "completed", "first output"),
@@ -1132,10 +1213,12 @@ describe("buildThreadFeed", () => {
     expect(activityGroup).toMatchObject({
       type: "activity-group",
       activities: [
-        { id: "call-a-1", lifecycleStatus: "completed", detail: "first output" },
-        { id: "call-b-2", lifecycleStatus: "completed", detail: "second output" },
+        { id: "call-a-3", lifecycleStatus: "completed" },
+        { id: "call-b-4", lifecycleStatus: "completed" },
       ],
     });
+    expect(activityGroup?.activities[0]?.getFullDetail()).toContain("first output");
+    expect(activityGroup?.activities[1]?.getFullDetail()).toContain("second output");
     expect(
       deriveThreadFeedPresentation(feed, null, new Set([turnId])).find(
         (entry) => entry.type === "work-toggle",
@@ -1150,6 +1233,42 @@ describe("buildThreadFeed", () => {
 });
 
 describe("quiet timeline: nested agents", () => {
+  it("updates one native task row from start through completion", () => {
+    const activities = [
+      makeActivity({
+        id: EventId.make("native-task-start"),
+        kind: "task.started",
+        summary: "Inspect module",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        payload: { taskId: "native-child", agentKind: "agent" },
+      }),
+      makeActivity({
+        id: EventId.make("native-task-progress"),
+        kind: "task.progress",
+        summary: "Inspecting module",
+        createdAt: "2026-04-01T00:00:02.000Z",
+        payload: { taskId: "native-child", agentKind: "agent", status: "running" },
+      }),
+      makeActivity({
+        id: EventId.make("native-task-done"),
+        kind: "task.completed",
+        summary: "Module inspected",
+        createdAt: "2026-04-01T00:00:03.000Z",
+        payload: { taskId: "native-child", agentKind: "agent", status: "completed" },
+      }),
+    ];
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-native-task"),
+        projectId: ProjectId.make("project-1"),
+        title: "Native task lifecycle",
+        activities,
+      }),
+    );
+    const rows = feed.flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
+    expect(rows.map((row) => row.id)).toEqual(["native-task-done"]);
+  });
+
   it("keeps a nested agent's terminal row but hides its background work", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-nested"),
@@ -1164,8 +1283,8 @@ describe("quiet timeline: nested agents", () => {
           createdAt: "2026-04-01T00:00:02.000Z",
           payload: { taskId: "sh-1", agentId: "owner", agentKind: "background" },
         }),
-        // A nested AGENT's completion: mobile has no Agents sheet, so this
-        // terminal row is the only signal it ever finished.
+        // Keep a compact nested-agent completion in the parent conversation;
+        // its detailed lifecycle and transcript live in the Agents panel.
         makeActivity({
           id: EventId.make("nested-done"),
           kind: "task.completed",

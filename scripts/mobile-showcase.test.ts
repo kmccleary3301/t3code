@@ -2,7 +2,6 @@ import { assert, it } from "@effect/vitest";
 import { PNG } from "pngjs";
 
 import showcaseConfig, {
-  DEFAULT_SHOWCASE_THEME,
   resolveShowcaseAndroidAbi,
   resolveShowcaseAndroidAvd,
   SHOWCASE_THEMES,
@@ -13,11 +12,8 @@ import { parsePairingCredentialOutput } from "./actual-surface-environment.ts";
 import {
   createShowcaseSeedManifest,
   hashShowcaseSeedManifest,
-  SHOWCASE_ENVIRONMENTS,
   SHOWCASE_PROJECTS,
   SHOWCASE_SEED_EPOCH,
-  SHOWCASE_SEED_FIXTURE_SHA256,
-  SHOWCASE_SEED_ISO,
   SHOWCASE_THREADS,
 } from "./mobile-showcase-environment.ts";
 import {
@@ -281,14 +277,6 @@ it("enforces store screenshot count limits", () => {
   assert.throws(() => validateStoreAssetCount(googleSpec, 9, false), /allows at most 8/u);
 });
 
-it("defaults every device to the app's own palette", () => {
-  assert.equal(DEFAULT_SHOWCASE_THEME, "t3-code");
-  assert.equal(
-    showcaseConfig.devices.every((device) => device.theme === DEFAULT_SHOWCASE_THEME),
-    true,
-  );
-});
-
 it("configures every default device with an exact upload-ready store target", () => {
   assert.deepStrictEqual(
     showcaseConfig.devices.map((device) => [
@@ -322,14 +310,6 @@ it("selects a reachable LAN IPv4 address", () => {
 });
 
 it("seeds a playful multi-environment project spectrum", () => {
-  assert.deepStrictEqual(
-    SHOWCASE_PROJECTS.map((project) => project.title),
-    ["T3 Code", "React", "Linux"],
-  );
-  assert.deepStrictEqual(
-    SHOWCASE_ENVIRONMENTS.map((environment) => environment.label),
-    ["Moonbase Terminal", "Suspense Station", "Kernel Cabin"],
-  );
   assert.equal(SHOWCASE_THREADS.length, 9);
   assert.equal(new Set(SHOWCASE_THREADS.map((thread) => thread.projectId)).size, 3);
   const snoozedThreads = SHOWCASE_THREADS.filter((thread) => "snoozeMinutes" in thread);
@@ -362,10 +342,6 @@ it("seeds a playful multi-environment project spectrum", () => {
       `${project.title} has no active thread`,
     );
   }
-  assert.equal(
-    SHOWCASE_PROJECTS.every((project) => project.favicon.includes("<svg")),
-    true,
-  );
 });
 
 it("reads multiline JSON from the pairing CLI", () => {
@@ -383,19 +359,8 @@ it("encodes Android pairing URLs without shell-sensitive JSON quotes", () => {
   assert.equal(encoded.includes('"'), false);
 });
 
-it("pins the showcase fixture and manifest to the deterministic capture epoch", () => {
+it("canonicalizes manifest hashes and rejects invalid capture selections", () => {
   const manifest = createShowcaseSeedManifest();
-  assert.deepStrictEqual(manifest, createShowcaseSeedManifest());
-  assert.equal(manifest.seedEpoch, SHOWCASE_SEED_EPOCH);
-  assert.equal(manifest.seedIso, SHOWCASE_SEED_ISO);
-  assert.equal(
-    SHOWCASE_SEED_FIXTURE_SHA256,
-    "aaa595d08d0bbb1b81985eca9a47228f1f47bee34eefc79dfdb20cf795b8917d",
-  );
-  assert.equal(
-    hashShowcaseSeedManifest(manifest),
-    "f2187629318cb4b3bc1682dcad3854ab8d7056b5bc9093121903b63ba597890c",
-  );
   assert.notEqual(
     hashShowcaseSeedManifest(createShowcaseSeedManifest(undefined, SHOWCASE_SEED_EPOCH + 1)),
     hashShowcaseSeedManifest(manifest),

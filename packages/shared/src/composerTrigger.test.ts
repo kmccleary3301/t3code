@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   detectComposerTrigger,
+  providerSlashCommandInsertText,
+  replaceTextRange,
   serializeComposerFileLink,
   serializeComposerMentionPath,
 } from "./composerTrigger.ts";
@@ -43,6 +45,20 @@ describe("serializeComposerFileLink", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",
     );
+  });
+});
+
+describe("providerSlashCommandInsertText", () => {
+  it("keeps the synthetic skill namespace open without a trailing space", () => {
+    const replacement = providerSlashCommandInsertText("skill:", false);
+    expect(replaceTextRange("/sk", 0, 3, replacement)).toEqual({
+      text: "/skill:",
+      cursor: 7,
+    });
+  });
+
+  it("adds a trailing space for executable provider commands", () => {
+    expect(providerSlashCommandInsertText("goal", true)).toBe("/goal ");
   });
 });
 

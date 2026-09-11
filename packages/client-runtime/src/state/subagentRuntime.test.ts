@@ -147,6 +147,26 @@ describe("foldSubagentActivities", () => {
     expect(agents[0]!.completedAt).toBe("2026-08-01T11:00:00.000Z");
   });
 
+  it("does not reopen a completed native task with same-time progress", () => {
+    const at = "2026-08-01T11:00:00.000Z";
+    const agents = fold([
+      activity("task.started", { taskId: "native-task", taskType: "local_agent" }),
+      activity(
+        "task.completed",
+        { taskId: "native-task", status: "completed", summary: "done" },
+        at,
+      ),
+      activity("task.progress", { taskId: "native-task", status: "running" }, at),
+    ]);
+
+    expect(agents[0]).toMatchObject({
+      activationCount: 1,
+      completedAt: at,
+      result: "done",
+      status: "completed",
+    });
+  });
+
   it("reactivation increments the run count and clears result/error", () => {
     const agents = fold([
       activity("task.started", { taskId: "task-4", taskType: "local_agent" }),

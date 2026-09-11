@@ -87,9 +87,17 @@ export type ServerProviderSlashSubcommand = typeof ServerProviderSlashSubcommand
 
 export const ServerProviderSlashCommand = Schema.Struct({
   name: TrimmedNonEmptyString,
+  aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   description: Schema.optional(TrimmedNonEmptyString),
+  matchDescription: Schema.optional(TrimmedNonEmptyString),
   input: Schema.optional(ServerProviderSlashCommandInput),
   subcommands: Schema.optional(Schema.Array(ServerProviderSlashSubcommand)),
+  source: Schema.optional(
+    Schema.Literals(["builtin", "skill", "extension", "custom", "mcp_prompt", "file"]),
+  ),
+  executable: Schema.optional(Schema.Boolean),
+  icon: Schema.optional(TrimmedNonEmptyString),
+  usage: Schema.optional(NonNegativeInt),
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 

@@ -874,24 +874,122 @@ describe("deriveWorkLogEntries", () => {
     ]);
   });
 
-  it("omits tool started entries and keeps completed entries", () => {
-    const activities: OrchestrationThreadActivity[] = [
+  it("keeps a native tool.started row visible before progress", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "tool-start",
+        turnId: "turn-native",
+        summary: "Run tests started",
+        kind: "tool.started",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          data: { item: { command: ["bun", "run", "test"] } },
+        },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      id: "tool-start",
+      turnId: TurnId.make("turn-native"),
+      toolCallId: "call-native",
+      toolLifecycleStatus: "inProgress",
+      command: "bun run test",
+    });
+  });
+
+  it("reconciles native lifecycle transitions and duplicate completions by call identity", () => {
+    const activities = [
+      makeActivity({
+        id: "tool-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-native",
+        kind: "tool.started",
+        summary: "Run tests started",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          data: { item: { command: ["bun", "run", "test"] } },
+        },
+      }),
+      makeActivity({
+        id: "tool-updated",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-native",
+        kind: "tool.updated",
+        summary: "Run tests",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          status: "inProgress",
+        },
+      }),
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:03.000Z",
-        summary: "Tool call complete",
+        turnId: "turn-native",
         kind: "tool.completed",
+        summary: "Run tests completed",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          status: "completed",
+          detail: "all tests passed",
+        },
       }),
       makeActivity({
-        id: "tool-start",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        summary: "Tool call",
-        kind: "tool.started",
+        id: "tool-complete-duplicate",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        turnId: "turn-native",
+        kind: "tool.completed",
+        summary: "Run tests completed",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          status: "completed",
+          detail: "all tests passed",
+        },
       }),
     ];
 
-    const entries = deriveWorkLogEntries(activities);
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+    expect(deriveWorkLogEntries(activities)).toMatchObject([
+      {
+        id: "tool-complete-duplicate",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        toolCallId: "call-native",
+        toolLifecycleStatus: "completed",
+        command: "bun run test",
+        detail: "all tests passed",
+      },
+    ]);
+  });
+  it("does not merge same-label tool invocations without call identities", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "tool-first",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-native",
+        kind: "tool.updated",
+        summary: "Run tests",
+        payload: {
+          itemType: "command_execution",
+          detail: "first invocation",
+        },
+      }),
+      makeActivity({
+        id: "tool-second",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-native",
+        kind: "tool.completed",
+        summary: "Run tests",
+        payload: {
+          itemType: "command_execution",
+          detail: "second invocation",
+        },
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-first", "tool-second"]);
   });
 
   it("preserves explicit native terminal fallback actions", () => {
@@ -1676,6 +1774,118 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("keeps OMP tool input, output, correlation, and terminal status across lifecycle updates", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "omp-read-start",
+        createdAt: "2026-08-21T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Read File started",
+        payload: {
+          itemType: "dynamic_tool_call",
+          status: "inProgress",
+          detail: "Reading package manifest",
+          data: {
+            toolCallId: "omp-read-1",
+            kind: "read",
+            item: {
+              type: "dynamic_tool_call",
+              name: "read",
+              input: { path: "package.json" },
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "omp-read-complete",
+        createdAt: "2026-08-21T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Read File",
+        payload: {
+          itemType: "dynamic_tool_call",
+          status: "completed",
+          data: {
+            toolCallId: "omp-read-1",
+            kind: "read",
+            item: {
+              input: { path: "package.json" },
+              type: "dynamic_tool_call",
+              name: "read",
+              result: { content: [{ type: "text", text: '{ "name": "fixture" }' }] },
+            },
+            rawOutput: { content: '{ "name": "fixture" }' },
+          },
+        },
+      }),
+      makeActivity({
+        id: "omp-bash-start",
+        createdAt: "2026-08-21T00:00:03.000Z",
+        kind: "tool.started",
+        summary: "Terminal started",
+        payload: {
+          itemType: "command_execution",
+          status: "inProgress",
+          detail: "Checking fixture command",
+          data: {
+            toolCallId: "omp-bash-1",
+            kind: "execute",
+            item: {
+              type: "command_execution",
+              name: "bash",
+              input: { command: ["bash", "-lc", "printf fixture"] },
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "omp-bash-complete",
+        createdAt: "2026-08-21T00:00:04.000Z",
+        kind: "tool.completed",
+        summary: "Terminal",
+        payload: {
+          itemType: "command_execution",
+          status: "failed",
+          data: {
+            toolCallId: "omp-bash-1",
+            kind: "execute",
+            item: {
+              type: "command_execution",
+              name: "bash",
+              input: { command: ["bash", "-lc", "printf fixture"] },
+              result: { content: [{ type: "text", text: "fixture failed" }] },
+            },
+            rawOutput: { content: "fixture failed" },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      id: "omp-read-complete",
+      toolCallId: "omp-read-1",
+      toolTitle: "Read File",
+      detail: '{ "name": "fixture" }',
+      itemType: "dynamic_tool_call",
+      toolLifecycleStatus: "completed",
+      toolData: {
+        type: "dynamic_tool_call",
+        name: "read",
+        input: { path: "package.json" },
+        result: { content: [{ type: "text", text: '{ "name": "fixture" }' }] },
+      },
+    });
+    expect(entries[1]).toMatchObject({
+      id: "omp-bash-complete",
+      toolCallId: "omp-bash-1",
+      command: "printf fixture",
+      detail: "fixture failed",
+      itemType: "command_execution",
+      toolLifecycleStatus: "failed",
+    });
+  });
+
   it("does not use command stdout as the detail when Cursor omits the command input", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1711,47 +1921,6 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBeUndefined();
   });
 
-  it("collapses legacy completed tool rows that are missing tool metadata", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "legacy-read-update",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "tool.updated",
-        summary: "Read File",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Read File",
-          detail: "Read File",
-          data: {
-            toolCallId: "tool-read-legacy",
-            kind: "read",
-            rawInput: {},
-          },
-        },
-      }),
-      makeActivity({
-        id: "legacy-read-complete",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        kind: "tool.completed",
-        summary: "Read File",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Read File",
-          detail: "Read File",
-        },
-      }),
-    ];
-
-    const entries = deriveWorkLogEntries(activities);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      id: "legacy-read-complete",
-      toolTitle: "Read File",
-      itemType: "dynamic_tool_call",
-    });
-    expect(entries[0]?.detail).toBeUndefined();
-  });
-
   it("collapses repeated lifecycle updates for the same tool call into one entry", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1761,6 +1930,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-repeated",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },
@@ -1772,6 +1942,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-repeated",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
           data: {
@@ -1788,6 +1959,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call completed",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-repeated",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },
@@ -1799,66 +1971,13 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       id: "tool-complete",
-      createdAt: "2026-02-23T00:00:03.000Z",
+      createdAt: "2026-02-23T00:00:01.000Z",
       label: "Tool call completed",
       detail: 'Read: {"file_path":"/tmp/app.ts"}',
       command: "sed -n 1,40p /tmp/app.ts",
       itemType: "dynamic_tool_call",
       toolTitle: "Tool call",
     });
-  });
-
-  it("keeps separate tool entries when an identical call starts after the prior one completed", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "tool-1-update",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "tool.updated",
-        summary: "Tool call",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Tool call",
-          detail: 'Read: {"file_path":"/tmp/app.ts"}',
-        },
-      }),
-      makeActivity({
-        id: "tool-1-complete",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        kind: "tool.completed",
-        summary: "Tool call completed",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Tool call",
-          detail: 'Read: {"file_path":"/tmp/app.ts"}',
-        },
-      }),
-      makeActivity({
-        id: "tool-2-update",
-        createdAt: "2026-02-23T00:00:03.000Z",
-        kind: "tool.updated",
-        summary: "Tool call",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Tool call",
-          detail: 'Read: {"file_path":"/tmp/app.ts"}',
-        },
-      }),
-      makeActivity({
-        id: "tool-2-complete",
-        createdAt: "2026-02-23T00:00:04.000Z",
-        kind: "tool.completed",
-        summary: "Tool call completed",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Tool call",
-          detail: 'Read: {"file_path":"/tmp/app.ts"}',
-        },
-      }),
-    ];
-
-    const entries = deriveWorkLogEntries(activities);
-
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-complete", "tool-2-complete"]);
   });
 
   it("collapses same-timestamp lifecycle rows even when completed sorts before updated by id", () => {
@@ -1870,6 +1989,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-same-timestamp",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },
@@ -1881,6 +2001,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-same-timestamp",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },
@@ -1892,6 +2013,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-same-timestamp",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },

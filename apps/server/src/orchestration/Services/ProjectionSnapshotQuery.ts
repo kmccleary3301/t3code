@@ -8,6 +8,7 @@
  */
 import type {
   CheckpointRef,
+  EventId,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -16,6 +17,7 @@ import type {
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
   OrchestrationThread,
+  OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
@@ -179,6 +181,17 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
     query?: ProjectionThreadDetailQuery,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Read one full activity payload by its thread and activity identities.
+   *
+   * This deliberately bypasses the bounded thread-detail projection because
+   * expanded tool rows are the authenticated, lazy full-detail path.
+   */
+  readonly getActivityDetail: (
+    threadId: ThreadId,
+    activityId: EventId,
+  ) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail together with the projection snapshot

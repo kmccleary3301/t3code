@@ -418,7 +418,7 @@ export class BootServiceInstallError extends Schema.TaggedErrorClass<BootService
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Could not set up the T3 Code background service.";
+    return "Could not set up the KM Code background service.";
   }
 }
 

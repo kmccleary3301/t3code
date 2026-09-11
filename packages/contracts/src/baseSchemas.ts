@@ -13,6 +13,10 @@ export const TrimmedString = Schema.String.pipe(
   ),
 );
 export const TrimmedNonEmptyString = TrimmedString.check(Schema.isNonEmpty());
+export const AbsolutePath = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/u),
+);
+export type AbsolutePath = typeof AbsolutePath.Type;
 
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));

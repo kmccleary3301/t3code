@@ -10,11 +10,74 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import {
+  ArrowLeftRightIcon,
+  BarChart3Icon,
   BlocksIcon,
+  BoxIcon,
+  BrainIcon,
+  BugIcon,
+  CircleHelpIcon,
+  CircleUserRoundIcon,
+  ClipboardIcon,
+  CompassIcon,
+  CopyIcon,
+  EraserIcon,
+  EyeIcon,
+  FileOutputIcon,
+  FileTextIcon,
+  FootprintsIcon,
   FolderIcon,
+  FolderInputIcon,
+  FolderMinusIcon,
+  FolderPlusIcon,
+  ForwardIcon,
+  GitBranchIcon,
+  GlobeIcon,
+  GaugeIcon,
+  HammerIcon,
+  HistoryIcon,
+  InboxIcon,
+  KeyboardIcon,
+  ListIcon,
+  ListTodoIcon,
+  LogInIcon,
+  LogOutIcon,
+  Maximize2Icon,
+  MessageSquareIcon,
+  MicIcon,
+  Minimize2Icon,
+  MonitorIcon,
+  NetworkIcon,
+  NewspaperIcon,
   PackageIcon,
+  PanelTopIcon,
+  PauseIcon,
+  PencilIcon,
+  PinIcon,
+  PlugIcon,
+  PlusIcon,
+  PowerIcon,
+  PuzzleIcon,
+  RadioIcon,
+  Redo2Icon,
+  Repeat2Icon,
+  RocketIcon,
+  RotateCcwIcon,
+  ScrollTextIcon,
+  ServerIcon,
   SettingsIcon,
+  Share2Icon,
+  ShieldIcon,
+  ShoppingCartIcon,
+  StethoscopeIcon,
+  TargetIcon,
+  Trash2Icon,
   UserRoundIcon,
+  UsersRoundIcon,
+  VibrateIcon,
+  WavesIcon,
+  WrenchIcon,
+  ZapIcon,
   type LucideIcon,
 } from "lucide-react";
 import { memo, useLayoutEffect, useRef } from "react";
@@ -127,7 +190,9 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               {props.isLoading
                 ? props.triggerKind === "skill"
                   ? "Searching workspace skills..."
-                  : "Searching workspace files..."
+                  : props.triggerKind === "path"
+                    ? "Searching workspace files..."
+                    : "Loading native commands..."
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
                     ? "No skills found. Try / to browse provider commands."
@@ -154,6 +219,10 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
   const isSlashSkill =
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
+  const CommandIcon =
+    props.item.type === "provider-slash-command" && props.item.command.icon
+      ? (COMMAND_ICON_MAP[props.item.command.icon] ?? CircleHelpIcon)
+      : undefined;
 
   return (
     <CommandItem
@@ -179,6 +248,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
+      ) : null}
+      {CommandIcon ? (
+        <CommandIcon aria-hidden="true" className="size-3.5 shrink-0 text-secondary-label" />
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="min-w-0 max-w-[45%] shrink-0 truncate font-sans text-xs font-medium">
@@ -212,6 +284,74 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   personal: UserRoundIcon,
   system: SettingsIcon,
   other: PackageIcon,
+};
+const COMMAND_ICON_MAP: Record<string, LucideIcon> = {
+  advisor: EyeIcon,
+  agents: UsersRoundIcon,
+  branch: GitBranchIcon,
+  broadcast: RadioIcon,
+  bug: BugIcon,
+  cart: ShoppingCartIcon,
+  clipboard: ClipboardIcon,
+  compass: CompassIcon,
+  compress: Minimize2Icon,
+  computer: MonitorIcon,
+  context: PanelTopIcon,
+  copy: CopyIcon,
+  eraser: EraserIcon,
+  expand: Maximize2Icon,
+  export: FileOutputIcon,
+  extension: PuzzleIcon,
+  fast: ZapIcon,
+  folderMinus: FolderMinusIcon,
+  folderMove: FolderInputIcon,
+  folderPlus: FolderPlusIcon,
+  gauge: GaugeIcon,
+  gear: SettingsIcon,
+  globe: GlobeIcon,
+  goal: TargetIcon,
+  hammer: HammerIcon,
+  handoff: ForwardIcon,
+  history: HistoryIcon,
+  host: ServerIcon,
+  inbox: InboxIcon,
+  jobs: ListIcon,
+  keyboard: KeyboardIcon,
+  loop: Repeat2Icon,
+  mcp: PlugIcon,
+  memory: BrainIcon,
+  model: BoxIcon,
+  news: NewspaperIcon,
+  package: PackageIcon,
+  pause: PauseIcon,
+  pencil: PencilIcon,
+  pin: PinIcon,
+  plan: FileTextIcon,
+  plus: PlusIcon,
+  power: PowerIcon,
+  prewalk: FootprintsIcon,
+  prompt: MessageSquareIcon,
+  question: CircleHelpIcon,
+  redo: Redo2Icon,
+  restart: RotateCcwIcon,
+  rocket: RocketIcon,
+  rule: ScrollTextIcon,
+  session: CircleUserRoundIcon,
+  settings: SettingsIcon,
+  share: Share2Icon,
+  shield: ShieldIcon,
+  signIn: LogInIcon,
+  signOut: LogOutIcon,
+  stats: BarChart3Icon,
+  stethoscope: StethoscopeIcon,
+  swap: ArrowLeftRightIcon,
+  todo: ListTodoIcon,
+  tools: WrenchIcon,
+  trash: Trash2Icon,
+  tree: NetworkIcon,
+  vibrate: VibrateIcon,
+  voice: MicIcon,
+  wave: WavesIcon,
 };
 
 const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {

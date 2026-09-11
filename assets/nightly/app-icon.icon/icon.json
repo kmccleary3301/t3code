@@ -1,6 +1,6 @@
 {
   "fill": {
-    "automatic-gradient": "display-p3:0.00000,0.00000,0.00000,1.00000"
+    "solid": "display-p3:0.07500,0.06700,0.06100,1.00000"
   },
   "groups": [
     {
@@ -20,8 +20,8 @@
           "name": "Cloud Upper Right",
           "opacity": 1,
           "position": {
-            "scale": 15,
-            "translation-in-points": [387.9605131881942, -134.30064713259117]
+            "scale": 8.5,
+            "translation-in-points": [0, 0]
           }
         },
         {
@@ -29,8 +29,8 @@
           "image-name": "cloud-lower-left.svg",
           "name": "Cloud Lower Left",
           "position": {
-            "scale": 25,
-            "translation-in-points": [-309.63750000000005, 268.66077693836917]
+            "scale": 8.5,
+            "translation-in-points": [0, 0]
           }
         },
         {

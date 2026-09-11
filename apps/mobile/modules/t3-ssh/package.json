@@ -1,0 +1,17 @@
+{
+  "name": "@t3tools/mobile-ssh-native",
+  "version": "0.0.0",
+  "private": true,
+  "expo-module": {
+    "ios": {
+      "modules": [
+        "T3SshModule"
+      ]
+    },
+    "android": {
+      "modules": [
+        "expo.modules.t3ssh.T3SshModule"
+      ]
+    }
+  }
+}

@@ -1,0 +1,5370 @@
+{
+  "catalogSource": "rpc",
+  "catalog": [
+    {
+      "name": "security",
+      "description": "Plan, run, inspect, import, and compare OMP-native security scans",
+      "matchDescription": "Plan, run, inspect, import, and compare OMP-native security scans",
+      "icon": "shield",
+      "input": {
+        "hint": "<plan|scan|status|cancel|scans|show|import|export|validate|compare|disposition>"
+      },
+      "subcommands": [
+        {
+          "name": "plan",
+          "description": "Create an immutable security scan plan"
+        },
+        {
+          "name": "scan",
+          "description": "Start a planned or newly planned native scan"
+        },
+        {
+          "name": "status",
+          "description": "Show native scan operation status"
+        },
+        {
+          "name": "cancel",
+          "description": "Cancel a running native scan"
+        },
+        {
+          "name": "scans",
+          "description": "List stored project security scans"
+        },
+        {
+          "name": "show",
+          "description": "Render a scan or security:// resource"
+        },
+        {
+          "name": "import",
+          "description": "Import SARIF or a Codex Security bundle"
+        },
+        {
+          "name": "export",
+          "description": "Export a canonical bundle, SARIF, or report"
+        },
+        {
+          "name": "validate",
+          "description": "Validate one finding with OMP-native tools"
+        },
+        {
+          "name": "compare",
+          "description": "Compare finding lineage across two scans"
+        },
+        {
+          "name": "disposition",
+          "description": "Set a finding disposition with rationale"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "settings",
+      "description": "Open settings menu",
+      "matchDescription": "Open settings menu",
+      "icon": "settings",
+      "source": "builtin",
+      "executable": false,
+      "usage": 8
+    },
+    {
+      "name": "setup",
+      "aliases": ["providers"],
+      "description": "Open provider setup",
+      "matchDescription": "Open provider setup",
+      "icon": "gear",
+      "subcommands": [
+        {
+          "name": "providers",
+          "description": "Configure sign-in and web search providers"
+        }
+      ],
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "plan",
+      "description": "Plan: off",
+      "matchDescription": "Toggle plan mode (agent plans before executing)",
+      "icon": "plan",
+      "input": {
+        "hint": "[prompt]"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "plan-review",
+      "description": "Re-open the plan review for the latest plan (plan mode only)",
+      "matchDescription": "Re-open the plan review for the latest plan (plan mode only)",
+      "icon": "plan",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "vibe",
+      "description": "Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)",
+      "matchDescription": "Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)",
+      "icon": "wave",
+      "input": {
+        "hint": "[prompt]"
+      },
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "goal",
+      "description": "Goal: off",
+      "matchDescription": "Toggle goal mode (persistent autonomous objective for this session)",
+      "icon": "goal",
+      "input": {
+        "hint": "[objective]"
+      },
+      "subcommands": [
+        {
+          "name": "set",
+          "description": "Set or replace the goal",
+          "usage": "<objective>"
+        },
+        {
+          "name": "show",
+          "description": "Show current goal details"
+        },
+        {
+          "name": "pause",
+          "description": "Pause the current goal"
+        },
+        {
+          "name": "resume",
+          "description": "Resume a paused goal"
+        },
+        {
+          "name": "drop",
+          "description": "Drop the current goal"
+        },
+        {
+          "name": "budget",
+          "description": "Adjust the token budget",
+          "usage": "<N|off>"
+        }
+      ],
+      "source": "builtin",
+      "executable": true,
+      "usage": 67
+    },
+    {
+      "name": "guided-goal",
+      "description": "Have the agent interview you in chat, then set up goal mode",
+      "matchDescription": "Have the agent interview you in chat, then set up goal mode",
+      "icon": "compass",
+      "input": {
+        "hint": "[rough objective]"
+      },
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "loop",
+      "description": "Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable.",
+      "matchDescription": "Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable.",
+      "icon": "loop",
+      "input": {
+        "hint": "[count|duration] [prompt]"
+      },
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "queue",
+      "description": "Queue a message for after the agent yields",
+      "matchDescription": "Queue a message for after the agent yields",
+      "icon": "inbox",
+      "input": {
+        "hint": "<message>"
+      },
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "model",
+      "aliases": ["models"],
+      "description": "Show current model selection",
+      "matchDescription": "Switch model for this session",
+      "icon": "model",
+      "source": "builtin",
+      "executable": true,
+      "usage": 109
+    },
+    {
+      "name": "switch",
+      "description": "Switch model for this session only",
+      "matchDescription": "Switch model for this session (same as alt+p); accepts fuzzy ids, provider/id, @role, :level",
+      "icon": "swap",
+      "input": {
+        "hint": "[model]"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "fast",
+      "description": "Toggle fast mode",
+      "matchDescription": "Toggle priority service tier (OpenAI service_tier=priority, Anthropic speed=fast)",
+      "icon": "fast",
+      "input": {
+        "hint": "[on|off|status]"
+      },
+      "subcommands": [
+        {
+          "name": "on",
+          "description": "Enable fast mode"
+        },
+        {
+          "name": "off",
+          "description": "Disable fast mode"
+        },
+        {
+          "name": "status",
+          "description": "Show fast mode status"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "skillful",
+      "description": "Toggle skill listing",
+      "matchDescription": "Toggle listing available skills in the system prompt (session only)",
+      "icon": "compass",
+      "input": {
+        "hint": "[on|off|status]"
+      },
+      "subcommands": [
+        {
+          "name": "on",
+          "description": "List skills in the prompt for this session"
+        },
+        {
+          "name": "off",
+          "description": "Omit the skills listing for this session"
+        },
+        {
+          "name": "status",
+          "description": "Show skill listing status"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "extended-context",
+      "description": "Toggle extended context",
+      "matchDescription": "Toggle extended context windows",
+      "icon": "expand",
+      "input": {
+        "hint": "[on|off|status]"
+      },
+      "subcommands": [
+        {
+          "name": "on",
+          "description": "Enable larger context windows"
+        },
+        {
+          "name": "off",
+          "description": "Use default or standard-pricing context windows"
+        },
+        {
+          "name": "status",
+          "description": "Show extended context status"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "computer",
+      "description": "Toggle computer use",
+      "matchDescription": "Toggle the native computer-use eval prelude for this session",
+      "icon": "computer",
+      "input": {
+        "hint": "[on|off|status]"
+      },
+      "subcommands": [
+        {
+          "name": "on",
+          "description": "Enable computer use for this session"
+        },
+        {
+          "name": "off",
+          "description": "Disable computer use for this session"
+        },
+        {
+          "name": "status",
+          "description": "Show computer use status"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "prewalk",
+      "description": "Prewalk at the next action",
+      "matchDescription": "Switch to a fast/cheap model at the next action (works even without --prewalk)",
+      "icon": "prewalk",
+      "source": "builtin",
+      "executable": true,
+      "usage": 1
+    },
+    {
+      "name": "advisor",
+      "description": "Toggle advisor",
+      "matchDescription": "Toggle the advisor (a second model that reviews each turn and injects notes)",
+      "icon": "advisor",
+      "input": {
+        "hint": "[on|off|status|dump [raw]|configure]"
+      },
+      "subcommands": [
+        {
+          "name": "on",
+          "description": "Enable the advisor"
+        },
+        {
+          "name": "off",
+          "description": "Disable the advisor"
+        },
+        {
+          "name": "status",
+          "description": "Show advisor status"
+        },
+        {
+          "name": "dump",
+          "description": "Copy the advisor's transcript to clipboard",
+          "usage": "[raw]"
+        },
+        {
+          "name": "configure",
+          "description": "Open the advisor configuration editor (TUI)"
+        }
+      ],
+      "source": "builtin",
+      "executable": true,
+      "usage": 7
+    },
+    {
+      "name": "export",
+      "description": "Export session to HTML file",
+      "matchDescription": "Export session to HTML file",
+      "icon": "export",
+      "input": {
+        "hint": "[--themes] [path]"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "trace",
+      "description": "Open this session's trace in the stats dashboard",
+      "matchDescription": "Open this session's trace in the stats dashboard",
+      "icon": "stats",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "dump",
+      "description": "Return full transcript as plain text, with LLM request JSON path",
+      "matchDescription": "Copy session transcript to clipboard (and write LLM request JSON to tmp)",
+      "icon": "clipboard",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "share",
+      "description": "Share session via an encrypted link (share server or secret gist)",
+      "matchDescription": "Share session via an encrypted link (share server or secret gist)",
+      "icon": "share",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "collab",
+      "description": "Share this session live via a relay",
+      "matchDescription": "Share this session live via a relay",
+      "icon": "broadcast",
+      "input": {
+        "hint": "[start|view|stop|status] [relayUrl]"
+      },
+      "subcommands": [
+        {
+          "name": "view",
+          "description": "Share a read-only link (guests can watch, not prompt)"
+        },
+        {
+          "name": "status",
+          "description": "Show link + participants"
+        },
+        {
+          "name": "stop",
+          "description": "Stop sharing"
+        }
+      ],
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "join",
+      "description": "Join a shared collab session",
+      "matchDescription": "Join a shared collab session",
+      "icon": "signIn",
+      "input": {
+        "hint": "<link>"
+      },
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "leave",
+      "description": "Leave the collab session",
+      "matchDescription": "Leave the collab session",
+      "icon": "signOut",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "browser",
+      "description": "Toggle browser eval-prelude headless vs visible mode",
+      "matchDescription": "Toggle browser eval-prelude headless vs visible mode",
+      "icon": "globe",
+      "input": {
+        "hint": "[headless|visible]"
+      },
+      "subcommands": [
+        {
+          "name": "headless",
+          "description": "Switch to headless mode"
+        },
+        {
+          "name": "visible",
+          "description": "Switch to visible mode"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "copy",
+      "description": "Pick text or code from the conversation to copy",
+      "matchDescription": "Pick text or code from the conversation to copy",
+      "icon": "copy",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "open",
+      "description": "Open the last link from the conversation in your browser (or pick one with /copy)",
+      "matchDescription": "Open the last link from the conversation in your browser (or pick one with /copy)",
+      "icon": "globe",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "todo",
+      "description": "Manage todos",
+      "matchDescription": "View or modify the agent's todo list",
+      "icon": "todo",
+      "input": {
+        "hint": "<subcommand>"
+      },
+      "subcommands": [
+        {
+          "name": "edit",
+          "description": "Open todos in $EDITOR (Markdown round-trip)"
+        },
+        {
+          "name": "copy",
+          "description": "Copy todos as Markdown to clipboard"
+        },
+        {
+          "name": "expand",
+          "description": "Show every phase and task in the HUD"
+        },
+        {
+          "name": "collapse",
+          "description": "Restore the bounded HUD preview"
+        },
+        {
+          "name": "export",
+          "description": "Write todos as Markdown to a file (default: TODO.md)",
+          "usage": "[<path>]"
+        },
+        {
+          "name": "import",
+          "description": "Replace todos from a Markdown file (default: TODO.md)",
+          "usage": "[<path>]"
+        },
+        {
+          "name": "append",
+          "description": "Append a task; phase fuzzy-matched or auto-created",
+          "usage": "[<phase>] <task...>"
+        },
+        {
+          "name": "start",
+          "description": "Mark task in_progress (fuzzy-matched)",
+          "usage": "<task>"
+        },
+        {
+          "name": "done",
+          "description": "Mark task/phase/all completed (fuzzy-matched)",
+          "usage": "[<task|phase>]"
+        },
+        {
+          "name": "drop",
+          "description": "Mark task/phase/all abandoned (fuzzy-matched)",
+          "usage": "[<task|phase>]"
+        },
+        {
+          "name": "rm",
+          "description": "Remove task/phase/all (fuzzy-matched)",
+          "usage": "[<task|phase>]"
+        }
+      ],
+      "source": "builtin",
+      "executable": true,
+      "usage": 3
+    },
+    {
+      "name": "session",
+      "description": "Show or configure the current session",
+      "matchDescription": "Session management commands",
+      "icon": "session",
+      "input": {
+        "hint": "[info|delete|pin [account]]"
+      },
+      "subcommands": [
+        {
+          "name": "info",
+          "description": "Show session info and stats"
+        },
+        {
+          "name": "delete",
+          "description": "Delete current session and return to selector"
+        },
+        {
+          "name": "pin",
+          "description": "Pin the current provider to a stored OAuth account",
+          "usage": "[account]"
+        }
+      ],
+      "source": "builtin",
+      "executable": true,
+      "usage": 4
+    },
+    {
+      "name": "jobs",
+      "description": "Show background jobs",
+      "matchDescription": "Show async background jobs status",
+      "icon": "jobs",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "usage",
+      "description": "Show token usage",
+      "matchDescription": "Show provider usage and limits",
+      "icon": "gauge",
+      "input": {
+        "hint": "[show|reset [account|active]]"
+      },
+      "subcommands": [
+        {
+          "name": "show",
+          "description": "Show provider usage and limits"
+        },
+        {
+          "name": "reset",
+          "description": "Spend a saved Codex rate-limit reset",
+          "usage": "[account|active]"
+        }
+      ],
+      "source": "builtin",
+      "executable": true,
+      "usage": 8
+    },
+    {
+      "name": "stats",
+      "description": "Launch the local stats dashboard",
+      "matchDescription": "Launch the local stats dashboard",
+      "icon": "stats",
+      "input": {
+        "hint": "[--port <port>] [--host <host>]"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "changelog",
+      "description": "Show changelog",
+      "matchDescription": "Show changelog entries",
+      "icon": "news",
+      "input": {
+        "hint": "[full]"
+      },
+      "subcommands": [
+        {
+          "name": "full",
+          "description": "Show complete changelog"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "hotkeys",
+      "description": "Show all keyboard shortcuts",
+      "matchDescription": "Show all keyboard shortcuts",
+      "icon": "keyboard",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "tools",
+      "description": "Show available tools",
+      "matchDescription": "Show tools currently visible to the agent",
+      "icon": "tools",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "context",
+      "description": "Show context usage",
+      "matchDescription": "Show estimated context usage breakdown",
+      "icon": "context",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "extensions",
+      "aliases": ["status"],
+      "description": "Open Extension Control Center dashboard",
+      "matchDescription": "Open Extension Control Center dashboard",
+      "icon": "extension",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)",
+      "matchDescription": "Open the agents hub (per-agent model, prewalk, and advisor)",
+      "icon": "agents",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "git",
+      "description": "Open the git UI (split diff viewer, staging, commit composer)",
+      "matchDescription": "Open the git UI (split diff viewer, staging, commit composer)",
+      "icon": "branch",
+      "input": {
+        "hint": "[revision]"
+      },
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "hub",
+      "description": "Open the live Agent Hub",
+      "matchDescription": "Open the live Agent Hub",
+      "icon": "agents",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "branch",
+      "aliases": ["rewind"],
+      "description": "Rewind to a previous message, keeping the old path as a branch",
+      "matchDescription": "Rewind to a previous message, keeping the old path as a branch",
+      "icon": "branch",
+      "source": "builtin",
+      "executable": false,
+      "usage": 1
+    },
+    {
+      "name": "fork",
+      "description": "Create a new fork from a previous message",
+      "matchDescription": "Create a new fork from a previous message",
+      "icon": "branch",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "tree",
+      "description": "Navigate session tree (switch branches)",
+      "matchDescription": "Navigate session tree (switch branches)",
+      "icon": "tree",
+      "source": "builtin",
+      "executable": false,
+      "usage": 1
+    },
+    {
+      "name": "login",
+      "description": "Login with OAuth provider",
+      "matchDescription": "Login with OAuth provider",
+      "icon": "signIn",
+      "input": {
+        "hint": "[provider|redirect URL]"
+      },
+      "source": "builtin",
+      "executable": false,
+      "usage": 6
+    },
+    {
+      "name": "logout",
+      "description": "Logout from OAuth provider",
+      "matchDescription": "Logout from OAuth provider",
+      "icon": "signOut",
+      "input": {
+        "hint": "[provider]"
+      },
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "mcp",
+      "description": "Manage MCP servers",
+      "matchDescription": "Manage MCP servers (add, list, remove, test)",
+      "icon": "mcp",
+      "input": {
+        "hint": "<subcommand>"
+      },
+      "subcommands": [
+        {
+          "name": "add",
+          "description": "Add a new MCP server",
+          "usage": "<name> [--scope project|user] [--url <url>] [-- <command...>]"
+        },
+        {
+          "name": "list",
+          "description": "List all configured MCP servers"
+        },
+        {
+          "name": "remove",
+          "description": "Remove an MCP server",
+          "usage": "<name> [--scope project|user]"
+        },
+        {
+          "name": "test",
+          "description": "Test connection to a server",
+          "usage": "<name>"
+        },
+        {
+          "name": "reauth",
+          "description": "Reauthorize OAuth for a server",
+          "usage": "<name>"
+        },
+        {
+          "name": "unauth",
+          "description": "Remove OAuth auth from a server",
+          "usage": "<name>"
+        },
+        {
+          "name": "enable",
+          "description": "Enable an MCP server",
+          "usage": "<name>"
+        },
+        {
+          "name": "disable",
+          "description": "Disable an MCP server",
+          "usage": "<name>"
+        },
+        {
+          "name": "smithery-search",
+          "description": "Search Smithery registry and deploy an MCP server",
+          "usage": "<keyword> [--scope project|user] [--limit <1-100>] [--semantic]"
+        },
+        {
+          "name": "smithery-login",
+          "description": "Login to Smithery and cache API key"
+        },
+        {
+          "name": "smithery-logout",
+          "description": "Remove cached Smithery API key"
+        },
+        {
+          "name": "reconnect",
+          "description": "Reconnect to a specific MCP server",
+          "usage": "<name>"
+        },
+        {
+          "name": "reload",
+          "description": "Force reload MCP runtime tools"
+        },
+        {
+          "name": "resources",
+          "description": "List available resources from connected servers"
+        },
+        {
+          "name": "prompts",
+          "description": "List available prompts from connected servers"
+        },
+        {
+          "name": "notifications",
+          "description": "Show notification capabilities and subscriptions"
+        },
+        {
+          "name": "help",
+          "description": "Show help message"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "ssh",
+      "description": "Manage SSH connections",
+      "matchDescription": "Manage SSH hosts (add, list, remove)",
+      "icon": "host",
+      "input": {
+        "hint": "<subcommand>"
+      },
+      "subcommands": [
+        {
+          "name": "add",
+          "description": "Add an SSH host",
+          "usage": "<name> --host <host> [--user <user>] [--port <port>] [--key <keyPath>] [--scope project|user]"
+        },
+        {
+          "name": "list",
+          "description": "List all configured SSH hosts"
+        },
+        {
+          "name": "remove",
+          "description": "Remove an SSH host",
+          "usage": "<name> [--scope project|user]"
+        },
+        {
+          "name": "help",
+          "description": "Show help message"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "new",
+      "description": "Start a new session",
+      "matchDescription": "Start a new session",
+      "icon": "plus",
+      "source": "builtin",
+      "executable": false,
+      "usage": 1
+    },
+    {
+      "name": "fresh",
+      "description": "Reset provider stream state without changing the local transcript",
+      "matchDescription": "Reset provider stream state without changing the local transcript",
+      "icon": "restart",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "clear",
+      "description": "Clear the conversation context in place, keeping the session",
+      "matchDescription": "Clear the conversation context in place, keeping the session",
+      "icon": "eraser",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "drop",
+      "description": "Delete the current session and start a new one",
+      "matchDescription": "Delete the current session and start a new one",
+      "icon": "trash",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "compact",
+      "description": "Compact the conversation",
+      "matchDescription": "Manually compact the session context",
+      "icon": "compress",
+      "input": {
+        "hint": "[soft|remote|snapcompact] [focus]"
+      },
+      "subcommands": [
+        {
+          "name": "soft",
+          "description": "Summarize locally with the active model (skip server compaction)",
+          "usage": "[focus]"
+        },
+        {
+          "name": "remote",
+          "description": "Summarize via OpenAI-compatible server compaction, then fall back to a local summary",
+          "usage": "[focus]"
+        },
+        {
+          "name": "snapcompact",
+          "description": "Archive history onto dense bitmap images the model reads back (no LLM call)"
+        }
+      ],
+      "source": "builtin",
+      "executable": true,
+      "usage": 9
+    },
+    {
+      "name": "shake",
+      "description": "Shake heavy content out of the conversation context",
+      "matchDescription": "Drop heavy content from context (tool results, large blocks)",
+      "icon": "vibrate",
+      "input": {
+        "hint": "[elide|images|thinking]"
+      },
+      "subcommands": [
+        {
+          "name": "elide",
+          "description": "Strip tool results + large blocks (default)"
+        },
+        {
+          "name": "images",
+          "description": "Strip image blocks"
+        },
+        {
+          "name": "thinking",
+          "description": "Drop all thinking blocks"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "handoff",
+      "description": "Summarize the session into a handoff document and compact in place",
+      "matchDescription": "Hand off session context to a new session",
+      "icon": "handoff",
+      "input": {
+        "hint": "[focus instructions]"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "resume",
+      "description": "Resume a different session",
+      "matchDescription": "Resume a different session",
+      "icon": "history",
+      "input": {
+        "hint": "[session id|@claude|@codex]"
+      },
+      "source": "builtin",
+      "executable": false,
+      "usage": 35
+    },
+    {
+      "name": "pin",
+      "description": "Pin or unpin a session at the top of the resume list",
+      "matchDescription": "Pin or unpin a session at the top of the resume list",
+      "icon": "pin",
+      "input": {
+        "hint": "[session id]"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "btw",
+      "description": "Ask an ephemeral side question using the current session context",
+      "matchDescription": "Ask an ephemeral side question using the current session context",
+      "icon": "question",
+      "input": {
+        "hint": "<question>"
+      },
+      "source": "builtin",
+      "executable": false,
+      "usage": 80
+    },
+    {
+      "name": "tan",
+      "description": "Run a full background agent on tangential work",
+      "matchDescription": "Run a full background agent on tangential work",
+      "icon": "rocket",
+      "input": {
+        "hint": "<work>"
+      },
+      "source": "builtin",
+      "executable": false,
+      "usage": 3
+    },
+    {
+      "name": "omfg",
+      "description": "Forge a TTSR rule from a complaint to stop a recurring behavior",
+      "matchDescription": "Forge a TTSR rule from a complaint to stop a recurring behavior",
+      "icon": "rule",
+      "input": {
+        "hint": "<complaint>"
+      },
+      "source": "builtin",
+      "executable": false,
+      "usage": 1
+    },
+    {
+      "name": "cleanse",
+      "description": "Detect and fix project diagnostics with weighted parallel subagents",
+      "matchDescription": "Detect and fix project diagnostics with weighted parallel subagents",
+      "icon": "stethoscope",
+      "input": {
+        "hint": "[request] [--all]"
+      },
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "retry",
+      "description": "Retry the last failed agent turn",
+      "matchDescription": "Retry the last failed agent turn",
+      "icon": "redo",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "debug",
+      "description": "Open debug tools selector",
+      "matchDescription": "Open debug tools selector",
+      "icon": "bug",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "memory",
+      "description": "Manage memory",
+      "matchDescription": "Inspect and operate memory maintenance",
+      "icon": "memory",
+      "input": {
+        "hint": "<subcommand>"
+      },
+      "subcommands": [
+        {
+          "name": "view",
+          "description": "Show current memory injection payload"
+        },
+        {
+          "name": "stats",
+          "description": "Show memory backend statistics"
+        },
+        {
+          "name": "diagnose",
+          "description": "Run memory backend diagnostics"
+        },
+        {
+          "name": "queue",
+          "description": "Show pending memory deltas awaiting consolidation"
+        },
+        {
+          "name": "sync",
+          "description": "Run memory consolidation now"
+        },
+        {
+          "name": "clear",
+          "description": "Clear persisted memory data and artifacts"
+        },
+        {
+          "name": "reset",
+          "description": "Alias for clear"
+        },
+        {
+          "name": "enqueue",
+          "description": "Enqueue memory consolidation maintenance"
+        },
+        {
+          "name": "rebuild",
+          "description": "Alias for enqueue"
+        },
+        {
+          "name": "mm list",
+          "description": "List mental models on the active bank"
+        },
+        {
+          "name": "mm show",
+          "description": "Show one mental model (id required)"
+        },
+        {
+          "name": "mm refresh",
+          "description": "Refresh auto-refresh models bank-wide, or one model by id"
+        },
+        {
+          "name": "mm history",
+          "description": "Diff the change history of a mental model"
+        },
+        {
+          "name": "mm seed",
+          "description": "Create any built-in mental models that are missing"
+        },
+        {
+          "name": "mm delete",
+          "description": "Delete a mental model from the bank (id required)"
+        },
+        {
+          "name": "mm reload",
+          "description": "Re-pull the cached <mental_models> block"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "rename",
+      "description": "Rename the current session",
+      "matchDescription": "Rename the current session",
+      "icon": "pencil",
+      "input": {
+        "hint": "<title>"
+      },
+      "source": "builtin",
+      "executable": true,
+      "usage": 4
+    },
+    {
+      "name": "move",
+      "description": "Move the current session to a different directory",
+      "matchDescription": "Move the current session to a different directory",
+      "icon": "folderMove",
+      "input": {
+        "hint": "[<path>]"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "wt",
+      "aliases": ["worktree"],
+      "description": "Move this session into a new worktree, changes included",
+      "matchDescription": "Move this session into a new worktree, changes included",
+      "icon": "folderMove",
+      "input": {
+        "hint": "[<branch>]"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "add-dir",
+      "description": "Add a workspace directory to this session",
+      "matchDescription": "Add a workspace directory to this session (multi-root)",
+      "icon": "folderPlus",
+      "input": {
+        "hint": "<path>"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "remove-dir",
+      "description": "Remove a workspace directory from this session",
+      "matchDescription": "Remove a workspace directory from this session",
+      "icon": "folderMinus",
+      "input": {
+        "hint": "<path>"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "dirs",
+      "description": "List this session's workspace directories",
+      "matchDescription": "List this session's workspace directories",
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "exit",
+      "description": "Exit the application",
+      "matchDescription": "Exit the application",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "restart",
+      "description": "Restart omp with the same launch flags, resuming this session",
+      "matchDescription": "Restart omp with the same launch flags, resuming this session",
+      "icon": "restart",
+      "source": "builtin",
+      "executable": false,
+      "usage": 1
+    },
+    {
+      "name": "marketplace",
+      "description": "Manage plugins from marketplaces",
+      "matchDescription": "Manage marketplace plugin sources and installed plugins",
+      "icon": "cart",
+      "input": {
+        "hint": "<subcommand>"
+      },
+      "subcommands": [
+        {
+          "name": "add",
+          "description": "Add a marketplace source",
+          "usage": "<source>"
+        },
+        {
+          "name": "remove",
+          "description": "Remove a marketplace source",
+          "usage": "<name>"
+        },
+        {
+          "name": "update",
+          "description": "Update marketplace catalog(s)",
+          "usage": "[name]"
+        },
+        {
+          "name": "list",
+          "description": "List configured marketplaces"
+        },
+        {
+          "name": "discover",
+          "description": "Browse available plugins",
+          "usage": "[marketplace]"
+        },
+        {
+          "name": "install",
+          "description": "Install a plugin (interactive browser if no args)",
+          "usage": "[--force] [name@marketplace]"
+        },
+        {
+          "name": "uninstall",
+          "description": "Uninstall a plugin (selector if no args)",
+          "usage": "[name@marketplace]"
+        },
+        {
+          "name": "installed",
+          "description": "List installed marketplace plugins"
+        },
+        {
+          "name": "upgrade",
+          "description": "Upgrade outdated plugins",
+          "usage": "[name@marketplace]"
+        },
+        {
+          "name": "help",
+          "description": "Show usage guide"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "plugins",
+      "description": "Manage plugins",
+      "matchDescription": "View and manage installed plugins",
+      "icon": "package",
+      "input": {
+        "hint": "[list|enable|disable]"
+      },
+      "subcommands": [
+        {
+          "name": "list",
+          "description": "List all installed plugins (npm + marketplace)"
+        },
+        {
+          "name": "enable",
+          "description": "Enable a marketplace plugin",
+          "usage": "<name@marketplace>"
+        },
+        {
+          "name": "disable",
+          "description": "Disable a marketplace plugin",
+          "usage": "<name@marketplace>"
+        }
+      ],
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "reload-plugins",
+      "description": "Reload all plugins",
+      "matchDescription": "Reload all plugins (skills, commands, hooks, tools, agents, MCP)",
+      "icon": "restart",
+      "source": "builtin",
+      "executable": true,
+      "usage": 6
+    },
+    {
+      "name": "force",
+      "aliases": ["force:"],
+      "description": "Force next turn to use a specific tool",
+      "matchDescription": "Force next turn to use a specific tool",
+      "icon": "hammer",
+      "input": {
+        "hint": "<tool-name> [prompt]"
+      },
+      "source": "builtin",
+      "executable": true
+    },
+    {
+      "name": "live",
+      "description": "Start Codex-backed realtime voice mode",
+      "matchDescription": "Start Codex-backed realtime voice mode",
+      "icon": "voice",
+      "source": "builtin",
+      "executable": false,
+      "usage": 3
+    },
+    {
+      "name": "pause",
+      "description": "Freeze all agents (main, subagents, advisor) until resumed",
+      "matchDescription": "Freeze all agents (main, subagents, advisor) until resumed",
+      "icon": "pause",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "quit",
+      "aliases": ["q"],
+      "description": "Quit the application",
+      "matchDescription": "Quit the application",
+      "icon": "power",
+      "source": "builtin",
+      "executable": false
+    },
+    {
+      "name": "autoresearch",
+      "description": "Toggle builtin autoresearch mode, or pass off / clear, or a goal message.",
+      "matchDescription": "Toggle builtin autoresearch mode, or pass off / clear, or a goal message.",
+      "icon": "extension",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "extension",
+      "executable": true
+    },
+    {
+      "name": "green",
+      "description": "Generate a prompt to iterate on CI failures until the branch is green",
+      "matchDescription": "Generate a prompt to iterate on CI failures until the branch is green",
+      "icon": "prompt",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "custom",
+      "executable": true
+    },
+    {
+      "name": "review",
+      "description": "Launch interactive code review",
+      "matchDescription": "Launch interactive code review",
+      "icon": "prompt",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "custom",
+      "executable": true
+    },
+    {
+      "name": "skill:anti-ai-writing",
+      "description": "Write, revise, and audit prose so it reads like grounded human writing instead of generic AI output. Use for reports, docs, essays, bios, explanations, markdown/Obsidian writing, Wikipedia-style prose, comments, summaries, and any task where the user wants to avoid LLM tells, especially negative-first \"not X, but Y\"/\"That's not X. That's Y\" phrasing, canned significance, AI vocabulary clusters, fake citations, markup artifacts, and formulaic structure.",
+      "matchDescription": "Write, revise, and audit prose so it reads like grounded human writing instead of generic AI output. Use for reports, docs, essays, bios, explanations, markdown/Obsidian writing, Wikipedia-style prose, comments, summaries, and any task where the user wants to avoid LLM tells, especially negative-first \"not X, but Y\"/\"That's not X. That's Y\" phrasing, canned significance, AI vocabulary clusters, fake citations, markup artifacts, and formulaic structure.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:anti-slop",
+      "description": "Prevent and remove low-evidence TypeScript and JavaScript code patterns. Use when implementing, refactoring, or reviewing TS/JS code for unsafe type fabrication, widened contracts, ad hoc runtime narrowing, brittle mocks, and vague abstractions.",
+      "matchDescription": "Prevent and remove low-evidence TypeScript and JavaScript code patterns. Use when implementing, refactoring, or reviewing TS/JS code for unsafe type fabrication, widened contracts, ad hoc runtime narrowing, brittle mocks, and vague abstractions.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:bro",
+      "description": "Restate the last message in plain human language, with no jargon.",
+      "matchDescription": "Restate the last message in plain human language, with no jargon.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:code-agent-loops-best-practice",
+      "description": "Use when the user asks about coding-agent loops, loop engineering, autonomous PR/issue/CI workflows, Codex automations, subagents, worktrees, OMP workflows, BreadBoard orchestration, state-machine agent systems, review/fix loops, standard-library parity campaigns, research-goal execution loops, or how to make coding agents produce maximum-quality code with evidence, budgets, and approvals. Also use when asked to design a loop, skill, automation, multi-agent workflow, PR watcher, issue fixer, CI babysitter, stacked-PR refactor, reviewer agent, or project-specific agent operating system.",
+      "matchDescription": "Use when the user asks about coding-agent loops, loop engineering, autonomous PR/issue/CI workflows, Codex automations, subagents, worktrees, OMP workflows, BreadBoard orchestration, state-machine agent systems, review/fix loops, standard-library parity campaigns, research-goal execution loops, or how to make coding agents produce maximum-quality code with evidence, budgets, and approvals. Also use when asked to design a loop, skill, automation, multi-agent workflow, PR watcher, issue fixer, CI babysitter, stacked-PR refactor, reviewer agent, or project-specific agent operating system.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:extreme-optimization",
+      "description": "Benchmark-first, profile-first optimization workflow for explicit performance work across code, services, queries, UI, and build loops. Use when the user wants measured improvements to latency, throughput, memory, CPU, tail behavior, startup time, build time, render cost, or similar.",
+      "matchDescription": "Benchmark-first, profile-first optimization workflow for explicit performance work across code, services, queries, UI, and build loops. Use when the user wants measured improvements to latency, throughput, memory, CPU, tail behavior, startup time, build time, render cost, or similar.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:gpt55-pro-oracle",
+      "description": "Operate GPT-5.5 Pro Extended through Oracle ChatGPT browser automation for high-EV planning, research, design, code architecture, visual implementation, and multi-request campaigns. Use when Codex needs to prepare fresh-session or follow-up Pro requests, curate attachment bundles, launch Oracle background jobs, track conversation URLs, recover responses or emitted sandbox artifacts, distill Pro outputs into implementation plans, or maximize value from expensive/deep Pro model turns.",
+      "matchDescription": "Operate GPT-5.5 Pro Extended through Oracle ChatGPT browser automation for high-EV planning, research, design, code architecture, visual implementation, and multi-request campaigns. Use when Codex needs to prepare fresh-session or follow-up Pro requests, curate attachment bundles, launch Oracle background jobs, track conversation URLs, recover responses or emitted sandbox artifacts, distill Pro outputs into implementation plans, or maximize value from expensive/deep Pro model turns.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:images-2-design-oracle",
+      "description": "Use for image generation, image editing, visual design direction, frontend visual targets, UI redesign/polish, diagrams, infographics, brand/campaign assets, game/social/presentation visuals, or Oracle-backed ChatGPT Images 2.0 workflows. Treat modern frontier image models as first-class visual design/reasoning tools while requiring verification for exact text, facts, data, accessibility, and implementation.",
+      "matchDescription": "Use for image generation, image editing, visual design direction, frontend visual targets, UI redesign/polish, diagrams, infographics, brand/campaign assets, game/social/presentation visuals, or Oracle-backed ChatGPT Images 2.0 workflows. Treat modern frontier image models as first-class visual design/reasoning tools while requiring verification for exact text, facts, data, accessibility, and implementation.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:motion-craft",
+      "description": "Private/internal skill for explicit frontend animation, interaction motion, transition recipes, motion polish, reduced-motion remediation, and motion-focused E2E verification. Use for CSS transitions/keyframes, portable component transitions, Motion/Framer React, gesture/spring motion, shared layout transitions, SVG/clip-path effects, animation critique, and Playwright-backed motion QC. Do not use for generic UI styling, unrelated frontend features, or motion added without user intent.",
+      "matchDescription": "Private/internal skill for explicit frontend animation, interaction motion, transition recipes, motion polish, reduced-motion remediation, and motion-focused E2E verification. Use for CSS transitions/keyframes, portable component transitions, Motion/Framer React, gesture/spring motion, shared layout transitions, SVG/clip-path effects, animation critique, and Playwright-backed motion QC. Do not use for generic UI styling, unrelated frontend features, or motion added without user intent.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-ask-matt",
+      "description": "Ask which skill or flow fits your situation. A router over the skills in this repo.",
+      "matchDescription": "Ask which skill or flow fits your situation. A router over the skills in this repo.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-claude-handoff",
+      "description": "Hand the current conversation off to a fresh background agent that picks up the work immediately.",
+      "matchDescription": "Hand the current conversation off to a fresh background agent that picks up the work immediately.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-code-review",
+      "description": "Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes: Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/spec asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\".",
+      "matchDescription": "Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes: Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/spec asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\".",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-codebase-design",
+      "description": "Shared vocabulary for designing deep modules. Use when the user wants to design or improve a module's interface, find deepening opportunities, decide where a seam goes, make code more testable or AI-navigable, or when another skill needs the deep-module vocabulary.",
+      "matchDescription": "Shared vocabulary for designing deep modules. Use when the user wants to design or improve a module's interface, find deepening opportunities, decide where a seam goes, make code more testable or AI-navigable, or when another skill needs the deep-module vocabulary.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-deprecated-design-an-interface",
+      "description": "Deprecated Matt Pocock workflow: Generate multiple radically different interface designs for a module using parallel sub-agents. Use when user wants to design an API, explore interface options, compare module shapes, or mentions \"design it twice\". Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "matchDescription": "Deprecated Matt Pocock workflow: Generate multiple radically different interface designs for a module using parallel sub-agents. Use when user wants to design an API, explore interface options, compare module shapes, or mentions \"design it twice\". Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-deprecated-qa",
+      "description": "Deprecated Matt Pocock workflow: Interactive QA session where user reports bugs or issues conversationally, and the agent files GitHub issues. Explores the codebase in the background for context and domain language. Use when user wants to report bugs, do QA, file issues conversationally, or mentions \"QA session\". Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "matchDescription": "Deprecated Matt Pocock workflow: Interactive QA session where user reports bugs or issues conversationally, and the agent files GitHub issues. Explores the codebase in the background for context and domain language. Use when user wants to report bugs, do QA, file issues conversationally, or mentions \"QA session\". Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-deprecated-request-refactor-plan",
+      "description": "Deprecated Matt Pocock workflow: Create a detailed refactor plan with tiny commits via user interview, then file it as a GitHub issue. Use when user wants to plan a refactor, create a refactoring RFC, or break a refactor into safe incremental steps. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "matchDescription": "Deprecated Matt Pocock workflow: Create a detailed refactor plan with tiny commits via user interview, then file it as a GitHub issue. Use when user wants to plan a refactor, create a refactoring RFC, or break a refactor into safe incremental steps. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-deprecated-ubiquitous-language",
+      "description": "Deprecated Matt Pocock workflow: Extract a DDD-style ubiquitous language glossary from the current conversation, flagging ambiguities and proposing canonical terms. Saves to UBIQUITOUS_LANGUAGE.md. Use when user wants to define domain terms, build a glossary, harden terminology, create a ubiquitous language, or mentions \"domain model\" or \"DDD\". Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "matchDescription": "Deprecated Matt Pocock workflow: Extract a DDD-style ubiquitous language glossary from the current conversation, flagging ambiguities and proposing canonical terms. Saves to UBIQUITOUS_LANGUAGE.md. Use when user wants to define domain terms, build a glossary, harden terminology, create a ubiquitous language, or mentions \"domain model\" or \"DDD\". Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-diagnosing-bugs",
+      "description": "Diagnosis loop for hard bugs and performance regressions. Use when the user says \"diagnose\"/\"debug this\", or reports something broken/throwing/failing/slow.",
+      "matchDescription": "Diagnosis loop for hard bugs and performance regressions. Use when the user says \"diagnose\"/\"debug this\", or reports something broken/throwing/failing/slow.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-domain-modeling",
+      "description": "Build and sharpen a project's domain model. Use when discussing codebase terminology, writing or editing a CONTEXT.md, or recording or editing an ADR.",
+      "matchDescription": "Build and sharpen a project's domain model. Use when discussing codebase terminology, writing or editing a CONTEXT.md, or recording or editing an ADR.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-edit-article",
+      "description": "Matt Pocock personal workflow: Edit and improve articles by restructuring sections, improving clarity, and tightening prose. Use when user wants to edit, revise, or improve an article draft. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "matchDescription": "Matt Pocock personal workflow: Edit and improve articles by restructuring sections, improving clarity, and tightening prose. Use when user wants to edit, revise, or improve an article draft. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-git-guardrails-claude-code",
+      "description": "Set up Claude Code hooks to block dangerous git commands (push, reset --hard, clean, branch -D, etc.) before they execute. Use when user wants to prevent destructive git operations, add git safety hooks, or block git push/reset in Claude Code.",
+      "matchDescription": "Set up Claude Code hooks to block dangerous git commands (push, reset --hard, clean, branch -D, etc.) before they execute. Use when user wants to prevent destructive git operations, add git safety hooks, or block git push/reset in Claude Code.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-grill-me",
+      "description": "A relentless interview to sharpen a plan or design.",
+      "matchDescription": "A relentless interview to sharpen a plan or design.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-grill-with-docs",
+      "description": "A relentless interview to sharpen a plan or design, which also creates docs (ADR's and glossary) as we go.",
+      "matchDescription": "A relentless interview to sharpen a plan or design, which also creates docs (ADR's and glossary) as we go.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-grilling",
+      "description": "Grill the user relentlessly about a plan, decision, or idea. Use when the user wants to stress-test their thinking, or uses any 'grill' trigger phrases.",
+      "matchDescription": "Grill the user relentlessly about a plan, decision, or idea. Use when the user wants to stress-test their thinking, or uses any 'grill' trigger phrases.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-handoff",
+      "description": "Compact the current conversation into a handoff document for another agent to pick up.",
+      "matchDescription": "Compact the current conversation into a handoff document for another agent to pick up.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true,
+      "usage": 1
+    },
+    {
+      "name": "skill:pocock-implement",
+      "description": "Implement a piece of work based on a spec or set of tickets.",
+      "matchDescription": "Implement a piece of work based on a spec or set of tickets.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-improve-codebase-architecture",
+      "description": "Scan a codebase for deepening opportunities, present them as a visual HTML report, then grill through whichever one you pick.",
+      "matchDescription": "Scan a codebase for deepening opportunities, present them as a visual HTML report, then grill through whichever one you pick.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-loop-me",
+      "description": "Grill me about specs for the workflows I want to build, within this workspace.",
+      "matchDescription": "Grill me about specs for the workflows I want to build, within this workspace.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-migrate-to-shoehorn",
+      "description": "Migrate test files from `as` type assertions to @total-typescript/shoehorn. Use when user mentions shoehorn, wants to replace `as` in tests, or needs partial test data.",
+      "matchDescription": "Migrate test files from `as` type assertions to @total-typescript/shoehorn. Use when user mentions shoehorn, wants to replace `as` in tests, or needs partial test data.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-obsidian-vault",
+      "description": "Matt Pocock personal workflow: Search, create, and manage notes in the Obsidian vault with wikilinks and index notes. Use when user wants to find, create, or organize notes in Obsidian. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "matchDescription": "Matt Pocock personal workflow: Search, create, and manage notes in the Obsidian vault with wikilinks and index notes. Use when user wants to find, create, or organize notes in Obsidian. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-prototype",
+      "description": "Build a throwaway prototype to answer a design question. Use when the user wants to sanity-check whether a state model or logic feels right, or explore what a UI should look like.",
+      "matchDescription": "Build a throwaway prototype to answer a design question. Use when the user wants to sanity-check whether a state model or logic feels right, or explore what a UI should look like.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-research",
+      "description": "Investigate a question against high-trust primary sources and capture the findings as a Markdown file in the repo. Use when the user wants a topic researched, docs or API facts gathered, or reading legwork delegated to a background agent.",
+      "matchDescription": "Investigate a question against high-trust primary sources and capture the findings as a Markdown file in the repo. Use when the user wants a topic researched, docs or API facts gathered, or reading legwork delegated to a background agent.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-resolving-merge-conflicts",
+      "description": "Use when you need to resolve an in-progress git merge/rebase conflict.",
+      "matchDescription": "Use when you need to resolve an in-progress git merge/rebase conflict.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-scaffold-exercises",
+      "description": "Create exercise directory structures with sections, problems, solutions, and explainers that pass linting. Use when user wants to scaffold exercises, create exercise stubs, or set up a new course section.",
+      "matchDescription": "Create exercise directory structures with sections, problems, solutions, and explainers that pass linting. Use when user wants to scaffold exercises, create exercise stubs, or set up a new course section.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-setup-matt-pocock-skills",
+      "description": "Configure this repo for the engineering skills: set up its issue tracker, triage label vocabulary, and domain doc layout. Run once before first use of the other engineering skills.",
+      "matchDescription": "Configure this repo for the engineering skills: set up its issue tracker, triage label vocabulary, and domain doc layout. Run once before first use of the other engineering skills.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-setup-pre-commit",
+      "description": "Set up Husky pre-commit hooks with lint-staged (Prettier), type checking, and tests in the current repo. Use when user wants to add pre-commit hooks, set up Husky, configure lint-staged, or add commit-time formatting/typechecking/testing.",
+      "matchDescription": "Set up Husky pre-commit hooks with lint-staged (Prettier), type checking, and tests in the current repo. Use when user wants to add pre-commit hooks, set up Husky, configure lint-staged, or add commit-time formatting/typechecking/testing.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-tdd",
+      "description": "Test-driven development. Use when the user wants to build features or fix bugs test-first, mentions \"red-green-refactor\", or wants integration tests.",
+      "matchDescription": "Test-driven development. Use when the user wants to build features or fix bugs test-first, mentions \"red-green-refactor\", or wants integration tests.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-teach",
+      "description": "Teach the user a new skill or concept, within this workspace.",
+      "matchDescription": "Teach the user a new skill or concept, within this workspace.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-to-spec",
+      "description": "Turn the current conversation into a spec and publish it to the project issue tracker: no interview, just synthesis of what you've already discussed.",
+      "matchDescription": "Turn the current conversation into a spec and publish it to the project issue tracker: no interview, just synthesis of what you've already discussed.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-to-tickets",
+      "description": "Break a plan, spec, or the current conversation into a set of tracer-bullet tickets, each declaring its blocking edges, published to the configured tracker (edges as text in one file per ticket locally, or native blocking links on a real tracker).",
+      "matchDescription": "Break a plan, spec, or the current conversation into a set of tracer-bullet tickets, each declaring its blocking edges, published to the configured tracker (edges as text in one file per ticket locally, or native blocking links on a real tracker).",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-triage",
+      "description": "Move issues and external PRs through a state machine of triage roles, categorise, verify, grill if needed, and write agent-ready briefs.",
+      "matchDescription": "Move issues and external PRs through a state machine of triage roles, categorise, verify, grill if needed, and write agent-ready briefs.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-validation",
+      "description": "Validation judgment for choosing the smallest proof that protects a coding outcome. Use when planning or reviewing tests and evidence, when a long-running coding goal is stuck in red gates, reruns, CI, benchmarks, or reviewer loops, or when another workflow must decide what proof is enough.",
+      "matchDescription": "Validation judgment for choosing the smallest proof that protects a coding outcome. Use when planning or reviewing tests and evidence, when a long-running coding goal is stuck in red gates, reruns, CI, benchmarks, or reviewer loops, or when another workflow must decide what proof is enough.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true,
+      "usage": 1
+    },
+    {
+      "name": "skill:pocock-wayfinder",
+      "description": "Plan a huge chunk of work (more than one agent session can hold) as a shared map of decision tickets on your issue tracker, and resolve them one at a time until the way to the destination is clear.",
+      "matchDescription": "Plan a huge chunk of work (more than one agent session can hold) as a shared map of decision tickets on your issue tracker, and resolve them one at a time until the way to the destination is clear.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-wizard",
+      "description": "Matt Pocock in-progress workflow: Generate an interactive bash wizard that walks a human through a manual procedure — third-party setup, a one-off migration, an A→B state transition — opening URLs, capturing values, confirming each step, and writing .env files and GitHub Actions secrets. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "matchDescription": "Matt Pocock in-progress workflow: Generate an interactive bash wizard that walks a human through a manual procedure — third-party setup, a one-off migration, an A→B state transition — opening URLs, capturing values, confirming each step, and writing .env files and GitHub Actions secrets. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-writing-beats",
+      "description": "Writing, exploit; assemble raw material into a journey of beats, grounding each term before a beat leans on it.",
+      "matchDescription": "Writing, exploit; assemble raw material into a journey of beats, grounding each term before a beat leans on it.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-writing-fragments",
+      "description": "Writing, explore: mine raw fragments, no structure yet.",
+      "matchDescription": "Writing, explore: mine raw fragments, no structure yet.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-writing-great-skills",
+      "description": "Matt Pocock workflow: Reference for writing and editing skills well — the vocabulary and principles that make a skill predictable. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "matchDescription": "Matt Pocock workflow: Reference for writing and editing skills well — the vocabulary and principles that make a skill predictable. Explicit/user-invoked only; do not auto-run unless the user asks for this workflow by name.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:pocock-writing-shape",
+      "description": "Writing, exploit: shape raw material into an article, paragraph by paragraph.",
+      "matchDescription": "Writing, exploit: shape raw material into an article, paragraph by paragraph.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:semantic-compression",
+      "description": "Re-encode verbose prose into a dense telegraphic register — punctuation as connectives, label frames, verbless assertions — without losing normativity or precision. Use when compressing system prompts, tool/function descriptions, skill bodies, or agent instructions; reducing token count or context bloat; making documentation token-efficient for LLM input; or rewriting text in compressed notation.",
+      "matchDescription": "Re-encode verbose prose into a dense telegraphic register — punctuation as connectives, label frames, verbless assertions — without losing normativity or precision. Use when compressing system prompts, tool/function descriptions, skill bodies, or agent instructions; reducing token count or context bloat; making documentation token-efficient for LLM input; or rewriting text in compressed notation.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:stop-slop",
+      "description": "Remove AI writing patterns from prose. Use when drafting, editing, or reviewing text to eliminate predictable AI tells.",
+      "matchDescription": "Remove AI writing patterns from prose. Use when drafting, editing, or reviewing text to eliminate predictable AI tells.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true,
+      "usage": 1
+    },
+    {
+      "name": "skill:structural-refactor",
+      "description": "Behavior-preserving structural refactoring for boundary clarity, ownership, decomposition, naming, config surfaces, and maintainability. Use for explicit refactor/cleanup requests, architectural catch-up work, adapter migration, public/internal boundary cleanup, and any change where behavior must be locked before code is moved.",
+      "matchDescription": "Behavior-preserving structural refactoring for boundary clarity, ownership, decomposition, naming, config surfaces, and maintainability. Use for explicit refactor/cleanup requests, architectural catch-up work, adapter migration, public/internal boundary cleanup, and any change where behavior must be locked before code is moved.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:system-prompts",
+      "description": "Write system prompts, tool docs, and agent definitions. Project tag conventions + RFC 2119 keywords + dense compression. Use when authoring or editing any prompt the model reads.",
+      "matchDescription": "Write system prompts, tool docs, and agent definitions. Project tag conventions + RFC 2119 keywords + dense compression. Use when authoring or editing any prompt the model reads.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:technical-writing",
+      "description": "Layered technical-writing standard: Diátaxis structure, Google developer style sentences, STE instruction rules, Global English syntax. Use for /technical-writing or when writing or reviewing docs, RFCs, readmes, PR descriptions, or commit messages.",
+      "matchDescription": "Layered technical-writing standard: Diátaxis structure, Google developer style sentences, STE instruction rules, Global English syntax. Use for /technical-writing or when writing or reviewing docs, RFCs, readmes, PR descriptions, or commit messages.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:thermo-nuclear-code-quality-review",
+      "description": "Run an extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Use for a thermo-nuclear code quality review, thermonuclear review, deep code quality audit, or especially harsh maintainability review. Explicit/user-invoked only; use for Cursor-style thermonuclear code cleanup/review.",
+      "matchDescription": "Run an extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Use for a thermo-nuclear code quality review, thermonuclear review, deep code quality audit, or especially harsh maintainability review. Explicit/user-invoked only; use for Cursor-style thermonuclear code cleanup/review.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:tool-prompt-optimization",
+      "description": "Optimize the description prompts an AI agent reads to learn its built-in tools (the `.md` files under prompts/tools/). Two halves: (1) measure how much of a prompt is already inferable from the tool's JSON parameter schema + name, to prune redundancy with evidence; (2) house authoring rules for what belongs in a tool prompt vs what stays in code. Use when auditing, trimming, writing, or reviewing tool prompts, deciding what schema field descriptions already cover, or testing schema-vs-prompt overlap before deleting prompt lines.",
+      "matchDescription": "Optimize the description prompts an AI agent reads to learn its built-in tools (the `.md` files under prompts/tools/). Two halves: (1) measure how much of a prompt is already inferable from the tool's JSON parameter schema + name, to prune redundancy with evidence; (2) house authoring rules for what belongs in a tool prompt vs what stays in code. Use when auditing, trimming, writing, or reviewing tool prompts, deciding what schema field descriptions already cover, or testing schema-vs-prompt overlap before deleting prompt lines.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "skill:unslop",
+      "description": "Cut AI tells from any writing. Must always apply.",
+      "matchDescription": "Cut AI tells from any writing. Must always apply.",
+      "icon": "compass",
+      "input": {
+        "hint": "arguments"
+      },
+      "source": "skill",
+      "executable": true
+    },
+    {
+      "name": "cleanup",
+      "description": "# Cleanup Command",
+      "matchDescription": "# Cleanup Command",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "fix-issues",
+      "description": "# Fix Issues Command",
+      "matchDescription": "# Fix Issues Command",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "release",
+      "description": "# Release",
+      "matchDescription": "# Release",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "review-prs",
+      "description": "# Review PRs",
+      "matchDescription": "# Review PRs",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "triage",
+      "description": "# Triage Command",
+      "matchDescription": "# Triage Command",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "code-agent-loops-best-practice",
+      "description": "# Code Agent Loops Best Practice",
+      "matchDescription": "# Code Agent Loops Best Practice",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "loop-parity",
+      "description": "# Loop Parity",
+      "matchDescription": "# Loop Parity",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "loop-pr-stack",
+      "description": "# Loop PR Stack",
+      "matchDescription": "# Loop PR Stack",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "loop-pr-watch",
+      "description": "# Loop PR Watch",
+      "matchDescription": "# Loop PR Watch",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "structural-refactor-plan",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan.",
+      "matchDescription": "Diagnose a structural problem and produce an approval-gated refactor plan.",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "structural-refactor-review",
+      "description": "Review a refactor for behavior locks, false wins, and boundary clarity.",
+      "matchDescription": "Review a refactor for behavior locks, false wins, and boundary clarity.",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "structural-refactor",
+      "description": "Lock behavior, diagnose structure, and run a bounded behavior-preserving refactor.",
+      "matchDescription": "Lock behavior, diagnose structure, and run a bounded behavior-preserving refactor.",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    },
+    {
+      "name": "init",
+      "description": "Generate AGENTS.md for current codebase",
+      "matchDescription": "Generate AGENTS.md for current codebase",
+      "icon": "prompt",
+      "source": "file",
+      "executable": true
+    }
+  ],
+  "": [
+    {
+      "value": "skill:",
+      "label": "skill:",
+      "icon": "compass",
+      "description": "55 skills"
+    },
+    {
+      "value": "model",
+      "label": "model",
+      "icon": "model",
+      "description": "Show current model selection"
+    },
+    {
+      "value": "btw",
+      "label": "btw",
+      "icon": "question",
+      "description": "<question> - Ask an ephemeral side question using the current session context"
+    },
+    {
+      "value": "goal",
+      "label": "goal",
+      "icon": "goal",
+      "description": "[objective] - Goal: off"
+    },
+    {
+      "value": "resume",
+      "label": "resume",
+      "icon": "history",
+      "description": "[session id|@claude|@codex] - Resume a different session"
+    },
+    {
+      "value": "compact",
+      "label": "compact",
+      "icon": "compress",
+      "description": "[soft|remote|snapcompact] [focus] - Compact the conversation"
+    },
+    {
+      "value": "settings",
+      "label": "settings",
+      "icon": "settings",
+      "description": "Open settings menu"
+    },
+    {
+      "value": "usage",
+      "label": "usage",
+      "icon": "gauge",
+      "description": "[show|reset [account|active]] - Show token usage"
+    },
+    {
+      "value": "advisor",
+      "label": "advisor",
+      "icon": "advisor",
+      "description": "[on|off|status|dump [raw]|configure] - Toggle advisor"
+    },
+    {
+      "value": "login",
+      "label": "login",
+      "icon": "signIn",
+      "description": "[provider|redirect URL] - Login with OAuth provider"
+    },
+    {
+      "value": "reload-plugins",
+      "label": "reload-plugins",
+      "icon": "restart",
+      "description": "Reload all plugins"
+    },
+    {
+      "value": "session",
+      "label": "session",
+      "icon": "session",
+      "description": "[info|delete|pin [account]] - Show or configure the current session"
+    },
+    {
+      "value": "rename",
+      "label": "rename",
+      "icon": "pencil",
+      "description": "<title> - Rename the current session"
+    },
+    {
+      "value": "todo",
+      "label": "todo",
+      "icon": "todo",
+      "description": "<subcommand> - Manage todos"
+    },
+    {
+      "value": "tan",
+      "label": "tan",
+      "icon": "rocket",
+      "description": "<work> - Run a full background agent on tangential work"
+    },
+    {
+      "value": "live",
+      "label": "live",
+      "icon": "voice",
+      "description": "Start Codex-backed realtime voice mode"
+    },
+    {
+      "value": "prewalk",
+      "label": "prewalk",
+      "icon": "prewalk",
+      "description": "Prewalk at the next action"
+    },
+    {
+      "value": "branch",
+      "label": "branch",
+      "icon": "branch",
+      "description": "Rewind to a previous message, keeping the old path as a branch"
+    },
+    {
+      "value": "tree",
+      "label": "tree",
+      "icon": "tree",
+      "description": "Navigate session tree (switch branches)"
+    },
+    {
+      "value": "new",
+      "label": "new",
+      "icon": "plus",
+      "description": "Start a new session"
+    },
+    {
+      "value": "omfg",
+      "label": "omfg",
+      "icon": "rule",
+      "description": "<complaint> - Forge a TTSR rule from a complaint to stop a recurring behavior"
+    },
+    {
+      "value": "restart",
+      "label": "restart",
+      "icon": "restart",
+      "description": "Restart omp with the same launch flags, resuming this session"
+    },
+    {
+      "value": "security",
+      "label": "security",
+      "icon": "shield",
+      "description": "<plan|scan|status|cancel|scans|show|import|export|validate|compare|disposition> - Plan, run, inspect, import, and compare OMP-native security scans"
+    },
+    {
+      "value": "setup",
+      "label": "setup",
+      "icon": "gear",
+      "description": "Open provider setup"
+    },
+    {
+      "value": "plan",
+      "label": "plan",
+      "icon": "plan",
+      "description": "[prompt] - Plan: off"
+    },
+    {
+      "value": "plan-review",
+      "label": "plan-review",
+      "icon": "plan",
+      "description": "Re-open the plan review for the latest plan (plan mode only)"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "guided-goal",
+      "label": "guided-goal",
+      "icon": "compass",
+      "description": "[rough objective] - Have the agent interview you in chat, then set up goal mode"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "queue",
+      "label": "queue",
+      "icon": "inbox",
+      "description": "<message> - Queue a message for after the agent yields"
+    },
+    {
+      "value": "switch",
+      "label": "switch",
+      "icon": "swap",
+      "description": "[model] - Switch model for this session only"
+    },
+    {
+      "value": "fast",
+      "label": "fast",
+      "icon": "fast",
+      "description": "[on|off|status] - Toggle fast mode"
+    },
+    {
+      "value": "skillful",
+      "label": "skillful",
+      "icon": "compass",
+      "description": "[on|off|status] - Toggle skill listing"
+    },
+    {
+      "value": "extended-context",
+      "label": "extended-context",
+      "icon": "expand",
+      "description": "[on|off|status] - Toggle extended context"
+    },
+    {
+      "value": "computer",
+      "label": "computer",
+      "icon": "computer",
+      "description": "[on|off|status] - Toggle computer use"
+    },
+    {
+      "value": "export",
+      "label": "export",
+      "icon": "export",
+      "description": "[--themes] [path] - Export session to HTML file"
+    },
+    {
+      "value": "trace",
+      "label": "trace",
+      "icon": "stats",
+      "description": "Open this session's trace in the stats dashboard"
+    },
+    {
+      "value": "dump",
+      "label": "dump",
+      "icon": "clipboard",
+      "description": "Return full transcript as plain text, with LLM request JSON path"
+    },
+    {
+      "value": "share",
+      "label": "share",
+      "icon": "share",
+      "description": "Share session via an encrypted link (share server or secret gist)"
+    },
+    {
+      "value": "collab",
+      "label": "collab",
+      "icon": "broadcast",
+      "description": "[start|view|stop|status] [relayUrl] - Share this session live via a relay"
+    },
+    {
+      "value": "join",
+      "label": "join",
+      "icon": "signIn",
+      "description": "<link> - Join a shared collab session"
+    },
+    {
+      "value": "leave",
+      "label": "leave",
+      "icon": "signOut",
+      "description": "Leave the collab session"
+    },
+    {
+      "value": "browser",
+      "label": "browser",
+      "icon": "globe",
+      "description": "[headless|visible] - Toggle browser eval-prelude headless vs visible mode"
+    },
+    {
+      "value": "copy",
+      "label": "copy",
+      "icon": "copy",
+      "description": "Pick text or code from the conversation to copy"
+    },
+    {
+      "value": "open",
+      "label": "open",
+      "icon": "globe",
+      "description": "Open the last link from the conversation in your browser (or pick one with /copy)"
+    },
+    {
+      "value": "jobs",
+      "label": "jobs",
+      "icon": "jobs",
+      "description": "Show background jobs"
+    },
+    {
+      "value": "stats",
+      "label": "stats",
+      "icon": "stats",
+      "description": "[--port <port>] [--host <host>] - Launch the local stats dashboard"
+    },
+    {
+      "value": "changelog",
+      "label": "changelog",
+      "icon": "news",
+      "description": "[full] - Show changelog"
+    },
+    {
+      "value": "hotkeys",
+      "label": "hotkeys",
+      "icon": "keyboard",
+      "description": "Show all keyboard shortcuts"
+    },
+    {
+      "value": "tools",
+      "label": "tools",
+      "icon": "tools",
+      "description": "Show available tools"
+    },
+    {
+      "value": "context",
+      "label": "context",
+      "icon": "context",
+      "description": "Show context usage"
+    },
+    {
+      "value": "extensions",
+      "label": "extensions",
+      "icon": "extension",
+      "description": "Open Extension Control Center dashboard"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "git",
+      "label": "git",
+      "icon": "branch",
+      "description": "[revision] - Open the git UI (split diff viewer, staging, commit composer)"
+    },
+    {
+      "value": "hub",
+      "label": "hub",
+      "icon": "agents",
+      "description": "Open the live Agent Hub"
+    },
+    {
+      "value": "fork",
+      "label": "fork",
+      "icon": "branch",
+      "description": "Create a new fork from a previous message"
+    },
+    {
+      "value": "logout",
+      "label": "logout",
+      "icon": "signOut",
+      "description": "[provider] - Logout from OAuth provider"
+    },
+    {
+      "value": "mcp",
+      "label": "mcp",
+      "icon": "mcp",
+      "description": "<subcommand> - Manage MCP servers"
+    },
+    {
+      "value": "ssh",
+      "label": "ssh",
+      "icon": "host",
+      "description": "<subcommand> - Manage SSH connections"
+    },
+    {
+      "value": "fresh",
+      "label": "fresh",
+      "icon": "restart",
+      "description": "Reset provider stream state without changing the local transcript"
+    },
+    {
+      "value": "clear",
+      "label": "clear",
+      "icon": "eraser",
+      "description": "Clear the conversation context in place, keeping the session"
+    },
+    {
+      "value": "drop",
+      "label": "drop",
+      "icon": "trash",
+      "description": "Delete the current session and start a new one"
+    },
+    {
+      "value": "shake",
+      "label": "shake",
+      "icon": "vibrate",
+      "description": "[elide|images|thinking] - Shake heavy content out of the conversation context"
+    },
+    {
+      "value": "handoff",
+      "label": "handoff",
+      "icon": "handoff",
+      "description": "[focus instructions] - Summarize the session into a handoff document and compact in place"
+    },
+    {
+      "value": "pin",
+      "label": "pin",
+      "icon": "pin",
+      "description": "[session id] - Pin or unpin a session at the top of the resume list"
+    },
+    {
+      "value": "cleanse",
+      "label": "cleanse",
+      "icon": "stethoscope",
+      "description": "[request] [--all] - Detect and fix project diagnostics with weighted parallel subagents"
+    },
+    {
+      "value": "retry",
+      "label": "retry",
+      "icon": "redo",
+      "description": "Retry the last failed agent turn"
+    },
+    {
+      "value": "debug",
+      "label": "debug",
+      "icon": "bug",
+      "description": "Open debug tools selector"
+    },
+    {
+      "value": "memory",
+      "label": "memory",
+      "icon": "memory",
+      "description": "<subcommand> - Manage memory"
+    },
+    {
+      "value": "move",
+      "label": "move",
+      "icon": "folderMove",
+      "description": "[<path>] - Move the current session to a different directory"
+    },
+    {
+      "value": "wt",
+      "label": "wt",
+      "icon": "folderMove",
+      "description": "[<branch>] - Move this session into a new worktree, changes included"
+    },
+    {
+      "value": "add-dir",
+      "label": "add-dir",
+      "icon": "folderPlus",
+      "description": "<path> - Add a workspace directory to this session"
+    },
+    {
+      "value": "remove-dir",
+      "label": "remove-dir",
+      "icon": "folderMinus",
+      "description": "<path> - Remove a workspace directory from this session"
+    },
+    {
+      "value": "dirs",
+      "label": "dirs",
+      "description": "List this session's workspace directories"
+    },
+    {
+      "value": "exit",
+      "label": "exit",
+      "description": "Exit the application"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    },
+    {
+      "value": "plugins",
+      "label": "plugins",
+      "icon": "package",
+      "description": "[list|enable|disable] - Manage plugins"
+    },
+    {
+      "value": "force",
+      "label": "force",
+      "icon": "hammer",
+      "description": "<tool-name> [prompt] - Force next turn to use a specific tool"
+    },
+    {
+      "value": "pause",
+      "label": "pause",
+      "icon": "pause",
+      "description": "Freeze all agents (main, subagents, advisor) until resumed"
+    },
+    {
+      "value": "quit",
+      "label": "quit",
+      "icon": "power",
+      "description": "Quit the application"
+    },
+    {
+      "value": "autoresearch",
+      "label": "autoresearch",
+      "icon": "extension",
+      "description": "arguments - Toggle builtin autoresearch mode, or pass off / clear, or a goal message."
+    },
+    {
+      "value": "green",
+      "label": "green",
+      "icon": "prompt",
+      "description": "arguments - Generate a prompt to iterate on CI failures until the branch is green"
+    },
+    {
+      "value": "review",
+      "label": "review",
+      "icon": "prompt",
+      "description": "arguments - Launch interactive code review"
+    },
+    {
+      "value": "cleanup",
+      "label": "cleanup",
+      "icon": "prompt",
+      "description": "# Cleanup Command"
+    },
+    {
+      "value": "fix-issues",
+      "label": "fix-issues",
+      "icon": "prompt",
+      "description": "# Fix Issues Command"
+    },
+    {
+      "value": "release",
+      "label": "release",
+      "icon": "prompt",
+      "description": "# Release"
+    },
+    {
+      "value": "review-prs",
+      "label": "review-prs",
+      "icon": "prompt",
+      "description": "# Review PRs"
+    },
+    {
+      "value": "triage",
+      "label": "triage",
+      "icon": "prompt",
+      "description": "# Triage Command"
+    },
+    {
+      "value": "code-agent-loops-best-practice",
+      "label": "code-agent-loops-best-practice",
+      "icon": "prompt",
+      "description": "# Code Agent Loops Best Practice"
+    },
+    {
+      "value": "loop-parity",
+      "label": "loop-parity",
+      "icon": "prompt",
+      "description": "# Loop Parity"
+    },
+    {
+      "value": "loop-pr-stack",
+      "label": "loop-pr-stack",
+      "icon": "prompt",
+      "description": "# Loop PR Stack"
+    },
+    {
+      "value": "loop-pr-watch",
+      "label": "loop-pr-watch",
+      "icon": "prompt",
+      "description": "# Loop PR Watch"
+    },
+    {
+      "value": "structural-refactor-plan",
+      "label": "structural-refactor-plan",
+      "icon": "prompt",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan."
+    },
+    {
+      "value": "structural-refactor-review",
+      "label": "structural-refactor-review",
+      "icon": "prompt",
+      "description": "Review a refactor for behavior locks, false wins, and boundary clarity."
+    },
+    {
+      "value": "structural-refactor",
+      "label": "structural-refactor",
+      "icon": "prompt",
+      "description": "Lock behavior, diagnose structure, and run a bounded behavior-preserving refactor."
+    },
+    {
+      "value": "init",
+      "label": "init",
+      "icon": "prompt",
+      "description": "Generate AGENTS.md for current codebase"
+    }
+  ],
+  "g": [
+    {
+      "value": "goal",
+      "label": "goal",
+      "icon": "goal",
+      "description": "[objective] - Goal: off"
+    },
+    {
+      "value": "guided-goal",
+      "label": "guided-goal",
+      "icon": "compass",
+      "description": "[rough objective] - Have the agent interview you in chat, then set up goal mode"
+    },
+    {
+      "value": "git",
+      "label": "git",
+      "icon": "branch",
+      "description": "[revision] - Open the git UI (split diff viewer, staging, commit composer)"
+    },
+    {
+      "value": "green",
+      "label": "green",
+      "icon": "prompt",
+      "description": "arguments - Generate a prompt to iterate on CI failures until the branch is green"
+    },
+    {
+      "value": "settings",
+      "label": "settings",
+      "icon": "settings",
+      "description": "Open settings menu"
+    },
+    {
+      "value": "usage",
+      "label": "usage",
+      "icon": "gauge",
+      "description": "[show|reset [account|active]] - Show token usage"
+    },
+    {
+      "value": "login",
+      "label": "login",
+      "icon": "signIn",
+      "description": "[provider|redirect URL] - Login with OAuth provider"
+    },
+    {
+      "value": "reload-plugins",
+      "label": "reload-plugins",
+      "icon": "restart",
+      "description": "Reload all plugins"
+    },
+    {
+      "value": "omfg",
+      "label": "omfg",
+      "icon": "rule",
+      "description": "<complaint> - Forge a TTSR rule from a complaint to stop a recurring behavior"
+    },
+    {
+      "value": "changelog",
+      "label": "changelog",
+      "icon": "news",
+      "description": "[full] - Show changelog"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "logout",
+      "label": "logout",
+      "icon": "signOut",
+      "description": "[provider] - Logout from OAuth provider"
+    },
+    {
+      "value": "debug",
+      "label": "debug",
+      "icon": "bug",
+      "description": "Open debug tools selector"
+    },
+    {
+      "value": "plugins",
+      "label": "plugins",
+      "icon": "package",
+      "description": "[list|enable|disable] - Manage plugins"
+    },
+    {
+      "value": "triage",
+      "label": "triage",
+      "icon": "prompt",
+      "description": "# Triage Command"
+    },
+    {
+      "value": "code-agent-loops-best-practice",
+      "label": "code-agent-loops-best-practice",
+      "icon": "prompt",
+      "description": "# Code Agent Loops Best Practice"
+    },
+    {
+      "value": "init",
+      "label": "init",
+      "icon": "prompt",
+      "description": "Generate AGENTS.md for current codebase"
+    },
+    {
+      "value": "btw",
+      "label": "btw",
+      "icon": "question",
+      "description": "<question> - Ask an ephemeral side question using the current session context"
+    },
+    {
+      "value": "advisor",
+      "label": "advisor",
+      "icon": "advisor",
+      "description": "[on|off|status|dump [raw]|configure] - Toggle advisor"
+    },
+    {
+      "value": "session",
+      "label": "session",
+      "icon": "session",
+      "description": "[info|delete|pin [account]] - Show or configure the current session"
+    },
+    {
+      "value": "todo",
+      "label": "todo",
+      "icon": "todo",
+      "description": "<subcommand> - Manage todos"
+    },
+    {
+      "value": "tan",
+      "label": "tan",
+      "icon": "rocket",
+      "description": "<work> - Run a full background agent on tangential work"
+    },
+    {
+      "value": "branch",
+      "label": "branch",
+      "icon": "branch",
+      "description": "Rewind to a previous message, keeping the old path as a branch"
+    },
+    {
+      "value": "tree",
+      "label": "tree",
+      "icon": "tree",
+      "description": "Navigate session tree (switch branches)"
+    },
+    {
+      "value": "restart",
+      "label": "restart",
+      "icon": "restart",
+      "description": "Restart omp with the same launch flags, resuming this session"
+    },
+    {
+      "value": "plan",
+      "label": "plan",
+      "icon": "plan",
+      "description": "[prompt] - Plan: off"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "queue",
+      "label": "queue",
+      "icon": "inbox",
+      "description": "<message> - Queue a message for after the agent yields"
+    },
+    {
+      "value": "fast",
+      "label": "fast",
+      "icon": "fast",
+      "description": "[on|off|status] - Toggle fast mode"
+    },
+    {
+      "value": "skillful",
+      "label": "skillful",
+      "icon": "compass",
+      "description": "[on|off|status] - Toggle skill listing"
+    },
+    {
+      "value": "extended-context",
+      "label": "extended-context",
+      "icon": "expand",
+      "description": "[on|off|status] - Toggle extended context"
+    },
+    {
+      "value": "computer",
+      "label": "computer",
+      "icon": "computer",
+      "description": "[on|off|status] - Toggle computer use"
+    },
+    {
+      "value": "share",
+      "label": "share",
+      "icon": "share",
+      "description": "Share session via an encrypted link (share server or secret gist)"
+    },
+    {
+      "value": "browser",
+      "label": "browser",
+      "icon": "globe",
+      "description": "[headless|visible] - Toggle browser eval-prelude headless vs visible mode"
+    },
+    {
+      "value": "jobs",
+      "label": "jobs",
+      "icon": "jobs",
+      "description": "Show background jobs"
+    },
+    {
+      "value": "tools",
+      "label": "tools",
+      "icon": "tools",
+      "description": "Show available tools"
+    },
+    {
+      "value": "context",
+      "label": "context",
+      "icon": "context",
+      "description": "Show context usage"
+    },
+    {
+      "value": "hub",
+      "label": "hub",
+      "icon": "agents",
+      "description": "Open the live Agent Hub"
+    },
+    {
+      "value": "fork",
+      "label": "fork",
+      "icon": "branch",
+      "description": "Create a new fork from a previous message"
+    },
+    {
+      "value": "mcp",
+      "label": "mcp",
+      "icon": "mcp",
+      "description": "<subcommand> - Manage MCP servers"
+    },
+    {
+      "value": "ssh",
+      "label": "ssh",
+      "icon": "host",
+      "description": "<subcommand> - Manage SSH connections"
+    },
+    {
+      "value": "fresh",
+      "label": "fresh",
+      "icon": "restart",
+      "description": "Reset provider stream state without changing the local transcript"
+    },
+    {
+      "value": "clear",
+      "label": "clear",
+      "icon": "eraser",
+      "description": "Clear the conversation context in place, keeping the session"
+    },
+    {
+      "value": "shake",
+      "label": "shake",
+      "icon": "vibrate",
+      "description": "[elide|images|thinking] - Shake heavy content out of the conversation context"
+    },
+    {
+      "value": "cleanse",
+      "label": "cleanse",
+      "icon": "stethoscope",
+      "description": "[request] [--all] - Detect and fix project diagnostics with weighted parallel subagents"
+    },
+    {
+      "value": "retry",
+      "label": "retry",
+      "icon": "redo",
+      "description": "Retry the last failed agent turn"
+    },
+    {
+      "value": "wt",
+      "label": "wt",
+      "icon": "folderMove",
+      "description": "[<branch>] - Move this session into a new worktree, changes included"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    },
+    {
+      "value": "pause",
+      "label": "pause",
+      "icon": "pause",
+      "description": "Freeze all agents (main, subagents, advisor) until resumed"
+    },
+    {
+      "value": "autoresearch",
+      "label": "autoresearch",
+      "icon": "extension",
+      "description": "arguments - Toggle builtin autoresearch mode, or pass off / clear, or a goal message."
+    },
+    {
+      "value": "structural-refactor-plan",
+      "label": "structural-refactor-plan",
+      "icon": "prompt",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan."
+    },
+    {
+      "value": "structural-refactor",
+      "label": "structural-refactor",
+      "icon": "prompt",
+      "description": "Lock behavior, diagnose structure, and run a bounded behavior-preserving refactor."
+    }
+  ],
+  "go": [
+    {
+      "value": "goal",
+      "label": "goal",
+      "icon": "goal",
+      "description": "[objective] - Goal: off"
+    },
+    {
+      "value": "guided-goal",
+      "label": "guided-goal",
+      "icon": "compass",
+      "description": "[rough objective] - Have the agent interview you in chat, then set up goal mode"
+    },
+    {
+      "value": "logout",
+      "label": "logout",
+      "icon": "signOut",
+      "description": "[provider] - Logout from OAuth provider"
+    },
+    {
+      "value": "changelog",
+      "label": "changelog",
+      "icon": "news",
+      "description": "[full] - Show changelog"
+    },
+    {
+      "value": "code-agent-loops-best-practice",
+      "label": "code-agent-loops-best-practice",
+      "icon": "prompt",
+      "description": "# Code Agent Loops Best Practice"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "autoresearch",
+      "label": "autoresearch",
+      "icon": "extension",
+      "description": "arguments - Toggle builtin autoresearch mode, or pass off / clear, or a goal message."
+    },
+    {
+      "value": "btw",
+      "label": "btw",
+      "icon": "question",
+      "description": "<question> - Ask an ephemeral side question using the current session context"
+    },
+    {
+      "value": "advisor",
+      "label": "advisor",
+      "icon": "advisor",
+      "description": "[on|off|status|dump [raw]|configure] - Toggle advisor"
+    },
+    {
+      "value": "login",
+      "label": "login",
+      "icon": "signIn",
+      "description": "[provider|redirect URL] - Login with OAuth provider"
+    },
+    {
+      "value": "reload-plugins",
+      "label": "reload-plugins",
+      "icon": "restart",
+      "description": "Reload all plugins"
+    },
+    {
+      "value": "session",
+      "label": "session",
+      "icon": "session",
+      "description": "[info|delete|pin [account]] - Show or configure the current session"
+    },
+    {
+      "value": "todo",
+      "label": "todo",
+      "icon": "todo",
+      "description": "<subcommand> - Manage todos"
+    },
+    {
+      "value": "tan",
+      "label": "tan",
+      "icon": "rocket",
+      "description": "<work> - Run a full background agent on tangential work"
+    },
+    {
+      "value": "branch",
+      "label": "branch",
+      "icon": "branch",
+      "description": "Rewind to a previous message, keeping the old path as a branch"
+    },
+    {
+      "value": "tree",
+      "label": "tree",
+      "icon": "tree",
+      "description": "Navigate session tree (switch branches)"
+    },
+    {
+      "value": "omfg",
+      "label": "omfg",
+      "icon": "rule",
+      "description": "<complaint> - Forge a TTSR rule from a complaint to stop a recurring behavior"
+    },
+    {
+      "value": "restart",
+      "label": "restart",
+      "icon": "restart",
+      "description": "Restart omp with the same launch flags, resuming this session"
+    },
+    {
+      "value": "plan",
+      "label": "plan",
+      "icon": "plan",
+      "description": "[prompt] - Plan: off"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "queue",
+      "label": "queue",
+      "icon": "inbox",
+      "description": "<message> - Queue a message for after the agent yields"
+    },
+    {
+      "value": "fast",
+      "label": "fast",
+      "icon": "fast",
+      "description": "[on|off|status] - Toggle fast mode"
+    },
+    {
+      "value": "skillful",
+      "label": "skillful",
+      "icon": "compass",
+      "description": "[on|off|status] - Toggle skill listing"
+    },
+    {
+      "value": "extended-context",
+      "label": "extended-context",
+      "icon": "expand",
+      "description": "[on|off|status] - Toggle extended context"
+    },
+    {
+      "value": "computer",
+      "label": "computer",
+      "icon": "computer",
+      "description": "[on|off|status] - Toggle computer use"
+    },
+    {
+      "value": "browser",
+      "label": "browser",
+      "icon": "globe",
+      "description": "[headless|visible] - Toggle browser eval-prelude headless vs visible mode"
+    },
+    {
+      "value": "jobs",
+      "label": "jobs",
+      "icon": "jobs",
+      "description": "Show background jobs"
+    },
+    {
+      "value": "context",
+      "label": "context",
+      "icon": "context",
+      "description": "Show context usage"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "git",
+      "label": "git",
+      "icon": "branch",
+      "description": "[revision] - Open the git UI (split diff viewer, staging, commit composer)"
+    },
+    {
+      "value": "mcp",
+      "label": "mcp",
+      "icon": "mcp",
+      "description": "<subcommand> - Manage MCP servers"
+    },
+    {
+      "value": "ssh",
+      "label": "ssh",
+      "icon": "host",
+      "description": "<subcommand> - Manage SSH connections"
+    },
+    {
+      "value": "fresh",
+      "label": "fresh",
+      "icon": "restart",
+      "description": "Reset provider stream state without changing the local transcript"
+    },
+    {
+      "value": "clear",
+      "label": "clear",
+      "icon": "eraser",
+      "description": "Clear the conversation context in place, keeping the session"
+    },
+    {
+      "value": "shake",
+      "label": "shake",
+      "icon": "vibrate",
+      "description": "[elide|images|thinking] - Shake heavy content out of the conversation context"
+    },
+    {
+      "value": "cleanse",
+      "label": "cleanse",
+      "icon": "stethoscope",
+      "description": "[request] [--all] - Detect and fix project diagnostics with weighted parallel subagents"
+    },
+    {
+      "value": "debug",
+      "label": "debug",
+      "icon": "bug",
+      "description": "Open debug tools selector"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    },
+    {
+      "value": "pause",
+      "label": "pause",
+      "icon": "pause",
+      "description": "Freeze all agents (main, subagents, advisor) until resumed"
+    },
+    {
+      "value": "green",
+      "label": "green",
+      "icon": "prompt",
+      "description": "arguments - Generate a prompt to iterate on CI failures until the branch is green"
+    },
+    {
+      "value": "triage",
+      "label": "triage",
+      "icon": "prompt",
+      "description": "# Triage Command"
+    },
+    {
+      "value": "structural-refactor-plan",
+      "label": "structural-refactor-plan",
+      "icon": "prompt",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan."
+    },
+    {
+      "value": "structural-refactor",
+      "label": "structural-refactor",
+      "icon": "prompt",
+      "description": "Lock behavior, diagnose structure, and run a bounded behavior-preserving refactor."
+    },
+    {
+      "value": "init",
+      "label": "init",
+      "icon": "prompt",
+      "description": "Generate AGENTS.md for current codebase"
+    }
+  ],
+  "goal": [
+    {
+      "value": "goal",
+      "label": "goal",
+      "icon": "goal",
+      "description": "[objective] - Goal: off"
+    },
+    {
+      "value": "guided-goal",
+      "label": "guided-goal",
+      "icon": "compass",
+      "description": "[rough objective] - Have the agent interview you in chat, then set up goal mode"
+    },
+    {
+      "value": "autoresearch",
+      "label": "autoresearch",
+      "icon": "extension",
+      "description": "arguments - Toggle builtin autoresearch mode, or pass off / clear, or a goal message."
+    },
+    {
+      "value": "computer",
+      "label": "computer",
+      "icon": "computer",
+      "description": "[on|off|status] - Toggle computer use"
+    },
+    {
+      "value": "browser",
+      "label": "browser",
+      "icon": "globe",
+      "description": "[headless|visible] - Toggle browser eval-prelude headless vs visible mode"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "fresh",
+      "label": "fresh",
+      "icon": "restart",
+      "description": "Reset provider stream state without changing the local transcript"
+    },
+    {
+      "value": "advisor",
+      "label": "advisor",
+      "icon": "advisor",
+      "description": "[on|off|status|dump [raw]|configure] - Toggle advisor"
+    },
+    {
+      "value": "reload-plugins",
+      "label": "reload-plugins",
+      "icon": "restart",
+      "description": "Reload all plugins"
+    },
+    {
+      "value": "tan",
+      "label": "tan",
+      "icon": "rocket",
+      "description": "<work> - Run a full background agent on tangential work"
+    },
+    {
+      "value": "omfg",
+      "label": "omfg",
+      "icon": "rule",
+      "description": "<complaint> - Forge a TTSR rule from a complaint to stop a recurring behavior"
+    },
+    {
+      "value": "plan",
+      "label": "plan",
+      "icon": "plan",
+      "description": "[prompt] - Plan: off"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "queue",
+      "label": "queue",
+      "icon": "inbox",
+      "description": "<message> - Queue a message for after the agent yields"
+    },
+    {
+      "value": "ssh",
+      "label": "ssh",
+      "icon": "host",
+      "description": "<subcommand> - Manage SSH connections"
+    },
+    {
+      "value": "cleanse",
+      "label": "cleanse",
+      "icon": "stethoscope",
+      "description": "[request] [--all] - Detect and fix project diagnostics with weighted parallel subagents"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    },
+    {
+      "value": "green",
+      "label": "green",
+      "icon": "prompt",
+      "description": "arguments - Generate a prompt to iterate on CI failures until the branch is green"
+    },
+    {
+      "value": "structural-refactor-plan",
+      "label": "structural-refactor-plan",
+      "icon": "prompt",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan."
+    }
+  ],
+  "s": [
+    {
+      "value": "settings",
+      "label": "settings",
+      "icon": "settings",
+      "description": "Open settings menu"
+    },
+    {
+      "value": "session",
+      "label": "session",
+      "icon": "session",
+      "description": "[info|delete|pin [account]] - Show or configure the current session"
+    },
+    {
+      "value": "security",
+      "label": "security",
+      "icon": "shield",
+      "description": "<plan|scan|status|cancel|scans|show|import|export|validate|compare|disposition> - Plan, run, inspect, import, and compare OMP-native security scans"
+    },
+    {
+      "value": "setup",
+      "label": "setup",
+      "icon": "gear",
+      "description": "Open provider setup"
+    },
+    {
+      "value": "switch",
+      "label": "switch",
+      "icon": "swap",
+      "description": "[model] - Switch model for this session only"
+    },
+    {
+      "value": "skillful",
+      "label": "skillful",
+      "icon": "compass",
+      "description": "[on|off|status] - Toggle skill listing"
+    },
+    {
+      "value": "share",
+      "label": "share",
+      "icon": "share",
+      "description": "Share session via an encrypted link (share server or secret gist)"
+    },
+    {
+      "value": "stats",
+      "label": "stats",
+      "icon": "stats",
+      "description": "[--port <port>] [--host <host>] - Launch the local stats dashboard"
+    },
+    {
+      "value": "status",
+      "label": "status",
+      "icon": "extension",
+      "description": "Open Extension Control Center dashboard"
+    },
+    {
+      "value": "ssh",
+      "label": "ssh",
+      "icon": "host",
+      "description": "<subcommand> - Manage SSH connections"
+    },
+    {
+      "value": "shake",
+      "label": "shake",
+      "icon": "vibrate",
+      "description": "[elide|images|thinking] - Shake heavy content out of the conversation context"
+    },
+    {
+      "value": "structural-refactor-plan",
+      "label": "structural-refactor-plan",
+      "icon": "prompt",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan."
+    },
+    {
+      "value": "structural-refactor-review",
+      "label": "structural-refactor-review",
+      "icon": "prompt",
+      "description": "Review a refactor for behavior locks, false wins, and boundary clarity."
+    },
+    {
+      "value": "structural-refactor",
+      "label": "structural-refactor",
+      "icon": "prompt",
+      "description": "Lock behavior, diagnose structure, and run a bounded behavior-preserving refactor."
+    },
+    {
+      "value": "skill:",
+      "label": "skill:",
+      "icon": "compass",
+      "description": "55 skills"
+    },
+    {
+      "value": "models",
+      "label": "models",
+      "icon": "model",
+      "description": "Show current model selection"
+    },
+    {
+      "value": "resume",
+      "label": "resume",
+      "icon": "history",
+      "description": "[session id|@claude|@codex] - Resume a different session"
+    },
+    {
+      "value": "usage",
+      "label": "usage",
+      "icon": "gauge",
+      "description": "[show|reset [account|active]] - Show token usage"
+    },
+    {
+      "value": "advisor",
+      "label": "advisor",
+      "icon": "advisor",
+      "description": "[on|off|status|dump [raw]|configure] - Toggle advisor"
+    },
+    {
+      "value": "reload-plugins",
+      "label": "reload-plugins",
+      "icon": "restart",
+      "description": "Reload all plugins"
+    },
+    {
+      "value": "restart",
+      "label": "restart",
+      "icon": "restart",
+      "description": "Restart omp with the same launch flags, resuming this session"
+    },
+    {
+      "value": "fast",
+      "label": "fast",
+      "icon": "fast",
+      "description": "[on|off|status] - Toggle fast mode"
+    },
+    {
+      "value": "browser",
+      "label": "browser",
+      "icon": "globe",
+      "description": "[headless|visible] - Toggle browser eval-prelude headless vs visible mode"
+    },
+    {
+      "value": "jobs",
+      "label": "jobs",
+      "icon": "jobs",
+      "description": "Show background jobs"
+    },
+    {
+      "value": "hotkeys",
+      "label": "hotkeys",
+      "icon": "keyboard",
+      "description": "Show all keyboard shortcuts"
+    },
+    {
+      "value": "tools",
+      "label": "tools",
+      "icon": "tools",
+      "description": "Show available tools"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "fresh",
+      "label": "fresh",
+      "icon": "restart",
+      "description": "Reset provider stream state without changing the local transcript"
+    },
+    {
+      "value": "cleanse",
+      "label": "cleanse",
+      "icon": "stethoscope",
+      "description": "[request] [--all] - Detect and fix project diagnostics with weighted parallel subagents"
+    },
+    {
+      "value": "dirs",
+      "label": "dirs",
+      "description": "List this session's workspace directories"
+    },
+    {
+      "value": "plugins",
+      "label": "plugins",
+      "icon": "package",
+      "description": "[list|enable|disable] - Manage plugins"
+    },
+    {
+      "value": "pause",
+      "label": "pause",
+      "icon": "pause",
+      "description": "Freeze all agents (main, subagents, advisor) until resumed"
+    },
+    {
+      "value": "autoresearch",
+      "label": "autoresearch",
+      "icon": "extension",
+      "description": "arguments - Toggle builtin autoresearch mode, or pass off / clear, or a goal message."
+    },
+    {
+      "value": "fix-issues",
+      "label": "fix-issues",
+      "icon": "prompt",
+      "description": "# Fix Issues Command"
+    },
+    {
+      "value": "release",
+      "label": "release",
+      "icon": "prompt",
+      "description": "# Release"
+    },
+    {
+      "value": "review-prs",
+      "label": "review-prs",
+      "icon": "prompt",
+      "description": "# Review PRs"
+    },
+    {
+      "value": "code-agent-loops-best-practice",
+      "label": "code-agent-loops-best-practice",
+      "icon": "prompt",
+      "description": "# Code Agent Loops Best Practice"
+    },
+    {
+      "value": "loop-pr-stack",
+      "label": "loop-pr-stack",
+      "icon": "prompt",
+      "description": "# Loop PR Stack"
+    },
+    {
+      "value": "live",
+      "label": "live",
+      "icon": "voice",
+      "description": "Start Codex-backed realtime voice mode"
+    },
+    {
+      "value": "prewalk",
+      "label": "prewalk",
+      "icon": "prewalk",
+      "description": "Prewalk at the next action"
+    },
+    {
+      "value": "new",
+      "label": "new",
+      "icon": "plus",
+      "description": "Start a new session"
+    },
+    {
+      "value": "collab",
+      "label": "collab",
+      "icon": "broadcast",
+      "description": "[start|view|stop|status] [relayUrl] - Share this session live via a relay"
+    },
+    {
+      "value": "changelog",
+      "label": "changelog",
+      "icon": "news",
+      "description": "[full] - Show changelog"
+    },
+    {
+      "value": "context",
+      "label": "context",
+      "icon": "context",
+      "description": "Show context usage"
+    },
+    {
+      "value": "btw",
+      "label": "btw",
+      "icon": "question",
+      "description": "<question> - Ask an ephemeral side question using the current session context"
+    },
+    {
+      "value": "goal",
+      "label": "goal",
+      "icon": "goal",
+      "description": "[objective] - Goal: off"
+    },
+    {
+      "value": "compact",
+      "label": "compact",
+      "icon": "compress",
+      "description": "[soft|remote|snapcompact] [focus] - Compact the conversation"
+    },
+    {
+      "value": "rename",
+      "label": "rename",
+      "icon": "pencil",
+      "description": "<title> - Rename the current session"
+    },
+    {
+      "value": "todo",
+      "label": "todo",
+      "icon": "todo",
+      "description": "<subcommand> - Manage todos"
+    },
+    {
+      "value": "branch",
+      "label": "branch",
+      "icon": "branch",
+      "description": "Rewind to a previous message, keeping the old path as a branch"
+    },
+    {
+      "value": "tree",
+      "label": "tree",
+      "icon": "tree",
+      "description": "Navigate session tree (switch branches)"
+    },
+    {
+      "value": "omfg",
+      "label": "omfg",
+      "icon": "rule",
+      "description": "<complaint> - Forge a TTSR rule from a complaint to stop a recurring behavior"
+    },
+    {
+      "value": "plan",
+      "label": "plan",
+      "icon": "plan",
+      "description": "[prompt] - Plan: off"
+    },
+    {
+      "value": "plan-review",
+      "label": "plan-review",
+      "icon": "plan",
+      "description": "Re-open the plan review for the latest plan (plan mode only)"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "guided-goal",
+      "label": "guided-goal",
+      "icon": "compass",
+      "description": "[rough objective] - Have the agent interview you in chat, then set up goal mode"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "queue",
+      "label": "queue",
+      "icon": "inbox",
+      "description": "<message> - Queue a message for after the agent yields"
+    },
+    {
+      "value": "extended-context",
+      "label": "extended-context",
+      "icon": "expand",
+      "description": "[on|off|status] - Toggle extended context"
+    },
+    {
+      "value": "computer",
+      "label": "computer",
+      "icon": "computer",
+      "description": "[on|off|status] - Toggle computer use"
+    },
+    {
+      "value": "export",
+      "label": "export",
+      "icon": "export",
+      "description": "[--themes] [path] - Export session to HTML file"
+    },
+    {
+      "value": "trace",
+      "label": "trace",
+      "icon": "stats",
+      "description": "Open this session's trace in the stats dashboard"
+    },
+    {
+      "value": "dump",
+      "label": "dump",
+      "icon": "clipboard",
+      "description": "Return full transcript as plain text, with LLM request JSON path"
+    },
+    {
+      "value": "join",
+      "label": "join",
+      "icon": "signIn",
+      "description": "<link> - Join a shared collab session"
+    },
+    {
+      "value": "leave",
+      "label": "leave",
+      "icon": "signOut",
+      "description": "Leave the collab session"
+    },
+    {
+      "value": "copy",
+      "label": "copy",
+      "icon": "copy",
+      "description": "Pick text or code from the conversation to copy"
+    },
+    {
+      "value": "open",
+      "label": "open",
+      "icon": "globe",
+      "description": "Open the last link from the conversation in your browser (or pick one with /copy)"
+    },
+    {
+      "value": "git",
+      "label": "git",
+      "icon": "branch",
+      "description": "[revision] - Open the git UI (split diff viewer, staging, commit composer)"
+    },
+    {
+      "value": "fork",
+      "label": "fork",
+      "icon": "branch",
+      "description": "Create a new fork from a previous message"
+    },
+    {
+      "value": "mcp",
+      "label": "mcp",
+      "icon": "mcp",
+      "description": "<subcommand> - Manage MCP servers"
+    },
+    {
+      "value": "clear",
+      "label": "clear",
+      "icon": "eraser",
+      "description": "Clear the conversation context in place, keeping the session"
+    },
+    {
+      "value": "drop",
+      "label": "drop",
+      "icon": "trash",
+      "description": "Delete the current session and start a new one"
+    },
+    {
+      "value": "handoff",
+      "label": "handoff",
+      "icon": "handoff",
+      "description": "[focus instructions] - Summarize the session into a handoff document and compact in place"
+    },
+    {
+      "value": "pin",
+      "label": "pin",
+      "icon": "pin",
+      "description": "[session id] - Pin or unpin a session at the top of the resume list"
+    },
+    {
+      "value": "retry",
+      "label": "retry",
+      "icon": "redo",
+      "description": "Retry the last failed agent turn"
+    },
+    {
+      "value": "debug",
+      "label": "debug",
+      "icon": "bug",
+      "description": "Open debug tools selector"
+    },
+    {
+      "value": "memory",
+      "label": "memory",
+      "icon": "memory",
+      "description": "<subcommand> - Manage memory"
+    },
+    {
+      "value": "move",
+      "label": "move",
+      "icon": "folderMove",
+      "description": "[<path>] - Move the current session to a different directory"
+    },
+    {
+      "value": "wt",
+      "label": "wt",
+      "icon": "folderMove",
+      "description": "[<branch>] - Move this session into a new worktree, changes included"
+    },
+    {
+      "value": "add-dir",
+      "label": "add-dir",
+      "icon": "folderPlus",
+      "description": "<path> - Add a workspace directory to this session"
+    },
+    {
+      "value": "remove-dir",
+      "label": "remove-dir",
+      "icon": "folderMinus",
+      "description": "<path> - Remove a workspace directory from this session"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    },
+    {
+      "value": "force",
+      "label": "force",
+      "icon": "hammer",
+      "description": "<tool-name> [prompt] - Force next turn to use a specific tool"
+    },
+    {
+      "value": "green",
+      "label": "green",
+      "icon": "prompt",
+      "description": "arguments - Generate a prompt to iterate on CI failures until the branch is green"
+    },
+    {
+      "value": "init",
+      "label": "init",
+      "icon": "prompt",
+      "description": "Generate AGENTS.md for current codebase"
+    }
+  ],
+  "se": [
+    {
+      "value": "settings",
+      "label": "settings",
+      "icon": "settings",
+      "description": "Open settings menu"
+    },
+    {
+      "value": "session",
+      "label": "session",
+      "icon": "session",
+      "description": "[info|delete|pin [account]] - Show or configure the current session"
+    },
+    {
+      "value": "security",
+      "label": "security",
+      "icon": "shield",
+      "description": "<plan|scan|status|cancel|scans|show|import|export|validate|compare|disposition> - Plan, run, inspect, import, and compare OMP-native security scans"
+    },
+    {
+      "value": "setup",
+      "label": "setup",
+      "icon": "gear",
+      "description": "Open provider setup"
+    },
+    {
+      "value": "browser",
+      "label": "browser",
+      "icon": "globe",
+      "description": "[headless|visible] - Toggle browser eval-prelude headless vs visible mode"
+    },
+    {
+      "value": "cleanse",
+      "label": "cleanse",
+      "icon": "stethoscope",
+      "description": "[request] [--all] - Detect and fix project diagnostics with weighted parallel subagents"
+    },
+    {
+      "value": "pause",
+      "label": "pause",
+      "icon": "pause",
+      "description": "Freeze all agents (main, subagents, advisor) until resumed"
+    },
+    {
+      "value": "autoresearch",
+      "label": "autoresearch",
+      "icon": "extension",
+      "description": "arguments - Toggle builtin autoresearch mode, or pass off / clear, or a goal message."
+    },
+    {
+      "value": "release",
+      "label": "release",
+      "icon": "prompt",
+      "description": "# Release"
+    },
+    {
+      "value": "resume",
+      "label": "resume",
+      "icon": "history",
+      "description": "[session id|@claude|@codex] - Resume a different session"
+    },
+    {
+      "value": "usage",
+      "label": "usage",
+      "icon": "gauge",
+      "description": "[show|reset [account|active]] - Show token usage"
+    },
+    {
+      "value": "share",
+      "label": "share",
+      "icon": "share",
+      "description": "Share session via an encrypted link (share server or secret gist)"
+    },
+    {
+      "value": "shake",
+      "label": "shake",
+      "icon": "vibrate",
+      "description": "[elide|images|thinking] - Shake heavy content out of the conversation context"
+    },
+    {
+      "value": "fix-issues",
+      "label": "fix-issues",
+      "icon": "prompt",
+      "description": "# Fix Issues Command"
+    },
+    {
+      "value": "code-agent-loops-best-practice",
+      "label": "code-agent-loops-best-practice",
+      "icon": "prompt",
+      "description": "# Code Agent Loops Best Practice"
+    },
+    {
+      "value": "structural-refactor-plan",
+      "label": "structural-refactor-plan",
+      "icon": "prompt",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan."
+    },
+    {
+      "value": "structural-refactor-review",
+      "label": "structural-refactor-review",
+      "icon": "prompt",
+      "description": "Review a refactor for behavior locks, false wins, and boundary clarity."
+    },
+    {
+      "value": "structural-refactor",
+      "label": "structural-refactor",
+      "icon": "prompt",
+      "description": "Lock behavior, diagnose structure, and run a bounded behavior-preserving refactor."
+    },
+    {
+      "value": "model",
+      "label": "model",
+      "icon": "model",
+      "description": "Show current model selection"
+    },
+    {
+      "value": "btw",
+      "label": "btw",
+      "icon": "question",
+      "description": "<question> - Ask an ephemeral side question using the current session context"
+    },
+    {
+      "value": "goal",
+      "label": "goal",
+      "icon": "goal",
+      "description": "[objective] - Goal: off"
+    },
+    {
+      "value": "compact",
+      "label": "compact",
+      "icon": "compress",
+      "description": "[soft|remote|snapcompact] [focus] - Compact the conversation"
+    },
+    {
+      "value": "advisor",
+      "label": "advisor",
+      "icon": "advisor",
+      "description": "[on|off|status|dump [raw]|configure] - Toggle advisor"
+    },
+    {
+      "value": "rename",
+      "label": "rename",
+      "icon": "pencil",
+      "description": "<title> - Rename the current session"
+    },
+    {
+      "value": "tree",
+      "label": "tree",
+      "icon": "tree",
+      "description": "Navigate session tree (switch branches)"
+    },
+    {
+      "value": "new",
+      "label": "new",
+      "icon": "plus",
+      "description": "Start a new session"
+    },
+    {
+      "value": "restart",
+      "label": "restart",
+      "icon": "restart",
+      "description": "Restart omp with the same launch flags, resuming this session"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "guided-goal",
+      "label": "guided-goal",
+      "icon": "compass",
+      "description": "[rough objective] - Have the agent interview you in chat, then set up goal mode"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "switch",
+      "label": "switch",
+      "icon": "swap",
+      "description": "[model] - Switch model for this session only"
+    },
+    {
+      "value": "fast",
+      "label": "fast",
+      "icon": "fast",
+      "description": "[on|off|status] - Toggle fast mode"
+    },
+    {
+      "value": "skillful",
+      "label": "skillful",
+      "icon": "compass",
+      "description": "[on|off|status] - Toggle skill listing"
+    },
+    {
+      "value": "computer",
+      "label": "computer",
+      "icon": "computer",
+      "description": "[on|off|status] - Toggle computer use"
+    },
+    {
+      "value": "export",
+      "label": "export",
+      "icon": "export",
+      "description": "[--themes] [path] - Export session to HTML file"
+    },
+    {
+      "value": "trace",
+      "label": "trace",
+      "icon": "stats",
+      "description": "Open this session's trace in the stats dashboard"
+    },
+    {
+      "value": "dump",
+      "label": "dump",
+      "icon": "clipboard",
+      "description": "Return full transcript as plain text, with LLM request JSON path"
+    },
+    {
+      "value": "collab",
+      "label": "collab",
+      "icon": "broadcast",
+      "description": "[start|view|stop|status] [relayUrl] - Share this session live via a relay"
+    },
+    {
+      "value": "join",
+      "label": "join",
+      "icon": "signIn",
+      "description": "<link> - Join a shared collab session"
+    },
+    {
+      "value": "leave",
+      "label": "leave",
+      "icon": "signOut",
+      "description": "Leave the collab session"
+    },
+    {
+      "value": "open",
+      "label": "open",
+      "icon": "globe",
+      "description": "Open the last link from the conversation in your browser (or pick one with /copy)"
+    },
+    {
+      "value": "git",
+      "label": "git",
+      "icon": "branch",
+      "description": "[revision] - Open the git UI (split diff viewer, staging, commit composer)"
+    },
+    {
+      "value": "mcp",
+      "label": "mcp",
+      "icon": "mcp",
+      "description": "<subcommand> - Manage MCP servers"
+    },
+    {
+      "value": "fresh",
+      "label": "fresh",
+      "icon": "restart",
+      "description": "Reset provider stream state without changing the local transcript"
+    },
+    {
+      "value": "clear",
+      "label": "clear",
+      "icon": "eraser",
+      "description": "Clear the conversation context in place, keeping the session"
+    },
+    {
+      "value": "drop",
+      "label": "drop",
+      "icon": "trash",
+      "description": "Delete the current session and start a new one"
+    },
+    {
+      "value": "handoff",
+      "label": "handoff",
+      "icon": "handoff",
+      "description": "[focus instructions] - Summarize the session into a handoff document and compact in place"
+    },
+    {
+      "value": "pin",
+      "label": "pin",
+      "icon": "pin",
+      "description": "[session id] - Pin or unpin a session at the top of the resume list"
+    },
+    {
+      "value": "debug",
+      "label": "debug",
+      "icon": "bug",
+      "description": "Open debug tools selector"
+    },
+    {
+      "value": "move",
+      "label": "move",
+      "icon": "folderMove",
+      "description": "[<path>] - Move the current session to a different directory"
+    },
+    {
+      "value": "wt",
+      "label": "wt",
+      "icon": "folderMove",
+      "description": "[<branch>] - Move this session into a new worktree, changes included"
+    },
+    {
+      "value": "add-dir",
+      "label": "add-dir",
+      "icon": "folderPlus",
+      "description": "<path> - Add a workspace directory to this session"
+    },
+    {
+      "value": "remove-dir",
+      "label": "remove-dir",
+      "icon": "folderMinus",
+      "description": "<path> - Remove a workspace directory from this session"
+    },
+    {
+      "value": "dirs",
+      "label": "dirs",
+      "description": "List this session's workspace directories"
+    },
+    {
+      "value": "force",
+      "label": "force",
+      "icon": "hammer",
+      "description": "<tool-name> [prompt] - Force next turn to use a specific tool"
+    },
+    {
+      "value": "init",
+      "label": "init",
+      "icon": "prompt",
+      "description": "Generate AGENTS.md for current codebase"
+    },
+    {
+      "value": "reload-plugins",
+      "label": "reload-plugins",
+      "icon": "restart",
+      "description": "Reload all plugins"
+    },
+    {
+      "value": "live",
+      "label": "live",
+      "icon": "voice",
+      "description": "Start Codex-backed realtime voice mode"
+    },
+    {
+      "value": "prewalk",
+      "label": "prewalk",
+      "icon": "prewalk",
+      "description": "Prewalk at the next action"
+    },
+    {
+      "value": "branch",
+      "label": "branch",
+      "icon": "branch",
+      "description": "Rewind to a previous message, keeping the old path as a branch"
+    },
+    {
+      "value": "omfg",
+      "label": "omfg",
+      "icon": "rule",
+      "description": "<complaint> - Forge a TTSR rule from a complaint to stop a recurring behavior"
+    },
+    {
+      "value": "plan",
+      "label": "plan",
+      "icon": "plan",
+      "description": "[prompt] - Plan: off"
+    },
+    {
+      "value": "plan-review",
+      "label": "plan-review",
+      "icon": "plan",
+      "description": "Re-open the plan review for the latest plan (plan mode only)"
+    },
+    {
+      "value": "queue",
+      "label": "queue",
+      "icon": "inbox",
+      "description": "<message> - Queue a message for after the agent yields"
+    },
+    {
+      "value": "changelog",
+      "label": "changelog",
+      "icon": "news",
+      "description": "[full] - Show changelog"
+    },
+    {
+      "value": "hotkeys",
+      "label": "hotkeys",
+      "icon": "keyboard",
+      "description": "Show all keyboard shortcuts"
+    },
+    {
+      "value": "tools",
+      "label": "tools",
+      "icon": "tools",
+      "description": "Show available tools"
+    },
+    {
+      "value": "context",
+      "label": "context",
+      "icon": "context",
+      "description": "Show context usage"
+    },
+    {
+      "value": "extensions",
+      "label": "extensions",
+      "icon": "extension",
+      "description": "Open Extension Control Center dashboard"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "fork",
+      "label": "fork",
+      "icon": "branch",
+      "description": "Create a new fork from a previous message"
+    },
+    {
+      "value": "ssh",
+      "label": "ssh",
+      "icon": "host",
+      "description": "<subcommand> - Manage SSH connections"
+    },
+    {
+      "value": "retry",
+      "label": "retry",
+      "icon": "redo",
+      "description": "Retry the last failed agent turn"
+    },
+    {
+      "value": "memory",
+      "label": "memory",
+      "icon": "memory",
+      "description": "<subcommand> - Manage memory"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    },
+    {
+      "value": "plugins",
+      "label": "plugins",
+      "icon": "package",
+      "description": "[list|enable|disable] - Manage plugins"
+    },
+    {
+      "value": "green",
+      "label": "green",
+      "icon": "prompt",
+      "description": "arguments - Generate a prompt to iterate on CI failures until the branch is green"
+    }
+  ],
+  "set": [
+    {
+      "value": "settings",
+      "label": "settings",
+      "icon": "settings",
+      "description": "Open settings menu"
+    },
+    {
+      "value": "setup",
+      "label": "setup",
+      "icon": "gear",
+      "description": "Open provider setup"
+    },
+    {
+      "value": "security",
+      "label": "security",
+      "icon": "shield",
+      "description": "<plan|scan|status|cancel|scans|show|import|export|validate|compare|disposition> - Plan, run, inspect, import, and compare OMP-native security scans"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "guided-goal",
+      "label": "guided-goal",
+      "icon": "compass",
+      "description": "[rough objective] - Have the agent interview you in chat, then set up goal mode"
+    },
+    {
+      "value": "fresh",
+      "label": "fresh",
+      "icon": "restart",
+      "description": "Reset provider stream state without changing the local transcript"
+    },
+    {
+      "value": "code-agent-loops-best-practice",
+      "label": "code-agent-loops-best-practice",
+      "icon": "prompt",
+      "description": "# Code Agent Loops Best Practice"
+    },
+    {
+      "value": "structural-refactor-plan",
+      "label": "structural-refactor-plan",
+      "icon": "prompt",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan."
+    },
+    {
+      "value": "structural-refactor-review",
+      "label": "structural-refactor-review",
+      "icon": "prompt",
+      "description": "Review a refactor for behavior locks, false wins, and boundary clarity."
+    },
+    {
+      "value": "structural-refactor",
+      "label": "structural-refactor",
+      "icon": "prompt",
+      "description": "Lock behavior, diagnose structure, and run a bounded behavior-preserving refactor."
+    },
+    {
+      "value": "compact",
+      "label": "compact",
+      "icon": "compress",
+      "description": "[soft|remote|snapcompact] [focus] - Compact the conversation"
+    },
+    {
+      "value": "session",
+      "label": "session",
+      "icon": "session",
+      "description": "[info|delete|pin [account]] - Show or configure the current session"
+    },
+    {
+      "value": "tree",
+      "label": "tree",
+      "icon": "tree",
+      "description": "Navigate session tree (switch branches)"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "fast",
+      "label": "fast",
+      "icon": "fast",
+      "description": "[on|off|status] - Toggle fast mode"
+    },
+    {
+      "value": "computer",
+      "label": "computer",
+      "icon": "computer",
+      "description": "[on|off|status] - Toggle computer use"
+    },
+    {
+      "value": "export",
+      "label": "export",
+      "icon": "export",
+      "description": "[--themes] [path] - Export session to HTML file"
+    },
+    {
+      "value": "dump",
+      "label": "dump",
+      "icon": "clipboard",
+      "description": "Return full transcript as plain text, with LLM request JSON path"
+    },
+    {
+      "value": "mcp",
+      "label": "mcp",
+      "icon": "mcp",
+      "description": "<subcommand> - Manage MCP servers"
+    },
+    {
+      "value": "drop",
+      "label": "drop",
+      "icon": "trash",
+      "description": "Delete the current session and start a new one"
+    },
+    {
+      "value": "handoff",
+      "label": "handoff",
+      "icon": "handoff",
+      "description": "[focus instructions] - Summarize the session into a handoff document and compact in place"
+    },
+    {
+      "value": "pin",
+      "label": "pin",
+      "icon": "pin",
+      "description": "[session id] - Pin or unpin a session at the top of the resume list"
+    },
+    {
+      "value": "move",
+      "label": "move",
+      "icon": "folderMove",
+      "description": "[<path>] - Move the current session to a different directory"
+    },
+    {
+      "value": "force",
+      "label": "force",
+      "icon": "hammer",
+      "description": "<tool-name> [prompt] - Force next turn to use a specific tool"
+    },
+    {
+      "value": "model",
+      "label": "model",
+      "icon": "model",
+      "description": "Show current model selection"
+    },
+    {
+      "value": "btw",
+      "label": "btw",
+      "icon": "question",
+      "description": "<question> - Ask an ephemeral side question using the current session context"
+    },
+    {
+      "value": "goal",
+      "label": "goal",
+      "icon": "goal",
+      "description": "[objective] - Goal: off"
+    },
+    {
+      "value": "resume",
+      "label": "resume",
+      "icon": "history",
+      "description": "[session id|@claude|@codex] - Resume a different session"
+    },
+    {
+      "value": "usage",
+      "label": "usage",
+      "icon": "gauge",
+      "description": "[show|reset [account|active]] - Show token usage"
+    },
+    {
+      "value": "advisor",
+      "label": "advisor",
+      "icon": "advisor",
+      "description": "[on|off|status|dump [raw]|configure] - Toggle advisor"
+    },
+    {
+      "value": "reload-plugins",
+      "label": "reload-plugins",
+      "icon": "restart",
+      "description": "Reload all plugins"
+    },
+    {
+      "value": "live",
+      "label": "live",
+      "icon": "voice",
+      "description": "Start Codex-backed realtime voice mode"
+    },
+    {
+      "value": "prewalk",
+      "label": "prewalk",
+      "icon": "prewalk",
+      "description": "Prewalk at the next action"
+    },
+    {
+      "value": "branch",
+      "label": "branch",
+      "icon": "branch",
+      "description": "Rewind to a previous message, keeping the old path as a branch"
+    },
+    {
+      "value": "omfg",
+      "label": "omfg",
+      "icon": "rule",
+      "description": "<complaint> - Forge a TTSR rule from a complaint to stop a recurring behavior"
+    },
+    {
+      "value": "restart",
+      "label": "restart",
+      "icon": "restart",
+      "description": "Restart omp with the same launch flags, resuming this session"
+    },
+    {
+      "value": "plan",
+      "label": "plan",
+      "icon": "plan",
+      "description": "[prompt] - Plan: off"
+    },
+    {
+      "value": "queue",
+      "label": "queue",
+      "icon": "inbox",
+      "description": "<message> - Queue a message for after the agent yields"
+    },
+    {
+      "value": "switch",
+      "label": "switch",
+      "icon": "swap",
+      "description": "[model] - Switch model for this session only"
+    },
+    {
+      "value": "skillful",
+      "label": "skillful",
+      "icon": "compass",
+      "description": "[on|off|status] - Toggle skill listing"
+    },
+    {
+      "value": "trace",
+      "label": "trace",
+      "icon": "stats",
+      "description": "Open this session's trace in the stats dashboard"
+    },
+    {
+      "value": "share",
+      "label": "share",
+      "icon": "share",
+      "description": "Share session via an encrypted link (share server or secret gist)"
+    },
+    {
+      "value": "collab",
+      "label": "collab",
+      "icon": "broadcast",
+      "description": "[start|view|stop|status] [relayUrl] - Share this session live via a relay"
+    },
+    {
+      "value": "open",
+      "label": "open",
+      "icon": "globe",
+      "description": "Open the last link from the conversation in your browser (or pick one with /copy)"
+    },
+    {
+      "value": "changelog",
+      "label": "changelog",
+      "icon": "news",
+      "description": "[full] - Show changelog"
+    },
+    {
+      "value": "hotkeys",
+      "label": "hotkeys",
+      "icon": "keyboard",
+      "description": "Show all keyboard shortcuts"
+    },
+    {
+      "value": "tools",
+      "label": "tools",
+      "icon": "tools",
+      "description": "Show available tools"
+    },
+    {
+      "value": "context",
+      "label": "context",
+      "icon": "context",
+      "description": "Show context usage"
+    },
+    {
+      "value": "extensions",
+      "label": "extensions",
+      "icon": "extension",
+      "description": "Open Extension Control Center dashboard"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "git",
+      "label": "git",
+      "icon": "branch",
+      "description": "[revision] - Open the git UI (split diff viewer, staging, commit composer)"
+    },
+    {
+      "value": "clear",
+      "label": "clear",
+      "icon": "eraser",
+      "description": "Clear the conversation context in place, keeping the session"
+    },
+    {
+      "value": "cleanse",
+      "label": "cleanse",
+      "icon": "stethoscope",
+      "description": "[request] [--all] - Detect and fix project diagnostics with weighted parallel subagents"
+    },
+    {
+      "value": "retry",
+      "label": "retry",
+      "icon": "redo",
+      "description": "Retry the last failed agent turn"
+    },
+    {
+      "value": "debug",
+      "label": "debug",
+      "icon": "bug",
+      "description": "Open debug tools selector"
+    },
+    {
+      "value": "memory",
+      "label": "memory",
+      "icon": "memory",
+      "description": "<subcommand> - Manage memory"
+    },
+    {
+      "value": "wt",
+      "label": "wt",
+      "icon": "folderMove",
+      "description": "[<branch>] - Move this session into a new worktree, changes included"
+    },
+    {
+      "value": "add-dir",
+      "label": "add-dir",
+      "icon": "folderPlus",
+      "description": "<path> - Add a workspace directory to this session"
+    },
+    {
+      "value": "remove-dir",
+      "label": "remove-dir",
+      "icon": "folderMinus",
+      "description": "<path> - Remove a workspace directory from this session"
+    },
+    {
+      "value": "dirs",
+      "label": "dirs",
+      "description": "List this session's workspace directories"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    },
+    {
+      "value": "pause",
+      "label": "pause",
+      "icon": "pause",
+      "description": "Freeze all agents (main, subagents, advisor) until resumed"
+    },
+    {
+      "value": "init",
+      "label": "init",
+      "icon": "prompt",
+      "description": "Generate AGENTS.md for current codebase"
+    }
+  ],
+  "pl": [
+    {
+      "value": "plan",
+      "label": "plan",
+      "icon": "plan",
+      "description": "[prompt] - Plan: off"
+    },
+    {
+      "value": "plan-review",
+      "label": "plan-review",
+      "icon": "plan",
+      "description": "Re-open the plan review for the latest plan (plan mode only)"
+    },
+    {
+      "value": "plugins",
+      "label": "plugins",
+      "icon": "package",
+      "description": "[list|enable|disable] - Manage plugins"
+    },
+    {
+      "value": "reload-plugins",
+      "label": "reload-plugins",
+      "icon": "restart",
+      "description": "Reload all plugins"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    },
+    {
+      "value": "structural-refactor-plan",
+      "label": "structural-refactor-plan",
+      "icon": "prompt",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan."
+    },
+    {
+      "value": "security",
+      "label": "security",
+      "icon": "shield",
+      "description": "<plan|scan|status|cancel|scans|show|import|export|validate|compare|disposition> - Plan, run, inspect, import, and compare OMP-native security scans"
+    },
+    {
+      "value": "prewalk",
+      "label": "prewalk",
+      "icon": "prewalk",
+      "description": "Prewalk at the next action"
+    },
+    {
+      "value": "omfg",
+      "label": "omfg",
+      "icon": "rule",
+      "description": "<complaint> - Forge a TTSR rule from a complaint to stop a recurring behavior"
+    },
+    {
+      "value": "git",
+      "label": "git",
+      "icon": "branch",
+      "description": "[revision] - Open the git UI (split diff viewer, staging, commit composer)"
+    },
+    {
+      "value": "clear",
+      "label": "clear",
+      "icon": "eraser",
+      "description": "Clear the conversation context in place, keeping the session"
+    },
+    {
+      "value": "exit",
+      "label": "exit",
+      "description": "Exit the application"
+    },
+    {
+      "value": "quit",
+      "label": "quit",
+      "icon": "power",
+      "description": "Quit the application"
+    },
+    {
+      "value": "btw",
+      "label": "btw",
+      "icon": "question",
+      "description": "<question> - Ask an ephemeral side question using the current session context"
+    },
+    {
+      "value": "usage",
+      "label": "usage",
+      "icon": "gauge",
+      "description": "[show|reset [account|active]] - Show token usage"
+    },
+    {
+      "value": "branch",
+      "label": "branch",
+      "icon": "branch",
+      "description": "Rewind to a previous message, keeping the old path as a branch"
+    },
+    {
+      "value": "restart",
+      "label": "restart",
+      "icon": "restart",
+      "description": "Restart omp with the same launch flags, resuming this session"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "guided-goal",
+      "label": "guided-goal",
+      "icon": "compass",
+      "description": "[rough objective] - Have the agent interview you in chat, then set up goal mode"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "switch",
+      "label": "switch",
+      "icon": "swap",
+      "description": "[model] - Switch model for this session only"
+    },
+    {
+      "value": "skillful",
+      "label": "skillful",
+      "icon": "compass",
+      "description": "[on|off|status] - Toggle skill listing"
+    },
+    {
+      "value": "computer",
+      "label": "computer",
+      "icon": "computer",
+      "description": "[on|off|status] - Toggle computer use"
+    },
+    {
+      "value": "export",
+      "label": "export",
+      "icon": "export",
+      "description": "[--themes] [path] - Export session to HTML file"
+    },
+    {
+      "value": "dump",
+      "label": "dump",
+      "icon": "clipboard",
+      "description": "Return full transcript as plain text, with LLM request JSON path"
+    },
+    {
+      "value": "share",
+      "label": "share",
+      "icon": "share",
+      "description": "Share session via an encrypted link (share server or secret gist)"
+    },
+    {
+      "value": "browser",
+      "label": "browser",
+      "icon": "globe",
+      "description": "[headless|visible] - Toggle browser eval-prelude headless vs visible mode"
+    },
+    {
+      "value": "open",
+      "label": "open",
+      "icon": "globe",
+      "description": "Open the last link from the conversation in your browser (or pick one with /copy)"
+    },
+    {
+      "value": "extensions",
+      "label": "extensions",
+      "icon": "extension",
+      "description": "Open Extension Control Center dashboard"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "hub",
+      "label": "hub",
+      "icon": "agents",
+      "description": "Open the live Agent Hub"
+    },
+    {
+      "value": "mcp",
+      "label": "mcp",
+      "icon": "mcp",
+      "description": "<subcommand> - Manage MCP servers"
+    },
+    {
+      "value": "fresh",
+      "label": "fresh",
+      "icon": "restart",
+      "description": "Reset provider stream state without changing the local transcript"
+    },
+    {
+      "value": "shake",
+      "label": "shake",
+      "icon": "vibrate",
+      "description": "[elide|images|thinking] - Shake heavy content out of the conversation context"
+    },
+    {
+      "value": "pin",
+      "label": "pin",
+      "icon": "pin",
+      "description": "[session id] - Pin or unpin a session at the top of the resume list"
+    },
+    {
+      "value": "cleanse",
+      "label": "cleanse",
+      "icon": "stethoscope",
+      "description": "[request] [--all] - Detect and fix project diagnostics with weighted parallel subagents"
+    },
+    {
+      "value": "debug",
+      "label": "debug",
+      "icon": "bug",
+      "description": "Open debug tools selector"
+    },
+    {
+      "value": "add-dir",
+      "label": "add-dir",
+      "icon": "folderPlus",
+      "description": "<path> - Add a workspace directory to this session"
+    },
+    {
+      "value": "force",
+      "label": "force",
+      "icon": "hammer",
+      "description": "<tool-name> [prompt] - Force next turn to use a specific tool"
+    },
+    {
+      "value": "autoresearch",
+      "label": "autoresearch",
+      "icon": "extension",
+      "description": "arguments - Toggle builtin autoresearch mode, or pass off / clear, or a goal message."
+    },
+    {
+      "value": "green",
+      "label": "green",
+      "icon": "prompt",
+      "description": "arguments - Generate a prompt to iterate on CI failures until the branch is green"
+    }
+  ],
+  "mod": [
+    {
+      "value": "model",
+      "label": "model",
+      "icon": "model",
+      "description": "Show current model selection"
+    },
+    {
+      "value": "remove-dir",
+      "label": "remove-dir",
+      "icon": "folderMinus",
+      "description": "<path> - Remove a workspace directory from this session"
+    },
+    {
+      "value": "goal",
+      "label": "goal",
+      "icon": "goal",
+      "description": "[objective] - Goal: off"
+    },
+    {
+      "value": "advisor",
+      "label": "advisor",
+      "icon": "advisor",
+      "description": "[on|off|status|dump [raw]|configure] - Toggle advisor"
+    },
+    {
+      "value": "todo",
+      "label": "todo",
+      "icon": "todo",
+      "description": "<subcommand> - Manage todos"
+    },
+    {
+      "value": "live",
+      "label": "live",
+      "icon": "voice",
+      "description": "Start Codex-backed realtime voice mode"
+    },
+    {
+      "value": "prewalk",
+      "label": "prewalk",
+      "icon": "prewalk",
+      "description": "Prewalk at the next action"
+    },
+    {
+      "value": "plan",
+      "label": "plan",
+      "icon": "plan",
+      "description": "[prompt] - Plan: off"
+    },
+    {
+      "value": "plan-review",
+      "label": "plan-review",
+      "icon": "plan",
+      "description": "Re-open the plan review for the latest plan (plan mode only)"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "guided-goal",
+      "label": "guided-goal",
+      "icon": "compass",
+      "description": "[rough objective] - Have the agent interview you in chat, then set up goal mode"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "switch",
+      "label": "switch",
+      "icon": "swap",
+      "description": "[model] - Switch model for this session only"
+    },
+    {
+      "value": "browser",
+      "label": "browser",
+      "icon": "globe",
+      "description": "[headless|visible] - Toggle browser eval-prelude headless vs visible mode"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "autoresearch",
+      "label": "autoresearch",
+      "icon": "extension",
+      "description": "arguments - Toggle builtin autoresearch mode, or pass off / clear, or a goal message."
+    },
+    {
+      "value": "move",
+      "label": "move",
+      "icon": "folderMove",
+      "description": "[<path>] - Move the current session to a different directory"
+    },
+    {
+      "value": "wt",
+      "label": "wt",
+      "icon": "folderMove",
+      "description": "[<branch>] - Move this session into a new worktree, changes included"
+    },
+    {
+      "value": "structural-refactor-plan",
+      "label": "structural-refactor-plan",
+      "icon": "prompt",
+      "description": "Diagnose a structural problem and produce an approval-gated refactor plan."
+    },
+    {
+      "value": "session",
+      "label": "session",
+      "icon": "session",
+      "description": "[info|delete|pin [account]] - Show or configure the current session"
+    },
+    {
+      "value": "branch",
+      "label": "branch",
+      "icon": "branch",
+      "description": "Rewind to a previous message, keeping the old path as a branch"
+    },
+    {
+      "value": "security",
+      "label": "security",
+      "icon": "shield",
+      "description": "<plan|scan|status|cancel|scans|show|import|export|validate|compare|disposition> - Plan, run, inspect, import, and compare OMP-native security scans"
+    },
+    {
+      "value": "queue",
+      "label": "queue",
+      "icon": "inbox",
+      "description": "<message> - Queue a message for after the agent yields"
+    },
+    {
+      "value": "context",
+      "label": "context",
+      "icon": "context",
+      "description": "Show context usage"
+    },
+    {
+      "value": "logout",
+      "label": "logout",
+      "icon": "signOut",
+      "description": "[provider] - Logout from OAuth provider"
+    },
+    {
+      "value": "ssh",
+      "label": "ssh",
+      "icon": "host",
+      "description": "<subcommand> - Manage SSH connections"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    },
+    {
+      "value": "pause",
+      "label": "pause",
+      "icon": "pause",
+      "description": "Freeze all agents (main, subagents, advisor) until resumed"
+    },
+    {
+      "value": "init",
+      "label": "init",
+      "icon": "prompt",
+      "description": "Generate AGENTS.md for current codebase"
+    }
+  ],
+  "sk": [
+    {
+      "value": "skillful",
+      "label": "skillful",
+      "icon": "compass",
+      "description": "[on|off|status] - Toggle skill listing"
+    },
+    {
+      "value": "skill:",
+      "label": "skill:",
+      "icon": "compass",
+      "description": "55 skills"
+    },
+    {
+      "value": "shake",
+      "label": "shake",
+      "icon": "vibrate",
+      "description": "[elide|images|thinking] - Shake heavy content out of the conversation context"
+    },
+    {
+      "value": "loop-pr-stack",
+      "label": "loop-pr-stack",
+      "icon": "prompt",
+      "description": "# Loop PR Stack"
+    },
+    {
+      "value": "btw",
+      "label": "btw",
+      "icon": "question",
+      "description": "<question> - Ask an ephemeral side question using the current session context"
+    },
+    {
+      "value": "reload-plugins",
+      "label": "reload-plugins",
+      "icon": "restart",
+      "description": "Reload all plugins"
+    },
+    {
+      "value": "live",
+      "label": "live",
+      "icon": "voice",
+      "description": "Start Codex-backed realtime voice mode"
+    },
+    {
+      "value": "prewalk",
+      "label": "prewalk",
+      "icon": "prewalk",
+      "description": "Prewalk at the next action"
+    },
+    {
+      "value": "branch",
+      "label": "branch",
+      "icon": "branch",
+      "description": "Rewind to a previous message, keeping the old path as a branch"
+    },
+    {
+      "value": "vibe",
+      "label": "vibe",
+      "icon": "wave",
+      "description": "[prompt] - Toggle vibe mode (direct persistent fast/good worker sessions; read-only toolset)"
+    },
+    {
+      "value": "share",
+      "label": "share",
+      "icon": "share",
+      "description": "Share session via an encrypted link (share server or secret gist)"
+    },
+    {
+      "value": "open",
+      "label": "open",
+      "icon": "globe",
+      "description": "Open the last link from the conversation in your browser (or pick one with /copy)"
+    },
+    {
+      "value": "jobs",
+      "label": "jobs",
+      "icon": "jobs",
+      "description": "Show background jobs"
+    },
+    {
+      "value": "hotkeys",
+      "label": "hotkeys",
+      "icon": "keyboard",
+      "description": "Show all keyboard shortcuts"
+    },
+    {
+      "value": "context",
+      "label": "context",
+      "icon": "context",
+      "description": "Show context usage"
+    },
+    {
+      "value": "agents",
+      "label": "agents",
+      "icon": "agents",
+      "description": "Open the agents hub (per-agent model, prewalk, and advisor)"
+    },
+    {
+      "value": "clear",
+      "label": "clear",
+      "icon": "eraser",
+      "description": "Clear the conversation context in place, keeping the session"
+    },
+    {
+      "value": "wt",
+      "label": "wt",
+      "icon": "folderMove",
+      "description": "[<branch>] - Move this session into a new worktree, changes included"
+    },
+    {
+      "value": "dirs",
+      "label": "dirs",
+      "description": "List this session's workspace directories"
+    }
+  ],
+  "q": [
+    {
+      "value": "q",
+      "label": "q",
+      "icon": "power",
+      "description": "Quit the application"
+    },
+    {
+      "value": "queue",
+      "label": "queue",
+      "icon": "inbox",
+      "description": "<message> - Queue a message for after the agent yields"
+    },
+    {
+      "value": "btw",
+      "label": "btw",
+      "icon": "question",
+      "description": "<question> - Ask an ephemeral side question using the current session context"
+    },
+    {
+      "value": "dump",
+      "label": "dump",
+      "icon": "clipboard",
+      "description": "Return full transcript as plain text, with LLM request JSON path"
+    }
+  ],
+  "clip": [
+    {
+      "value": "dump",
+      "label": "dump",
+      "icon": "clipboard",
+      "description": "Return full transcript as plain text, with LLM request JSON path"
+    },
+    {
+      "value": "fresh",
+      "label": "fresh",
+      "icon": "restart",
+      "description": "Reset provider stream state without changing the local transcript"
+    },
+    {
+      "value": "clear",
+      "label": "clear",
+      "icon": "eraser",
+      "description": "Clear the conversation context in place, keeping the session"
+    },
+    {
+      "value": "prewalk",
+      "label": "prewalk",
+      "icon": "prewalk",
+      "description": "Prewalk at the next action"
+    },
+    {
+      "value": "omfg",
+      "label": "omfg",
+      "icon": "rule",
+      "description": "<complaint> - Forge a TTSR rule from a complaint to stop a recurring behavior"
+    },
+    {
+      "value": "loop",
+      "label": "loop",
+      "icon": "loop",
+      "description": "[count|duration] [prompt] - Toggle loop mode. While enabled, the next prompt you send re-submits after every yield. Esc cancels the current iteration; /loop again to disable."
+    },
+    {
+      "value": "switch",
+      "label": "switch",
+      "icon": "swap",
+      "description": "[model] - Switch model for this session only"
+    },
+    {
+      "value": "marketplace",
+      "label": "marketplace",
+      "icon": "cart",
+      "description": "<subcommand> - Manage plugins from marketplaces"
+    }
+  ],
+  "goal ": [
+    {
+      "value": "set ",
+      "label": "set",
+      "description": "Set or replace the goal",
+      "hint": "<objective>"
+    },
+    {
+      "value": "show ",
+      "label": "show",
+      "description": "Show current goal details"
+    },
+    {
+      "value": "pause ",
+      "label": "pause",
+      "description": "Pause the current goal"
+    },
+    {
+      "value": "resume ",
+      "label": "resume",
+      "description": "Resume a paused goal"
+    },
+    {
+      "value": "drop ",
+      "label": "drop",
+      "description": "Drop the current goal"
+    },
+    {
+      "value": "budget ",
+      "label": "budget",
+      "description": "Adjust the token budget",
+      "hint": "<N|off>"
+    }
+  ],
+  "goal s": [
+    {
+      "value": "set ",
+      "label": "set",
+      "description": "Set or replace the goal",
+      "hint": "<objective>"
+    },
+    {
+      "value": "show ",
+      "label": "show",
+      "description": "Show current goal details"
+    }
+  ],
+  "zzzz": []
+}

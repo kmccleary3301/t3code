@@ -3,6 +3,35 @@ import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
+
+export const COMPOSER_APP_SLASH_COMMANDS = [
+  "model",
+  "plan",
+  "default",
+] as const satisfies ReadonlyArray<ComposerSlashCommand>;
+
+export function composerAppSlashCommandForName(name: string): ComposerSlashCommand | null {
+  const exactName = name.trim();
+  return COMPOSER_APP_SLASH_COMMANDS.find((command) => command === exactName) ?? null;
+}
+
+export type ComposerSlashCommandDispatch =
+  | { readonly kind: "local"; readonly command: ComposerSlashCommand }
+  | { readonly kind: "provider" }
+  | { readonly kind: "unavailable" };
+
+export function resolveComposerSlashCommandDispatch(input: {
+  readonly commandName: string;
+  readonly executable?: boolean;
+}): ComposerSlashCommandDispatch {
+  const localCommand = composerAppSlashCommandForName(input.commandName);
+  if (input.executable === false) {
+    return localCommand === null
+      ? { kind: "unavailable" }
+      : { kind: "local", command: localCommand };
+  }
+  return { kind: "provider" };
+}
 export type ComposerSubmissionIntent = "foreground" | "background";
 
 export interface ComposerTrigger {

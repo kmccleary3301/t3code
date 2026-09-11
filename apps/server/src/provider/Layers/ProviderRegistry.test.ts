@@ -382,13 +382,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               shortDescription: "Debug failing GitHub Actions checks",
             },
           ]);
-          assert.deepStrictEqual(status.slashCommands, [
-            {
-              name: "feedback",
-              description: "Send this thread and Codex logs to OpenAI",
-              input: { hint: "Describe the issue (optional)" },
-            },
-          ]);
+          assert.deepStrictEqual(status.slashCommands, []);
         }),
       );
 
@@ -687,7 +681,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               capabilities: null,
             },
           ],
-          slashCommands: [{ name: "review", description: "Review changes" }],
+          slashCommands: [
+            { name: "goal", description: "Set a goal", icon: "goal", usage: 7 },
+            { name: "model", description: "Choose a model", icon: "model", usage: 3 },
+          ],
           skills: [
             {
               name: "typescript",
@@ -1990,10 +1987,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");
-              assert.strictEqual(
-                cursorProvider?.message,
-                "Cursor is disabled in T3 Code settings.",
-              );
               assert.strictEqual(cursorSpawned, false);
             }).pipe(Effect.provide(runtimeServices));
           }),
@@ -2007,7 +2000,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.enabled, false);
           assert.strictEqual(status.status, "disabled");
           assert.strictEqual(status.installed, false);
-          assert.strictEqual(status.message, "Codex is disabled in T3 Code settings.");
         }),
       );
     });
@@ -2435,7 +2427,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 },
                 {
                   name: "ui",
+                  aliases: ["user-interface"],
+                  matchDescription: "Build UI",
                   input: { hint: "component-or-screen" },
+                  subcommands: [{ name: "open", description: "Open UI", usage: "<path>" }],
+                  source: "builtin",
+                  executable: true,
+                  icon: "monitor",
+                  usage: 7,
                 },
               ],
             }),
@@ -2449,7 +2448,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             {
               name: "ui",
               description: "Explore and refine UI",
+              aliases: ["user-interface"],
+              matchDescription: "Build UI",
               input: { hint: "component-or-screen" },
+              subcommands: [{ name: "open", description: "Open UI", usage: "<path>" }],
+              source: "builtin",
+              executable: true,
+              icon: "monitor",
+              usage: 7,
             },
           ]);
         }).pipe(

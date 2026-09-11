@@ -130,7 +130,7 @@ function Assert-Cli([string] $Cli, [string] $Version) {
   $versionOutput = Invoke-Checked $Cli @("--version")
   if ($versionOutput -notlike "*$Version*") { Fail "expected CLI version $Version, got $versionOutput" }
   $helpOutput = Invoke-Checked $Cli @("--help")
-  if ($helpOutput -notlike "*Run the T3 Code server*") { Fail "help output did not describe the server command" }
+  if ($helpOutput -notlike "*Run the KM Code server*") { Fail "help output did not describe the KM Code server command" }
 }
 
 function Get-TreeDigest([string] $Path) {

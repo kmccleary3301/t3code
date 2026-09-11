@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { AbsolutePath, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
   EventId,
@@ -94,12 +94,17 @@ export const ProviderNativeSessionListRequest = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
 });
 export type ProviderNativeSessionListRequest = typeof ProviderNativeSessionListRequest.Type;
-
 export const ProviderNativeSessionListInput = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   cwd: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderNativeSessionListInput = typeof ProviderNativeSessionListInput.Type;
+
+export const ProviderNativeCommandsInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  workspaceRoot: AbsolutePath,
+});
+export type ProviderNativeCommandsInput = typeof ProviderNativeCommandsInput.Type;
 
 export const ProviderNativeSessionListResult = Schema.Struct({
   sessions: Schema.Array(ProviderNativeSessionSummary),
@@ -211,6 +216,20 @@ export class ProviderNativeSessionError extends Schema.TaggedErrorClass<Provider
   "ProviderNativeSessionError",
   {
     code: Schema.Literals(["unsupported", "not_found", "invalid", "native"]),
+    message: TrimmedNonEmptyString,
+  },
+) {}
+export const ProviderNativeCommandErrorCode = Schema.Literals([
+  "unknown",
+  "unsupported",
+  "discovery",
+]);
+export type ProviderNativeCommandErrorCode = typeof ProviderNativeCommandErrorCode.Type;
+
+export class ProviderNativeCommandError extends Schema.TaggedErrorClass<ProviderNativeCommandError>()(
+  "ProviderNativeCommandError",
+  {
+    code: ProviderNativeCommandErrorCode,
     message: TrimmedNonEmptyString,
   },
 ) {}

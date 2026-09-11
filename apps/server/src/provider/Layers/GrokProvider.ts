@@ -75,7 +75,7 @@ export function buildInitialGrokProviderSnapshot(
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Grok is disabled in T3 Code settings.",
+          message: "Grok is disabled in KM Code settings.",
         },
       });
     }
@@ -283,7 +283,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Grok is disabled in T3 Code settings.",
+        message: "Grok is disabled in KM Code settings.",
       },
     });
   }

@@ -104,8 +104,10 @@ function resolveDesktopAppStageLabel(input: {
   if (input.isDevelopment) {
     return "Dev";
   }
-
-  return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
+  if (isNightlyDesktopVersion(input.appVersion)) {
+    return "Nightly";
+  }
+  return "Local";
 }
 
 function resolveDesktopAppBranding(input: {
@@ -206,7 +208,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     ? `${productIdentity.stateDirectoryName}-dev`
     : productIdentity.stateDirectoryName;
   const legacyUserDataDirName = isDevelopment
-    ? `${productIdentity.baseName} (Dev)`
+    ? productIdentity.legacyDevelopmentDisplayName
     : productIdentity.legacyStableDisplayName;
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),

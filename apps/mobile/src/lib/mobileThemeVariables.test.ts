@@ -8,13 +8,15 @@ import {
 } from "./mobileThemeVariables";
 
 describe("mobile theme runtime variables", () => {
-  it("derives the standard runtime palette from global.css", () => {
-    expect(getMobileThemeRuntimeVariables("t3-code", "light")).toEqual(
+  it("uses KM Code for fresh defaults and preserves the legacy mobile palette", () => {
+    expect(getMobileThemeRuntimeVariables("km-code", "light")).toEqual(
       readDefaultMobileThemeVariables("light"),
     );
-    expect(getMobileThemeRuntimeVariables("t3-code", "dark")).toEqual(
+    expect(getMobileThemeRuntimeVariables("km-code", "dark")).toEqual(
       readDefaultMobileThemeVariables("dark"),
     );
+    expect(getMobileThemeRuntimeVariables("t3-code", "light")["--color-screen"]).toBe("#f2f2f7");
+    expect(getMobileThemeRuntimeVariables("t3-code", "dark")["--color-screen"]).toBe("#0a0a0a");
   });
 
   it("uses the same shared palette source as generated custom themes", () => {

@@ -66,11 +66,11 @@ describe("mobile themes", () => {
     }
   });
 
-  it("preserves the existing mobile palette as the default", () => {
-    expect(readDefaultMobileThemeVariables("light")["--color-screen"]).toBe("#f2f2f7");
-    expect(readDefaultMobileThemeVariables("dark")["--color-screen"]).toBe("#0a0a0a");
+  it("uses the KM Code palette for the fresh mobile default", () => {
+    expect(readDefaultMobileThemeVariables("light")["--color-screen"]).toBe("#f5f1ea");
+    expect(readDefaultMobileThemeVariables("dark")["--color-screen"]).toBe("#171411");
     expect(readDefaultMobileThemeVariables("light")["--color-user-bubble-skill-foreground"]).toBe(
-      "#f0abfc",
+      "#f6d8be",
     );
   });
 
@@ -83,8 +83,14 @@ describe("mobile themes", () => {
     expect(variables["--color-screen"]).toMatch(/^#/);
   });
 
-  it("uses the same preview roles and standard artwork as desktop", () => {
+  it("uses the selected palette for preview colors and preserves legacy artwork", () => {
+    const desktopKm = BUILT_IN_THEMES.find((theme) => theme.id === DEFAULT_MOBILE_THEME_ID)!;
     expect(getMobileThemePreviewColors(DEFAULT_MOBILE_THEME_ID, "light")).toEqual({
+      canvas: themeColorToNativeColor(desktopKm.colors.canvas),
+      accent: themeColorToNativeColor(desktopKm.colors.accent),
+      messageAction: themeColorToNativeColor(desktopKm.colors.messageAction),
+    });
+    expect(getMobileThemePreviewColors("t3-code", "light")).toEqual({
       canvas: "#fcfcfc",
       accent: "#f4f4f5",
       messageAction: "#4f46e5",

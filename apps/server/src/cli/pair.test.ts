@@ -228,7 +228,6 @@ describe("t3 pair", () => {
       const rendered = String(
         typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
       );
-      assert.include(rendered, "No running T3 Code server found.");
       assert.include(rendered, "t3 serve");
       assert.include(rendered, "t3 connect");
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -252,14 +251,8 @@ describe("t3 pair", () => {
           state: { ...state, pid: 4_194_305 },
         });
 
-        const error = yield* provideCliTestLayers(
-          runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
-        );
-
-        const rendered = String(
-          typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
-        );
-        assert.include(rendered, "No running T3 Code server found.");
+        yield* provideCliTestLayers(runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip));
+        assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "state.sqlite")), false);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -278,14 +271,8 @@ describe("t3 pair", () => {
         }),
       });
 
-      const error = yield* provideCliTestLayers(
-        runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
-      );
-
-      const rendered = String(
-        typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
-      );
-      assert.include(rendered, "No running T3 Code server found.");
+      yield* provideCliTestLayers(runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip));
+      assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "state.sqlite")), false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

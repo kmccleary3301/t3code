@@ -1,12 +1,22 @@
 import * as Haptics from "expo-haptics";
+import {
+  type ActivityDetailBlock,
+  parseActivityDetail,
+  type ParsedActivityDetail,
+} from "@t3tools/client-runtime/activity-details";
+import { EventId, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
+import type { FilePreviewSource } from "../../components/FilePreviewModal";
+import { PresentationSource } from "../../components/NativePresentation";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import { useIsFocused } from "@react-navigation/native";
-import { useEffect, useId, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useId, useState, type ComponentProps } from "react";
 import {
   AccessibilityInfo,
+  ActivityIndicator,
   AppState,
   type ColorValue,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,6 +28,8 @@ import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import type { ToolGroupSummaryKind } from "@t3tools/client-runtime/work-log/presentation";
+import { orchestrationEnvironment } from "../../state/orchestration";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -213,6 +225,179 @@ function compactActivityDetail(detail: string | null): string | null {
   const cleaned = stripShellWrapper(detail).replace(/\s+/g, " ").trim();
   return cleaned.length > 0 ? cleaned : null;
 }
+type ToolActivityDetailState =
+  | { readonly status: "loading" }
+  | { readonly status: "failure" }
+  | { readonly status: "success"; readonly detail: ParsedActivityDetail };
+
+function formatStructuredValue(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function formatActivityDetailForCopy(detail: ParsedActivityDetail): string {
+  const blocks: string[] = [];
+  for (const section of detail.sections) {
+    blocks.push(section.title);
+    for (const block of section.blocks) {
+      if (block.kind === "text") {
+        blocks.push(block.text);
+      } else if (block.kind === "structured") {
+        blocks.push(formatStructuredValue(block.value));
+      } else {
+        blocks.push(`[Image: ${block.alt}]`);
+      }
+    }
+  }
+  return blocks.filter((block) => block.trim().length > 0).join("\n\n");
+}
+
+function ToolActivityDetailImage(props: {
+  readonly block: Extract<ActivityDetailBlock, { readonly kind: "image" }>;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
+}) {
+  const sourceIdentifier = useId();
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [props.block.source]);
+
+  return (
+    <PresentationSource identifier={sourceIdentifier} style={{ alignSelf: "stretch" }}>
+      <Pressable
+        accessibilityRole="imagebutton"
+        accessibilityLabel={props.block.alt}
+        onPress={() =>
+          props.onPressPreview({
+            kind: "image",
+            uri: props.block.source,
+            name: props.block.alt,
+            sourceIdentifier,
+          })
+        }
+        className="overflow-hidden rounded-[10px] bg-md-code-bg"
+      >
+        {failed ? (
+          <View className="h-40 items-center justify-center">
+            <Text className="text-xs text-foreground-muted">Image unavailable</Text>
+          </View>
+        ) : (
+          <Image
+            source={{ uri: props.block.source }}
+            resizeMode="contain"
+            onError={() => setFailed(true)}
+            className="h-40 w-full"
+            accessibilityLabel={props.block.alt}
+          />
+        )}
+      </Pressable>
+    </PresentationSource>
+  );
+}
+
+function ToolActivityDetail(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly activityId: string;
+  readonly onDetailLoaded: (activityId: string, detail: ParsedActivityDetail) => void;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
+}) {
+  const loadActivityDetail = useAtomQueryRunner(orchestrationEnvironment.activityDetail, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const [state, setState] = useState<ToolActivityDetailState>({ status: "loading" });
+
+  useEffect(() => {
+    let active = true;
+    setState({ status: "loading" });
+    void loadActivityDetail({
+      environmentId: props.environmentId,
+      input: {
+        threadId: props.threadId,
+        activityId: EventId.make(props.activityId),
+      },
+    }).then(
+      (result) => {
+        if (!active) return;
+        if (result._tag === "Failure") {
+          setState({ status: "failure" });
+          return;
+        }
+        const detail = parseActivityDetail(result.value);
+        setState({ status: "success", detail });
+        props.onDetailLoaded(props.activityId, detail);
+      },
+      () => {
+        if (active) setState({ status: "failure" });
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [
+    loadActivityDetail,
+    props.activityId,
+    props.environmentId,
+    props.onDetailLoaded,
+    props.threadId,
+  ]);
+
+  if (state.status === "loading") {
+    return (
+      <View className="flex-row items-center gap-2 py-1">
+        <ActivityIndicator size="small" />
+        <Text accessibilityRole="text" className="text-xs text-foreground-muted">
+          Loading full tool details…
+        </Text>
+      </View>
+    );
+  }
+  if (state.status === "failure") {
+    return (
+      <Text accessibilityRole="alert" className="py-1 text-xs text-adaptive-rose-600-400">
+        Could not load full tool details.
+      </Text>
+    );
+  }
+
+  return (
+    <ScrollView
+      nestedScrollEnabled
+      directionalLockEnabled
+      showsVerticalScrollIndicator
+      className="max-h-60"
+      contentContainerStyle={{ gap: 12, paddingRight: 8 }}
+    >
+      {state.detail.sections.map((section, sectionIndex) => (
+        <View key={`${section.title}-${sectionIndex}`} className="gap-1">
+          <Text className="font-t3-medium text-xs text-foreground-muted">{section.title}</Text>
+          {section.blocks.map((block, blockIndex) =>
+            block.kind === "image" ? (
+              <ToolActivityDetailImage
+                key={`${sectionIndex}-${blockIndex}`}
+                block={block}
+                onPressPreview={props.onPressPreview}
+              />
+            ) : (
+              <Text
+                key={`${sectionIndex}-${blockIndex}`}
+                selectable
+                className="font-mono text-2xs leading-normal text-foreground-muted"
+              >
+                {block.kind === "text" ? block.text : formatStructuredValue(block.value)}
+              </Text>
+            ),
+          )}
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
 
 function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
   switch (icon) {
@@ -274,10 +459,23 @@ export function ThreadWorkLog(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly copiedRowId: string | null;
   readonly expandedRows: Readonly<Record<string, boolean>>;
-  readonly iconSubtleColor: import("react-native").ColorValue;
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly iconSubtleColor: ColorValue;
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string) => void;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
+  const [loadedDetails, setLoadedDetails] = useState<
+    Readonly<Record<string, ParsedActivityDetail>>
+  >({});
+  const onDetailLoaded = useCallback((activityId: string, detail: ParsedActivityDetail) => {
+    setLoadedDetails((current) => ({ ...current, [activityId]: detail }));
+  }, []);
+  useEffect(() => {
+    setLoadedDetails({});
+  }, [props.environmentId, props.threadId]);
+
   const rows = props.activities.map((activity) => ({
     ...activity,
     detail: compactActivityDetail(activity.detail),
@@ -292,8 +490,17 @@ export function ThreadWorkLog(props: {
       <View className="gap-px">
         {rows.map((row) => {
           const expanded = props.expandedRows[row.id] ?? false;
-          const canExpand = row.canExpand;
-          const fullDetail = expanded ? row.getFullDetail() : null;
+          const canExpand = row.canExpand || row.toolLike;
+          const fullDetail = expanded && !row.toolLike ? row.getFullDetail() : null;
+          const loadedDetail = row.toolLike ? loadedDetails[row.id] : undefined;
+          const fullCopyText =
+            loadedDetail === undefined
+              ? null
+              : [row.getCopyText(), formatActivityDetailForCopy(loadedDetail)]
+                  .filter(
+                    (value, index, values) => value.length > 0 && values.indexOf(value) === index,
+                  )
+                  .join("\n\n");
           const displayText = row.detail ?? row.summary;
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
           const failed = row.status === "failure";
@@ -322,7 +529,7 @@ export function ThreadWorkLog(props: {
                     props.onToggleRow(row.id);
                   }
                 }}
-                onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
+                onLongPress={() => props.onCopyRow(row.id, fullCopyText ?? row.getCopyText())}
                 className="rounded-md px-0.5 py-0 active:bg-subtle"
               >
                 <View className="min-h-8 flex-row items-center gap-1.5">
@@ -386,7 +593,22 @@ export function ThreadWorkLog(props: {
                 </View>
               </Pressable>
 
-              {fullDetail ? (
+              {expanded && row.toolLike ? (
+                <Animated.View
+                  entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
+                  exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
+                  layout={WORK_LOG_LAYOUT_TRANSITION}
+                  className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
+                >
+                  <ToolActivityDetail
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                    activityId={row.id}
+                    onDetailLoaded={onDetailLoaded}
+                    onPressPreview={props.onPressPreview}
+                  />
+                </Animated.View>
+              ) : fullDetail ? (
                 <Animated.View
                   entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
                   exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}

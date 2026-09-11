@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["T3SshModule"],
+    "podspecPath": "T3SshNative.podspec"
+  },
+  "android": {
+    "modules": ["expo.modules.t3ssh.T3SshModule"]
+  }
+}

@@ -1,11 +1,14 @@
 import * as Schema from "effect/Schema";
 
 /**
- * Build-time product profiles. `upstream` preserves the shipped T3 Code
- * identity; `pi-omp` is isolated enough to install and run beside it.
+ * Build-time product profiles. Both profiles use the KM Code display brand;
+ * `upstream` and `pi-omp` retain their compatibility identifiers so existing
+ * installs, pairing, and provider selection continue to work.
  */
 export const ProductProfile = Schema.Literals(["upstream", "pi-omp"]);
 export type ProductProfile = typeof ProductProfile.Type;
+
+export type ProductBuildStage = "Dev" | "Nightly" | "Local" | "Preview";
 
 export interface ProductIdentity {
   readonly profile: ProductProfile;
@@ -17,10 +20,12 @@ export interface ProductIdentity {
   readonly developmentScheme: string;
   readonly stateDirectoryName: string;
   readonly legacyStableDisplayName: string;
+  readonly legacyDevelopmentDisplayName: string;
   readonly linuxDesktopEntryName: string;
   readonly linuxWmClass: string;
   readonly linuxUrlHandlerDesktopEntryName: string;
   readonly releaseTagPrefix: string;
+  readonly artifactNamePrefix: string;
 }
 
 /** The owner-controlled repository used for private desktop update metadata. */
@@ -39,7 +44,7 @@ export function resolveProductUpdateRepository(
 
 const UPSTREAM_IDENTITY: ProductIdentity = {
   profile: "upstream",
-  baseName: "T3 Code",
+  baseName: "KM Code",
   packageName: "t3",
   cliBinaryName: "t3",
   bundleIdentifier: "com.t3tools.t3code",
@@ -47,15 +52,17 @@ const UPSTREAM_IDENTITY: ProductIdentity = {
   developmentScheme: "t3code-dev",
   stateDirectoryName: "t3code",
   legacyStableDisplayName: "T3 Code (Alpha)",
+  legacyDevelopmentDisplayName: "T3 Code (Dev)",
   linuxDesktopEntryName: "t3code.desktop",
   linuxWmClass: "t3code",
   linuxUrlHandlerDesktopEntryName: "t3code-url-handler.desktop",
   releaseTagPrefix: "v",
+  artifactNamePrefix: "KM-Code",
 };
 
 const PI_OMP_IDENTITY: ProductIdentity = {
   profile: "pi-omp",
-  baseName: "T3 Code Pi + OMP",
+  baseName: "KM Code",
   packageName: "t3-pi-omp",
   cliBinaryName: "t3-pi-omp",
   bundleIdentifier: "com.t3tools.t3code.piomp",
@@ -63,10 +70,12 @@ const PI_OMP_IDENTITY: ProductIdentity = {
   developmentScheme: "t3code-pi-omp-dev",
   stateDirectoryName: "t3code-pi-omp",
   legacyStableDisplayName: "T3 Code Pi + OMP (Alpha)",
+  legacyDevelopmentDisplayName: "T3 Code Pi + OMP (Dev)",
   linuxDesktopEntryName: "t3code-pi-omp.desktop",
   linuxWmClass: "t3code-pi-omp",
   linuxUrlHandlerDesktopEntryName: "t3code-pi-omp-url-handler.desktop",
   releaseTagPrefix: "fork-v",
+  artifactNamePrefix: "KM-Code-Pi-OMP",
 };
 
 export function resolveProductIdentity(profile: ProductProfile = "upstream"): ProductIdentity {
@@ -79,7 +88,7 @@ export function parseProductProfile(value: string | undefined): ProductProfile {
 
 export function resolveProductDisplayName(
   profile: ProductProfile,
-  stage: "Dev" | "Nightly" | "Alpha",
+  stage: ProductBuildStage,
 ): string {
   const identity = resolveProductIdentity(profile);
   return `${identity.baseName} (${stage})`;

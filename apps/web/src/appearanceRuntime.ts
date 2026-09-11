@@ -27,7 +27,7 @@ import {
 } from "@t3tools/shared/appearance";
 import {
   BUILT_IN_THEMES,
-  T3_CHAT_THEME,
+  KM_CODE_THEME,
   THEME_COLOR_ROLES,
   type ThemeAppearance,
   type ThemeDefinition,
@@ -1072,9 +1072,9 @@ function readLegacyPreference(): {
         : canonicalTheme;
     const packageForAppearance = (appearance: ThemeAppearance): ThemeDefinition => {
       const half = canonicalThemePreference(resolveThemeHalf(canonicalTheme, halves, appearance));
-      return getThemeDefinition(half) ?? T3_CHAT_THEME;
+      return getThemeDefinition(half) ?? KM_CODE_THEME;
     };
-    const packageId = getThemeDefinition(selectedTheme)?.id ?? T3_CHAT_THEME.id;
+    const packageId = getThemeDefinition(selectedTheme)?.id ?? KM_CODE_THEME.id;
     const lightPackageId = packageForAppearance("light").id;
     const darkPackageId = packageForAppearance("dark").id;
     return {
@@ -1283,9 +1283,17 @@ export async function executeAppearanceRecoveryCommand(
 
 export async function setAppearanceModePreference(mode: "system" | ThemeAppearance): Promise<void> {
   const runtime = await getAppearanceRuntime();
-  const current = runtime.getSnapshot().preference;
-  const preference = { ...current, mode };
-  if (current.mode !== mode) delete preference.variantId;
+  const current = runtime.getSnapshot();
+  const preference = { ...current.preference, mode };
+  // An explicit mode must not keep a stale variant from the other appearance.
+  // Preserve a deliberately selected variant when it already belongs to the
+  // requested mode; otherwise let the runtime resolve that mode normally.
+  if (
+    current.preference.mode !== mode ||
+    (mode !== "system" && current.resolved.baseVariant?.appearance !== mode)
+  ) {
+    delete preference.variantId;
+  }
   const result = await runtime.execute({ type: "preference", preference });
   if (result.status === "rejected") {
     throw new Error(result.diagnostics[0]?.message ?? "Appearance mode preference was rejected.");

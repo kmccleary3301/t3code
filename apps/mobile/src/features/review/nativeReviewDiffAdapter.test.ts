@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
-  DEFAULT_MOBILE_THEME_ID,
-  getMobileThemeVariables,
   MOBILE_THEME_IDS,
   type MobileThemeAppearance,
   type MobileThemeId,
 } from "../../lib/mobileTheme";
-import { readDefaultMobileThemeVariables } from "../../lib/mobileTheme.test-support";
+import { getMobileThemeRuntimeVariables } from "../../lib/mobileThemeVariables";
 
 import {
   createNativeReviewDiffTheme,
@@ -47,9 +45,7 @@ function buildInput(comments: BuildNativeReviewDiffDataInput["comments"]) {
 }
 
 function appTheme(themeId: MobileThemeId, appearance: MobileThemeAppearance) {
-  return themeId === DEFAULT_MOBILE_THEME_ID
-    ? readDefaultMobileThemeVariables(appearance)
-    : getMobileThemeVariables(themeId, appearance);
+  return getMobileThemeRuntimeVariables(themeId, appearance);
 }
 
 describe("getCachedNativeReviewDiffData", () => {

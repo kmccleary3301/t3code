@@ -11,6 +11,13 @@ import type * as Option from "effect/Option";
 
 import type { ConnectionAttemptError } from "../connection/model.ts";
 
+export interface MobileSshCredentials {
+  readonly password?: string;
+  readonly privateKey?: string;
+  readonly passphrase?: string;
+  readonly expectedFingerprint?: string;
+}
+
 export interface PreparedSshEnvironment {
   readonly bootstrap: DesktopSshEnvironmentBootstrap;
   readonly bearerToken: string;
@@ -20,7 +27,6 @@ export interface ProvisionedSshEnvironment extends PreparedSshEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
 }
-
 export class CloudSession extends Context.Service<
   CloudSession,
   {
@@ -55,11 +61,13 @@ export class SshEnvironmentGateway extends Context.Service<
   {
     readonly provision: (
       target: DesktopSshEnvironmentTarget,
+      options?: { readonly credentials?: MobileSshCredentials },
     ) => Effect.Effect<ProvisionedSshEnvironment, ConnectionAttemptError>;
     readonly prepare: (input: {
       readonly connectionId: string;
       readonly expectedEnvironmentId: EnvironmentId;
       readonly target: DesktopSshEnvironmentTarget;
+      readonly credentials?: MobileSshCredentials;
     }) => Effect.Effect<PreparedSshEnvironment, ConnectionAttemptError>;
     readonly disconnect: (
       target: DesktopSshEnvironmentTarget,

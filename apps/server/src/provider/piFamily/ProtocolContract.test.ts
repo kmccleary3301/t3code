@@ -3,10 +3,12 @@ import { assert, describe, it } from "vite-plus/test";
 import { PiFamilyEventProjector } from "./PiFamilyEventProjector.ts";
 import {
   absentRuntimeCapabilities,
+  formatPortableUiResponse,
   isRpcResponse,
   makeOmpNegotiateProtocolCommand,
   negotiatedRuntimeCapabilities,
   parseJsonObject,
+  readRuntimeCapabilities,
   validateOmpNegotiateProtocolResponse,
   validateOmpReadyFrame,
 } from "./protocol.ts";
@@ -40,6 +42,7 @@ describe("Pi and OMP protocol contracts", () => {
     assert.strictEqual(omp.tasks.childTranscript, true);
     assert.strictEqual(omp.tasks.background, false);
     assert.strictEqual(omp.tasks.targetedCancellation, false);
+    assert.strictEqual(omp.ui.askDialog, false);
   });
 
   it("validates OMP ready and negotiate frames exactly", () => {
@@ -52,7 +55,20 @@ describe("Pi and OMP protocol contracts", () => {
     });
     assert.strictEqual(ready.protocolVersion, 1);
     const command = makeOmpNegotiateProtocolCommand("protocol-1");
-    assert.deepEqual(command, { id: "protocol-1", type: "negotiate_protocol", protocolVersion: 2 });
+    assert.deepEqual(command, {
+      id: "protocol-1",
+      type: "negotiate_protocol",
+      protocolVersion: 2,
+    });
+    const commandWithCaps = makeOmpNegotiateProtocolCommand("protocol-1", {
+      ui: { askDialog: true },
+    });
+    assert.deepEqual(commandWithCaps, {
+      id: "protocol-1",
+      type: "negotiate_protocol",
+      protocolVersion: 2,
+      capabilities: { ui: { askDialog: true } },
+    });
     const response = validateOmpNegotiateProtocolResponse({
       id: "protocol-1",
       type: "response",
@@ -65,6 +81,51 @@ describe("Pi and OMP protocol contracts", () => {
     assert.throws(() =>
       validateOmpNegotiateProtocolResponse({ ...response, data: { protocolVersion: 1 } }),
     );
+  });
+
+  it("enables askDialog only when explicitly advertised in capabilities", () => {
+    const withoutAskDialog = readRuntimeCapabilities("omp", {
+      protocolVersion: 2,
+      ui: { select: true, confirm: true },
+    });
+    assert.strictEqual(withoutAskDialog.ui.askDialog, false);
+
+    const withAskDialog = readRuntimeCapabilities("omp", {
+      protocolVersion: 2,
+      ui: { select: true, confirm: true, askDialog: true },
+    });
+    assert.strictEqual(withAskDialog.ui.askDialog, true);
+  });
+
+  it("formats portable UI responses including answers and chat", () => {
+    assert.deepEqual(formatPortableUiResponse({ requestId: "r1", cancelled: true }), {
+      type: "extension_ui_response",
+      id: "r1",
+      cancelled: true,
+    });
+    assert.deepEqual(formatPortableUiResponse({ requestId: "r2", value: "hello" }), {
+      type: "extension_ui_response",
+      id: "r2",
+      value: "hello",
+    });
+    assert.deepEqual(
+      formatPortableUiResponse({
+        requestId: "r3",
+        answers: { auth: "JWT" },
+        value: "JWT",
+      }),
+      {
+        type: "extension_ui_response",
+        id: "r3",
+        value: "JWT",
+        answers: { auth: "JWT" },
+      },
+    );
+    assert.deepEqual(formatPortableUiResponse({ requestId: "r4", chat: true }), {
+      type: "extension_ui_response",
+      id: "r4",
+      chat: true,
+    });
   });
 
   it("retains unknown native events while projecting only the selected dialect", () => {

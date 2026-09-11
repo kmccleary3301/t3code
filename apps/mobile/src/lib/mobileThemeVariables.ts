@@ -1,8 +1,10 @@
 import defaultThemeVariables from "../../generated-uniwind-default-theme-variables.json";
+import legacyThemeVariables from "../../generated-uniwind-legacy-theme-variables.json";
 
 import {
-  DEFAULT_MOBILE_THEME_ID,
   getMobileThemeVariables,
+  isDefaultMobileThemeId,
+  isLegacyMobileThemeId,
   type MobileThemeAppearance,
   type MobileThemeId,
   type MobileThemeVariables,
@@ -11,6 +13,10 @@ import {
 const defaults = defaultThemeVariables as Readonly<
   Record<MobileThemeAppearance, MobileThemeVariables>
 >;
+const legacyDefaults = legacyThemeVariables as Readonly<
+  Record<MobileThemeAppearance, MobileThemeVariables>
+>;
+
 export type MobileRuntimeVariables = Readonly<Record<string, string | number>>;
 
 /**
@@ -22,9 +28,11 @@ export function getMobileThemeRuntimeVariables(
   themeId: MobileThemeId,
   appearance: MobileThemeAppearance,
 ): MobileThemeVariables {
-  return themeId === DEFAULT_MOBILE_THEME_ID
-    ? defaults[appearance]
-    : getMobileThemeVariables(themeId, appearance);
+  return isLegacyMobileThemeId(themeId)
+    ? legacyDefaults[appearance]
+    : isDefaultMobileThemeId(themeId)
+      ? defaults[appearance]
+      : getMobileThemeVariables(themeId, appearance);
 }
 
 export function resolveMobileThemeRuntimeVariables(

@@ -1,11 +1,12 @@
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
+import { parseProductProfile, resolveProductIdentity } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
-import * as Crypto from "effect/Crypto";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
@@ -29,6 +30,9 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 
+const DESKTOP_PRODUCT_NAME = resolveProductIdentity(
+  parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+).baseName;
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
@@ -128,7 +132,7 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   const wasQuitting = yield* Ref.getAndSet(state.quitting, true);
   if (!wasQuitting) {
     yield* electronDialog.showErrorBox(
-      "T3 Code failed to start",
+      `${DESKTOP_PRODUCT_NAME} failed to start`,
       `Stage: ${stage}\n${message}${detail}`,
     );
   }

@@ -1,3 +1,7 @@
+import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { serverEnvironment } from "../../state/server";
 import type {
   ApprovalRequestId,
   ChatFileAttachment,
@@ -19,7 +23,10 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  providerSlashCommandInsertText,
+  serializeComposerFileLink,
+} from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   memo,
@@ -35,6 +42,7 @@ import {
 import { createPortal } from "react-dom";
 import {
   clampCollapsedComposerCursor,
+  resolveComposerSlashCommandDispatch,
   type ComposerSubmissionIntent,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
@@ -152,6 +160,7 @@ import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
+import { providerSlashCommandsFromActivities } from "@t3tools/shared/providerSlashCommandCompletion";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
@@ -333,7 +342,6 @@ import type { ContextWindowSnapshot } from "../../lib/contextWindow";
 import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
-  getProviderSkillsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -741,6 +749,8 @@ export interface ChatComposerProps {
 // --------------------------------------------------------------------------
 // Component
 // --------------------------------------------------------------------------
+
+const EMPTY_NATIVE_COMMANDS_ATOM = Atom.make(AsyncResult.initial());
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
@@ -1301,6 +1311,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: isPathTrigger ? gitCwd : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
+  const nativeProviderSelected = selectedProvider === "pi" || selectedProvider === "omp";
+  const sessionCommands = useMemo(
+    () =>
+      selectedInstanceId === undefined || activeThread === undefined
+        ? undefined
+        : providerSlashCommandsFromActivities(activeThread.activities, selectedInstanceId),
+    [activeThread?.activities, selectedInstanceId],
+  );
+  const nativeCommandsAtom = useMemo(
+    () =>
+      nativeProviderSelected &&
+      sessionCommands === undefined &&
+      selectedInstanceId !== undefined &&
+      gitCwd !== null
+        ? serverEnvironment.nativeCommands({
+            environmentId,
+            input: { providerInstanceId: selectedInstanceId, workspaceRoot: gitCwd },
+          })
+        : EMPTY_NATIVE_COMMANDS_ATOM,
+    [environmentId, gitCwd, nativeProviderSelected, selectedInstanceId, sessionCommands],
+  );
+  const nativeCommandsResult = useAtomValue(nativeCommandsAtom);
+  const nativeCommands =
+    sessionCommands ??
+    (AsyncResult.isSuccess(nativeCommandsResult) ? nativeCommandsResult.value : undefined);
+  const nativeCommandError =
+    nativeProviderSelected && nativeCommands === undefined
+      ? selectedInstanceId === undefined || gitCwd === null
+        ? "Select a workspace and provider to discover native commands."
+        : AsyncResult.isFailure(nativeCommandsResult)
+          ? Cause.pretty(nativeCommandsResult.cause)
+          : undefined
+      : undefined;
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
@@ -1342,7 +1385,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ] as const)
           : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const providerCommands = selectedProviderStatus?.slashCommands ?? [];
+      const providerCommands = nativeProviderSelected
+        ? nativeCommands
+        : (selectedProviderStatus?.slashCommands ?? []);
+      if (providerCommands === undefined) return [];
       const argumentItems = buildProviderSlashArgumentItems({
         provider: selectedProvider,
         commands: providerCommands,
@@ -1353,44 +1399,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ? searchSlashCommandItems(argumentItems.items, argumentItems.searchQuery)
           : argumentItems.items;
       }
-      const slashMenuSkills = getProviderSkillsForSlashMenu(
-        selectedProviderStatus?.skills ?? [],
-        settings.showSkillsInSlashMenu,
+      const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(providerCommands).map(
+        (command) => ({
+          id: `provider-slash-command:${selectedProvider}:${command.name}`,
+          type: "provider-slash-command" as const,
+          provider: selectedProvider,
+          command,
+          label: `/${command.name}`,
+          description: command.input?.hint
+            ? command.description
+              ? `${command.input.hint} - ${command.description}`
+              : command.input.hint
+            : (command.description ?? "Run provider command"),
+        }),
       );
-      const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
-        providerCommands,
-        slashMenuSkills,
-      ).map((command) => ({
-        id: `provider-slash-command:${selectedProvider}:${command.name}`,
-        type: "provider-slash-command" as const,
-        provider: selectedProvider,
-        command,
-        label: `/${command.name}`,
-        description:
-          command.description && command.input?.hint
-            ? `${command.description} · ${command.input.hint}`
-            : (command.description ?? command.input?.hint ?? "Run provider command"),
-      }));
-      const query = composerTrigger.query.trim().toLowerCase();
-      const skillItems = slashMenuSkills.map((skill) => ({
-        id: `skill:${selectedProvider}:${skill.name}`,
-        type: "skill" as const,
-        provider: selectedProvider,
-        skill,
-        label: `/skill:${skill.name}`,
-        description:
-          skill.shortDescription ??
-          skill.description ??
-          (skill.scope ? `${skill.scope} skill` : ""),
-      }));
       const slashCommandItems = slashCommandItemsForPromptPosition(
-        [
-          ...mergeSlashCommandItems(builtInSlashCommandItems, providerSlashCommandItems),
-          ...skillItems,
-        ],
+        mergeSlashCommandItems(builtInSlashCommandItems, providerSlashCommandItems),
         composerTrigger.rangeStart === 0,
       );
-      return searchSlashCommandItems(slashCommandItems, query);
+      return searchSlashCommandItems(slashCommandItems, composerTrigger.query);
     }
     if (composerTrigger.kind === "skill") {
       return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
@@ -1413,7 +1440,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planModeUiEnabled,
     selectedProvider,
     selectedProviderStatus,
-    settings.showSkillsInSlashMenu,
+    nativeProviderSelected,
+    nativeCommands,
     workspaceEntries.entries,
   ]);
 
@@ -1483,15 +1511,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const isComposerMenuLoading =
-    composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending;
+    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (composerTriggerKind === "slash-command" &&
+      nativeProviderSelected &&
+      nativeCommands === undefined &&
+      nativeCommandError === undefined);
   const composerMenuEmptyState = useMemo(() => {
+    if (composerTriggerKind === "slash-command" && nativeCommandError !== undefined) {
+      return nativeCommandError;
+    }
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
     }
     return composerTriggerKind === "path"
       ? "No matching files or folders."
       : "No matching command.";
-  }, [composerTriggerKind]);
+  }, [composerTriggerKind, nativeCommandError]);
 
   // ------------------------------------------------------------------
   // Provider traits UI
@@ -2065,8 +2100,69 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "provider-slash-command" || item.type === "provider-slash-argument") {
+        if (
+          item.type === "provider-slash-command" &&
+          item.command.name === "skill:" &&
+          item.command.executable === false
+        ) {
+          const replacement = providerSlashCommandInsertText(
+            item.command.name,
+            item.command.executable,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            trigger.rangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+
+        const dispatch =
+          item.type === "provider-slash-command"
+            ? item.command.executable === undefined
+              ? resolveComposerSlashCommandDispatch({ commandName: item.command.name })
+              : resolveComposerSlashCommandDispatch({
+                  commandName: item.command.name,
+                  executable: item.command.executable,
+                })
+            : { kind: "provider" as const };
+        if (dispatch.kind === "local" && dispatch.command === "model") {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+            focusEditorAfterReplace: false,
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+            setIsComposerModelPickerOpen(true);
+          }
+          return;
+        }
+        if (dispatch.kind === "local") {
+          void handleInteractionModeChange(dispatch.command === "plan" ? "plan" : "default");
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        if (dispatch.kind === "unavailable") {
+          toastManager.add({
+            type: "error",
+            title: "Command unavailable",
+            description: `${item.label} is reported by the selected harness but cannot be executed in KM Code.`,
+          });
+          return;
+        }
         const replacement =
-          item.type === "provider-slash-command" ? `/${item.command.name} ` : item.insertText;
+          item.type === "provider-slash-command"
+            ? providerSlashCommandInsertText(item.command.name, item.command.executable)
+            : item.insertText;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,

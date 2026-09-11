@@ -79,6 +79,7 @@
 //   10. CommandPalette enables file-manager picker for desktop-local
 //       envs, routes pickFolder by env id. (38e8477a)
 
+import { parseProductProfile, resolveProductIdentity } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -104,6 +105,9 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 
 const { logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
+const DESKTOP_PRODUCT_NAME = resolveProductIdentity(
+  parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+).baseName;
 
 export type BackendInstanceId = DesktopBackendManager.BackendInstanceId;
 export const BackendInstanceId = DesktopBackendManager.BackendInstanceId;
@@ -243,7 +247,7 @@ export const layer = Layer.effect(
           );
           yield* electronDialog.showErrorBox(
             "WSL backend is still unavailable",
-            `${reason}\n\nT3 Code will use the Windows backend for this launch and retry WSL the next time the app starts.`,
+            `${reason}\n\n${DESKTOP_PRODUCT_NAME} will use the Windows backend for this launch and retry WSL the next time the app starts.`,
           );
           yield* appSettings.applyWslWindowsFallbackInMemory;
           return true;
@@ -254,7 +258,7 @@ export const layer = Layer.effect(
         });
         yield* electronDialog.showErrorBox(
           "WSL backend couldn't start",
-          `${reason}\n\nFalling back to the Windows backend so T3 Code can open. Re-enable the WSL backend from Settings > Connections once the WSL distro is fixed.`,
+          `${reason}\n\nFalling back to the Windows backend so ${DESKTOP_PRODUCT_NAME} can open. Re-enable the WSL backend from Settings > Connections once the WSL distro is fixed.`,
         );
         // Fully disable the WSL backend — both flags, matching the "Switch to
         // Windows" recovery path — so the manager's next restart re-resolves the

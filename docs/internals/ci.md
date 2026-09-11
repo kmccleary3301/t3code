@@ -1,6 +1,7 @@
 # CI quality gates
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. KM Code is Kyle McCleary's fork of T3 Code; compatibility identifiers below
+> intentionally remain stable. Using the product? See [docs/user](../user/).
 
 [`../../.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on pull
 requests and on pushes to `main`. It is repository evidence, not a claim that
@@ -70,8 +71,9 @@ The release workflow selects a profile explicitly from its tag, input, or reposi
 An installed CLI can additionally recover the `pi-omp` profile from its dedicated package or binary
 name when `T3_PRODUCT_PROFILE` is absent. Neither path infers behavior from a provider version.
 
-| Concern           | T3 (`upstream`)           | Pi + OMP (`pi-omp`)            |
+| Concern           | KM Code (`upstream`)      | KM Code (`pi-omp`)             |
 | ----------------- | ------------------------- | ------------------------------ |
+| Display name      | `KM Code` + stage         | `KM Code` + stage              |
 | Stable tag        | `vX.Y.Z`                  | `fork-vX.Y.Z`                  |
 | Nightly tag       | `vX.Y.Z-nightly.DATE.RUN` | `fork-vX.Y.Z-nightly.DATE.RUN` |
 | npm package / CLI | `t3` / `t3`               | `t3-pi-omp` / `t3-pi-omp`      |

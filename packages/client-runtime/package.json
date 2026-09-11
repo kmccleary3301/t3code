@@ -19,6 +19,10 @@
       "types": "./src/environment/index.ts",
       "default": "./src/environment/index.ts"
     },
+    "./activity-details": {
+      "types": "./src/activityDetails.ts",
+      "default": "./src/activityDetails.ts"
+    },
     "./markdown-images": {
       "types": "./src/markdownImages.ts",
       "default": "./src/markdownImages.ts"

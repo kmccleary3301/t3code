@@ -698,8 +698,8 @@ export const connectCommand = Command.make("connect", {
           const platform = yield* HostProcessPlatform;
           yield* Console.log(
             platform === "darwin"
-              ? "\n✓ Background service ready\n\nT3 Code will stay reachable while you are logged in to this Mac."
-              : "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out.",
+              ? "\n✓ Background service ready\n\nKM Code will stay reachable while you are logged in to this Mac."
+              : "\n✓ Background service ready\n\nKM Code will stay reachable after you log out.",
           );
           return;
         }

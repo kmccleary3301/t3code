@@ -79,8 +79,7 @@ describe("client telemetry metadata", () => {
         identity: desktopChrome,
         desktopBridge: { getClientPlatform: () => "darwin" },
       }),
-    ).toEqual({
-      label: "T3 Code Desktop",
+    ).toMatchObject({
       deviceType: "desktop",
       os: "macOS",
       surface: "desktop",

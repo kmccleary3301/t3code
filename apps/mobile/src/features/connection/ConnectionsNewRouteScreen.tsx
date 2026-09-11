@@ -302,6 +302,12 @@ export function ConnectionsNewRouteScreen({
                   void handleSubmit();
                 }}
               />
+              <ConnectionSheetButton
+                icon="terminal"
+                label="Connect over SSH instead"
+                tone="secondary"
+                onPress={() => navigation.navigate("ConnectionsSsh")}
+              />
             </View>
           )}
         </View>

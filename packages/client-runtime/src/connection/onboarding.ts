@@ -41,6 +41,7 @@ export interface PairingConnectionInput {
 export interface SshConnectionInput {
   readonly target: DesktopSshEnvironmentTarget;
   readonly label?: string;
+  readonly credentials?: ClientCapabilities.MobileSshCredentials;
 }
 
 export interface BearerConnectionUpdateInput {
@@ -214,7 +215,10 @@ export const prepareSshRegistration = Effect.fn(
   "clientRuntime.connection.onboarding.prepareSshRegistration",
 )(function* (input: SshConnectionInput) {
   const gateway = yield* ClientCapabilities.SshEnvironmentGateway;
-  const provisioned = yield* gateway.provision(input.target);
+  const provisioned = yield* gateway.provision(
+    input.target,
+    input.credentials === undefined ? undefined : { credentials: input.credentials },
+  );
   const connectionId = `ssh:${provisioned.environmentId}`;
   const label = input.label?.trim() || provisioned.label || provisioned.bootstrap.target.alias;
 

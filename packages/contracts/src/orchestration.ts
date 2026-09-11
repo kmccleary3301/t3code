@@ -27,6 +27,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getWorkflowScript: "orchestration.getWorkflowScript",
+  getActivityDetail: "orchestration.getActivityDetail",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
@@ -1691,7 +1692,6 @@ export const DispatchResult = Schema.Struct({
   sequence: NonNegativeInt,
 });
 export type DispatchResult = typeof DispatchResult.Type;
-
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
@@ -1703,6 +1703,14 @@ export type OrchestrationGetTurnDiffInput = typeof OrchestrationGetTurnDiffInput
 
 export const OrchestrationGetTurnDiffResult = ThreadTurnDiff;
 export type OrchestrationGetTurnDiffResult = typeof OrchestrationGetTurnDiffResult.Type;
+
+export const OrchestrationGetActivityDetailInput = Schema.Struct({
+  threadId: ThreadId,
+  activityId: EventId,
+});
+export type OrchestrationGetActivityDetailInput = typeof OrchestrationGetActivityDetailInput.Type;
+export const OrchestrationGetActivityDetailResult = OrchestrationThreadActivity;
+export type OrchestrationGetActivityDetailResult = typeof OrchestrationGetActivityDetailResult.Type;
 
 export const OrchestrationGetFullThreadDiffInput = Schema.Struct({
   threadId: ThreadId,
@@ -1787,6 +1795,25 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass
   }
 }
 
+const ACTIVITY_DETAIL_ERROR_MESSAGES = {
+  "not-found": "Activity detail not found.",
+  "read-failed": "Activity detail read failed.",
+} as const;
+
+export class OrchestrationGetActivityDetailError extends Schema.TaggedErrorClass<OrchestrationGetActivityDetailError>()(
+  "OrchestrationGetActivityDetailError",
+  {
+    reason: Schema.Literals(["not-found", "read-failed"]),
+    threadId: ThreadId,
+    activityId: EventId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return ACTIVITY_DETAIL_ERROR_MESSAGES[this.reason];
+  }
+}
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1795,6 +1822,10 @@ export const OrchestrationRpcSchemas = {
   getWorkflowScript: {
     input: OrchestrationGetWorkflowScriptInput,
     output: OrchestrationGetWorkflowScriptResult,
+  },
+  getActivityDetail: {
+    input: OrchestrationGetActivityDetailInput,
+    output: OrchestrationGetActivityDetailResult,
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,

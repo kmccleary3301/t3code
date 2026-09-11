@@ -80,7 +80,12 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-" });
-      const codexProvider = makeProvider(CODEX_DRIVER);
+      const codexProvider = makeProvider(CODEX_DRIVER, {
+        slashCommands: [
+          { name: "goal", description: "Set a goal", icon: "goal", usage: 7 },
+          { name: "model", description: "Choose a model", icon: "model", usage: 3 },
+        ],
+      });
       const claudeProvider = makeProvider(CLAUDE_AGENT_DRIVER, {
         status: "warning",
         auth: { status: "unknown" },
@@ -193,7 +198,6 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       version: null,
       status: "disabled",
       auth: { status: "unknown" },
-      message: "Codex is disabled in T3 Code settings.",
     });
 
     assert.deepStrictEqual(

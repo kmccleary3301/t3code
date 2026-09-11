@@ -2,6 +2,7 @@ import { BUILT_IN_THEMES, getThemeColorsForAppearance } from "@t3tools/shared/th
 
 import {
   getMobileThemeVariables,
+  isLegacyMobileThemeId,
   themeColorToNativeColor,
   type MobileThemeId,
 } from "../../lib/mobileTheme";
@@ -98,7 +99,7 @@ export function getMobileTerminalTheme(
   scheme: TerminalAppearanceScheme,
 ): TerminalTheme {
   const base = getPierreTerminalTheme(scheme);
-  if (themeId === "t3-code") return base;
+  if (isLegacyMobileThemeId(themeId)) return base;
 
   const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? BUILT_IN_THEMES[0];
   const palette = getThemeColorsForAppearance(theme, scheme) ?? theme.colors;

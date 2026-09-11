@@ -19,6 +19,7 @@ import {
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
+import { isProviderCommandCatalog } from "@t3tools/shared/providerSlashCommandCompletion";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -374,6 +375,25 @@ export function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "session.configured": {
+      const catalog = {
+        providerInstanceId: event.providerInstanceId,
+        slashCommands: event.payload.config.slashCommands,
+      };
+      if (!isProviderCommandCatalog(catalog)) return [];
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "provider.commands.updated",
+          summary: "Native commands updated",
+          payload: catalog,
+          turnId: null,
+          ...maybeSequence,
+        },
+      ];
+    }
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];
@@ -1098,22 +1118,24 @@ const make = Effect.gen(function* () {
     turnId?: TurnId;
   }) =>
     Effect.gen(function* () {
+      const baseKey = assistantSegmentBaseKeyFromEvent(input.event);
       if (!input.turnId) {
-        return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(input.event), 0);
+        return assistantSegmentMessageId(baseKey, 0);
       }
 
-      const activeMessageId = yield* getActiveAssistantMessageIdForTurn(
-        input.threadId,
-        input.turnId,
-      );
-      if (Option.isSome(activeMessageId)) {
-        return activeMessageId.value;
+      const state = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
+      if (
+        Option.isSome(state) &&
+        state.value.activeMessageId !== null &&
+        state.value.baseKey === baseKey
+      ) {
+        return state.value.activeMessageId;
       }
 
       return yield* startAssistantSegmentForTurn({
         threadId: input.threadId,
         turnId: input.turnId,
-        baseKey: assistantSegmentBaseKeyFromEvent(input.event),
+        baseKey,
       });
     });
 
@@ -1533,6 +1555,51 @@ const make = Effect.gen(function* () {
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 
+      if (
+        event.type === "session.configured" &&
+        (event.provider === "pi" || event.provider === "omp") &&
+        event.providerInstanceId === thread.modelSelection.instanceId
+      ) {
+        const config = event.payload.config;
+        const model = typeof config.model === "string" ? config.model.trim() : undefined;
+        const title = typeof config.title === "string" ? config.title.trim() : undefined;
+        const thinkingLevel =
+          typeof config.thinkingLevel === "string" ? config.thinkingLevel : undefined;
+        const previousThinkingLevel = thread.modelSelection.options?.find(
+          (option) => option.id === "thinkingLevel",
+        )?.value;
+        const modelChanged = Boolean(model && model !== thread.modelSelection.model);
+        const thinkingChanged =
+          thinkingLevel !== undefined && thinkingLevel !== previousThinkingLevel;
+        const titleChanged = Boolean(title && title !== thread.title);
+        if (modelChanged || thinkingChanged || titleChanged) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make(`provider:native-config:${event.eventId}`),
+            threadId: thread.id,
+            ...(titleChanged ? { title } : {}),
+            ...(modelChanged || thinkingChanged
+              ? {
+                  modelSelection: {
+                    ...thread.modelSelection,
+                    model: model || thread.modelSelection.model,
+                    ...(thinkingLevel !== undefined
+                      ? {
+                          options: [
+                            ...(thread.modelSelection.options ?? []).filter(
+                              (option) => option.id !== "thinkingLevel",
+                            ),
+                            { id: "thinkingLevel", value: thinkingLevel },
+                          ],
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
+          });
+        }
+      }
+
       let loadedThreadDetail: OrchestrationThread | null | undefined;
       const getLoadedThreadDetail = () =>
         Effect.gen(function* () {
@@ -1821,8 +1888,21 @@ const make = Effect.gen(function* () {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const turnId = toTurnId(event.turnId);
-        const activeAssistantMessageId = turnId
-          ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
+        const completionBaseKey = assistantSegmentBaseKeyFromEvent(event);
+        const activeAssistantSegment = turnId
+          ? yield* getAssistantSegmentStateForTurn(thread.id, turnId).pipe(
+              Effect.map(
+                Option.flatMap((state) =>
+                  state.activeMessageId !== null &&
+                  (event.itemId === undefined || state.baseKey === completionBaseKey)
+                    ? Option.some(state)
+                    : Option.none(),
+                ),
+              ),
+            )
+          : Option.none<AssistantSegmentState>();
+        const activeAssistantMessageId = Option.isSome(activeAssistantSegment)
+          ? Option.fromNullishOr(activeAssistantSegment.value.activeMessageId)
           : Option.none<MessageId>();
         const hasAssistantMessagesForTurn =
           turnId !== undefined ? hasAssistantMessageForTurn(messages, turnId) : false;
@@ -1864,7 +1944,7 @@ const make = Effect.gen(function* () {
           }
         }
 
-        if (turnId) {
+        if (turnId && Option.isSome(activeAssistantSegment)) {
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
         }
       }

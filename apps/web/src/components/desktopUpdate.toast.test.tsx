@@ -64,21 +64,19 @@ describe("showDesktopUpdateDownloadedToast", () => {
     testState.addToast.mockReset();
   });
 
-  it("opens the downloaded version's release notes", async () => {
+  it("opens the fork release listing for a downloaded update", async () => {
     const openExternal = vi.fn().mockResolvedValue(true);
 
     showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
     const link = findReleaseNotesLink(getDescription());
     link?.props.onClick?.();
     await vi.waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
-      );
+      expect(openExternal).toHaveBeenCalledWith("https://github.com/kmccleary3301/t3code/releases");
     });
     expect(testState.addToast).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to the version the download was started for", async () => {
+  it("keeps the fork release listing when the download event has not populated its version", async () => {
     const openExternal = vi.fn().mockResolvedValue(true);
 
     // The `update-downloaded` event can land after the download RPC resolves.
@@ -89,9 +87,7 @@ describe("showDesktopUpdateDownloadedToast", () => {
     findReleaseNotesLink(getDescription())?.props.onClick?.();
 
     await vi.waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith(
-        "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
-      );
+      expect(openExternal).toHaveBeenCalledWith("https://github.com/kmccleary3301/t3code/releases");
     });
   });
 
@@ -107,14 +103,14 @@ describe("showDesktopUpdateDownloadedToast", () => {
   it.each([
     ["returns false", vi.fn().mockResolvedValue(false)],
     ["rejects", vi.fn().mockRejectedValue(new Error("open failed"))],
-  ])("shows an error when opening release notes %s", async (_description, openExternal) => {
+  ])("shows an error when opening KM Code releases %s", async (_description, openExternal) => {
     showDesktopUpdateDownloadedToast({ openExternal }, downloadedState());
     findReleaseNotesLink(getDescription())?.props.onClick?.();
 
     await vi.waitFor(() => {
       expect(testState.addToast).toHaveBeenLastCalledWith({
         type: "error",
-        title: "Unable to open release notes",
+        title: "Unable to open KM Code releases",
       });
     });
   });

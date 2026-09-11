@@ -1,5 +1,7 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, ServerProviderSlashCommand } from "@t3tools/contracts";
+import ompCompletionFixture from "../../../../../packages/shared/src/ompSlashCompletionFixture.json";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import {
@@ -8,6 +10,131 @@ import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
+
+type OmpCompletionRow = {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly hint?: string;
+};
+
+const ompFixtureCatalog = Schema.decodeUnknownSync(Schema.Array(ServerProviderSlashCommand))(
+  ompCompletionFixture.catalog,
+);
+const ompFixtureOutputs = {
+  "": ompCompletionFixture[""],
+  g: ompCompletionFixture.g,
+  go: ompCompletionFixture.go,
+  goal: ompCompletionFixture.goal,
+  s: ompCompletionFixture.s,
+  se: ompCompletionFixture.se,
+  set: ompCompletionFixture.set,
+  pl: ompCompletionFixture.pl,
+  mod: ompCompletionFixture.mod,
+  sk: ompCompletionFixture.sk,
+  q: ompCompletionFixture.q,
+  clip: ompCompletionFixture.clip,
+  "goal ": ompCompletionFixture["goal "],
+  "goal s": ompCompletionFixture["goal s"],
+  zzzz: ompCompletionFixture.zzzz,
+} satisfies Record<string, ReadonlyArray<OmpCompletionRow>>;
+const ompCompletionQueries = [
+  "",
+  "g",
+  "go",
+  "goal",
+  "s",
+  "se",
+  "set",
+  "pl",
+  "mod",
+  "sk",
+  "q",
+  "clip",
+  "goal ",
+  "goal s",
+  "zzzz",
+] as const;
+
+describe("OMP completion parity", () => {
+  const provider = ProviderDriverKind.make("omp");
+  it("uses the full live runtime catalog source set", () => {
+    expect(ompCompletionFixture.catalogSource).toBe("rpc");
+    const sourceCounts = new Map<string, number>();
+    for (const command of ompFixtureCatalog) {
+      sourceCounts.set(
+        command.source ?? "unknown",
+        (sourceCounts.get(command.source ?? "unknown") ?? 0) + 1,
+      );
+    }
+    expect(Object.fromEntries(sourceCounts)).toEqual({
+      builtin: 79,
+      extension: 1,
+      custom: 2,
+      skill: 55,
+      file: 13,
+    });
+  });
+
+  it("matches the real provider's ordered command rows for the corpus", () => {
+    const items = ompFixtureCatalog.map(
+      (command): Extract<ComposerCommandItem, { type: "provider-slash-command" }> => ({
+        id: `provider-slash-command:${provider}:${command.name}`,
+        type: "provider-slash-command",
+        provider,
+        command,
+        label: `/${command.name}`,
+        description: command.input?.hint
+          ? command.description
+            ? `${command.input.hint} - ${command.description}`
+            : command.input.hint
+          : (command.description ?? ""),
+      }),
+    );
+
+    for (const query of ompCompletionQueries) {
+      if (query.includes(" ")) continue;
+      const expectedRows = ompFixtureOutputs[query];
+      const actual = searchSlashCommandItems(items, query).map((item) => ({
+        id: item.id,
+        label: item.label,
+        description: item.description,
+      }));
+      expect(actual, query).toEqual(
+        expectedRows.map((row) => ({
+          id: `provider-slash-command:${provider}:${row.value}`,
+          label: `/${row.label}`,
+          description: row.description ?? "",
+        })),
+      );
+    }
+
+    const emptyIds = searchSlashCommandItems(items, "").map((item) => item.id);
+    expect(emptyIds[0]).toContain(":skill:");
+    expect(emptyIds.findIndex((id) => id.endsWith(":security"))).toBeGreaterThan(0);
+  });
+
+  it("matches the real provider's subcommand rows and prefix filtering", () => {
+    const commands = ompFixtureCatalog;
+    for (const query of ["goal ", "goal s"] as const) {
+      const completion = buildProviderSlashArgumentItems({ provider, commands, query });
+      expect(
+        completion?.items.map((item) => ({
+          label: item.label,
+          description: item.description,
+        })),
+      ).toEqual(
+        ompFixtureOutputs[query].map((row) => ({
+          label: `/goal ${row.label}`,
+          description:
+            row.description && row.hint
+              ? `${row.description} · ${row.hint}`
+              : (row.description ?? row.hint ?? ""),
+        })),
+      );
+    }
+  });
+});
 
 describe("searchSlashCommandItems", () => {
   const claudeDriver = ProviderDriverKind.make("claudeAgent");
@@ -44,6 +171,33 @@ describe("searchSlashCommandItems", () => {
     expect(searchSlashCommandItems(items, "ui").map((item) => item.id)).toEqual([
       "provider-slash-command:claudeAgent:ui",
       "slash:default",
+    ]);
+  });
+
+  it("keeps app-only matches in their trailing group", () => {
+    const items = [
+      {
+        id: "slash:model",
+        type: "slash-command",
+        command: "model",
+        label: "/model",
+        description: "Switch response model",
+      },
+      {
+        id: "provider-slash-command:claudeAgent:models",
+        type: "provider-slash-command",
+        provider: claudeDriver,
+        command: { name: "models", description: "Switch response model" },
+        label: "/models",
+        description: "Switch response model",
+      },
+    ] satisfies Array<
+      Extract<ComposerCommandItem, { type: "slash-command" | "provider-slash-command" }>
+    >;
+
+    expect(searchSlashCommandItems(items, "model").map((item) => item.id)).toEqual([
+      "provider-slash-command:claudeAgent:models",
+      "slash:model",
     ]);
   });
 
@@ -147,7 +301,9 @@ describe("searchSlashCommandItems", () => {
     expect(searchSlashCommandItems(items, "/sk").map((item) => item.id)).toEqual([
       "skill:claudeAgent:browser",
     ]);
-    expect(searchSlashCommandItems(items, "/ill")).toEqual([]);
+    expect(searchSlashCommandItems(items, "/ill").map((item) => item.id)).toEqual([
+      "skill:claudeAgent:browser",
+    ]);
   });
 
   it("keeps skills alongside commands for an empty slash query", () => {
@@ -174,8 +330,8 @@ describe("searchSlashCommandItems", () => {
     ] satisfies Array<Extract<ComposerCommandItem, { type: "slash-command" | "skill" }>>;
 
     expect(searchSlashCommandItems(items, "").map((item) => item.id)).toEqual([
-      "slash:model",
       "skill:claudeAgent:unslop",
+      "slash:model",
     ]);
   });
 

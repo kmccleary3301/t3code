@@ -660,7 +660,8 @@ function parseClaudeInitializationCommands(
       return [
         {
           name,
-          ...(description ? { description } : {}),
+          source: "builtin",
+          ...(description ? { description, matchDescription: description } : {}),
           ...(argumentHint ? { input: { hint: argumentHint } } : {}),
         } satisfies ServerProviderSlashCommand,
       ];
@@ -691,16 +692,35 @@ function dedupeSlashCommands(
 
     commandsByName.set(key, {
       ...existing,
+      ...(existing.aliases === undefined && command.aliases !== undefined
+        ? { aliases: command.aliases }
+        : {}),
       ...(existing.description
         ? {}
         : command.description
           ? { description: command.description }
           : {}),
-      ...(existing.input?.hint
+      ...(existing.matchDescription
         ? {}
-        : command.input?.hint
-          ? { input: { hint: command.input.hint } }
+        : command.matchDescription
+          ? { matchDescription: command.matchDescription }
           : {}),
+      ...(existing.input === undefined && command.input !== undefined
+        ? { input: command.input }
+        : {}),
+      ...(existing.subcommands === undefined && command.subcommands !== undefined
+        ? { subcommands: command.subcommands }
+        : {}),
+      ...(existing.source === undefined && command.source !== undefined
+        ? { source: command.source }
+        : {}),
+      ...(existing.executable === undefined && command.executable !== undefined
+        ? { executable: command.executable }
+        : {}),
+      ...(existing.icon ? {} : command.icon ? { icon: command.icon } : {}),
+      ...(existing.usage === undefined && command.usage !== undefined
+        ? { usage: command.usage }
+        : {}),
     });
   }
 
@@ -835,7 +855,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Claude is disabled in T3 Code settings.",
+        message: "Claude is disabled in KM Code settings.",
       },
     });
   }
@@ -1004,7 +1024,7 @@ export const makePendingClaudeProvider = (
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Claude is disabled in T3 Code settings.",
+          message: "Claude is disabled in KM Code settings.",
         },
       });
     }

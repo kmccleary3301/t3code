@@ -3,8 +3,13 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import tailwindColors from "tailwindcss/colors";
-import { BUILT_IN_THEME_IDS, type BuiltInThemeId } from "@t3tools/shared/themePalettes";
+import {
+  BUILT_IN_THEME_IDS,
+  LEGACY_MOBILE_DEFAULT_THEME_ID,
+  type BuiltInThemeId,
+} from "@t3tools/shared/themePalettes";
 
+import legacyThemeVariables from "../generated-uniwind-legacy-theme-variables.json" with { type: "json" };
 import {
   getMobileThemeVariables,
   MOBILE_THEME_VARIABLE_NAMES,
@@ -137,9 +142,12 @@ const ADAPTIVE_COLORS = {
   "--color-adaptive-zinc-600-300": [color("zinc", 600), color("zinc", 300)],
 };
 
-export const customThemeNames = BUILT_IN_THEME_IDS.flatMap((themeId) =>
-  APPEARANCES.map((appearance) => `${themeId}-${appearance}`),
-);
+export const customThemeNames = [
+  ...APPEARANCES.map((appearance) => `${LEGACY_MOBILE_DEFAULT_THEME_ID}-${appearance}`),
+  ...BUILT_IN_THEME_IDS.flatMap((themeId) =>
+    APPEARANCES.map((appearance) => `${themeId}-${appearance}`),
+  ),
+];
 
 const adaptiveVariablesFor = (appearance: MobileThemeAppearance) =>
   Object.fromEntries(
@@ -148,6 +156,10 @@ const adaptiveVariablesFor = (appearance: MobileThemeAppearance) =>
       values[appearance === "light" ? 0 : 1],
     ]),
   );
+const legacyVariablesFor = (appearance: MobileThemeAppearance) => ({
+  ...legacyThemeVariables[appearance],
+  ...adaptiveVariablesFor(appearance),
+});
 
 const variablesFor = (themeId: BuiltInThemeId, appearance: MobileThemeAppearance) => ({
   ...getMobileThemeVariables(themeId, appearance),
@@ -165,6 +177,12 @@ export const renderUniwindThemesCSS = () => {
   const variants = [
     renderVariant("light", adaptiveVariablesFor("light")),
     renderVariant("dark", adaptiveVariablesFor("dark")),
+    ...APPEARANCES.map((appearance) =>
+      renderVariant(
+        `${LEGACY_MOBILE_DEFAULT_THEME_ID}-${appearance}`,
+        legacyVariablesFor(appearance),
+      ),
+    ),
     ...BUILT_IN_THEME_IDS.flatMap((themeId) =>
       APPEARANCES.map((appearance) =>
         renderVariant(`${themeId}-${appearance}`, variablesFor(themeId, appearance)),

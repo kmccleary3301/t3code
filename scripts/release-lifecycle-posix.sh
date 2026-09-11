@@ -249,8 +249,8 @@ assert_version() {
   esac
   help_output=$("$check_prefix/bin/t3-pi-omp" --help 2>&1) || fail "--help failed for $expected_version"
   case "$help_output" in
-    *"Run the T3 Code server"*) ;;
-    *) fail "help output did not describe the server command" ;;
+    *"Run the KM Code server"*) ;;
+    *) fail "help output did not describe the KM Code server command" ;;
   esac
 }
 assert_prefix_unchanged() {
@@ -361,8 +361,8 @@ desktop_identity_smoke() {
       [ -x "$squashfs_root/AppRun" ] || fail "AppImage extraction has no executable AppRun"
       desktop_entry=$(find "$squashfs_root" -type f -name '*.desktop' -print | awk 'NF { print; exit }')
       [ -n "$desktop_entry" ] || fail "AppImage extraction has no desktop entry"
-      awk '/^Name=.*T3 Code/ { found = 1 } END { exit found ? 0 : 1 }' "$desktop_entry" ||
-        fail "AppImage desktop entry has no T3 Code identity"
+      awk '/^Name=.*KM Code/ { found = 1 } END { exit found ? 0 : 1 }' "$desktop_entry" ||
+        fail "AppImage desktop entry has no KM Code identity"
       case "$desktop_name" in
         *"${tag#fork-v}"*) ;;
         *) fail "AppImage identity did not expose ${tag#fork-v}: $desktop_name" ;;

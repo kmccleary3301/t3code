@@ -38,6 +38,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
+  OrchestrationGetActivityDetailError,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
   type ProjectEntriesFailure,
@@ -49,6 +50,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   ProviderUploadFeedbackError,
+  ProviderNativeCommandError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
@@ -1327,6 +1329,34 @@ const makeWsRpcLayer = (
             readWorkflowScript({ scriptPath: input.scriptPath }),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.getActivityDetail]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getActivityDetail,
+            projectionSnapshotQuery.getActivityDetail(input.threadId, input.activityId).pipe(
+              Effect.flatMap((activity) =>
+                Option.isSome(activity)
+                  ? Effect.succeed(activity.value)
+                  : Effect.fail(
+                      new OrchestrationGetActivityDetailError({
+                        reason: "not-found",
+                        threadId: input.threadId,
+                        activityId: input.activityId,
+                      }),
+                    ),
+              ),
+              Effect.mapError((cause) =>
+                Schema.is(OrchestrationGetActivityDetailError)(cause)
+                  ? cause
+                  : new OrchestrationGetActivityDetailError({
+                      reason: "read-failed",
+                      threadId: input.threadId,
+                      activityId: input.activityId,
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getTurnDiff,
@@ -1654,6 +1684,21 @@ const makeWsRpcLayer = (
               : providerRegistry.refresh()
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.providerNativeCommands]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerNativeCommands,
+            providerService.discoverNativeCommands(input).pipe(
+              Effect.mapError((cause) =>
+                cause._tag === "ProviderNativeCommandError"
+                  ? cause
+                  : new ProviderNativeCommandError({
+                      code: "discovery",
+                      message: cause.message,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.providerUploadFeedback]: (input) =>
           observeRpcEffect(

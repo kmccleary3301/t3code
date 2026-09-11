@@ -1,7 +1,9 @@
-import type {
-  DesktopDiscoveredSshHost,
-  DesktopSshEnvironmentBootstrap,
-  DesktopSshEnvironmentTarget,
+import {
+  parseProductProfile,
+  resolveProductIdentity,
+  type DesktopDiscoveredSshHost,
+  type DesktopSshEnvironmentBootstrap,
+  type DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
@@ -16,6 +18,7 @@ import {
   SshReadinessError,
 } from "@t3tools/ssh/errors";
 import * as SshTunnel from "@t3tools/ssh/tunnel";
+import type { RemoteT3RunnerOptions } from "@t3tools/ssh/remote-scripts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -25,6 +28,10 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
+
+const DESKTOP_PRODUCT_NAME = resolveProductIdentity(
+  parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+).baseName;
 
 export type DesktopSshEnvironmentRuntimeServices =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -66,7 +73,7 @@ export class DesktopSshEnvironment extends Context.Service<
 
 export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliPackageSpec?: () => string;
-  readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
+  readonly resolveCliRunner?: Effect.Effect<RemoteT3RunnerOptions>;
 }
 
 function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
@@ -96,7 +103,7 @@ export function toSshPasswordPromptError(
       break;
     case "DesktopSshPromptWindowUnavailableError":
     case "DesktopSshPromptPresentationError":
-      message = "T3 Code window is not available for SSH authentication.";
+      message = `${DESKTOP_PRODUCT_NAME} window is not available for SSH authentication.`;
       break;
     case "DesktopSshPromptTimedOutError":
       message = `SSH authentication timed out for ${cause.destination}.`;

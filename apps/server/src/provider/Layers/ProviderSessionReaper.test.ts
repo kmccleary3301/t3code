@@ -169,6 +169,7 @@ describe("ProviderSessionReaper", () => {
       respondToUserInput: () => unsupported(),
       stopSession,
       listSessions: () => Effect.succeed([]),
+      discoverNativeCommands: () => unsupported(),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       getInstanceInfo: (instanceId) => {
         const driverKind = ProviderDriverKind.make(String(instanceId));
@@ -224,6 +225,7 @@ describe("ProviderSessionReaper", () => {
                 : Option.none(),
             ),
           getThreadDetailById: () => Effect.die("unused"),
+          getActivityDetail: () => Effect.die("unused"),
           getThreadDetailSnapshot: () => Effect.die("unused"),
           searchThreads: () => Effect.succeed({ matches: [] }),
         }),

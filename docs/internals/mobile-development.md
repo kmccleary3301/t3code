@@ -48,3 +48,20 @@ After installing or changing the Uniwind patch, restart Metro once with
 `vp run dev:client:reset` from `apps/mobile`. pnpm gives patched packages new
 filesystem paths, and cached transforms can otherwise retain references to the
 previous package. Ordinary development starts should retain the transform cache.
+
+## Native SSH and distribution
+
+The mobile SSH gateway uses the shared remote launch scripts and connection runtime.
+Android provides the Expo bridge through JSch; iOS uses libssh2. Both require explicit
+SHA-256 host-key confirmation. Credentials remain in secure storage, and gateway scope
+cleanup disconnects acquired sessions after launch failures or cancellation.
+
+Native module changes require rebuilding the app; Metro cannot add a native module to an
+installed binary. Android transport and app behavior have been exercised on an emulator.
+The Swift transport has been compiled and exercised against a real SSH server on macOS;
+that is not an iOS application build or device verification.
+
+KM Code keeps existing bundle/package identifiers and state paths for local upgrades.
+It does not select an upstream Apple signing team or EAS project. Configure fork-owned
+distribution credentials before publishing. OTA updates remain disabled until a
+fork-owned update channel exists.

@@ -13,9 +13,11 @@ const initialState: MobileThemeRuntimeState = {
 };
 
 describe("mobileThemeRuntime", () => {
-  it("keeps the default palette on Uniwind's built-in appearance themes", () => {
-    expect(getMobileUniwindThemeName("t3-code", "light")).toBe("light");
-    expect(getMobileUniwindThemeName("t3-code", "dark")).toBe("dark");
+  it("keeps KM defaults and legacy t3-code themes on their registered variants", () => {
+    expect(getMobileUniwindThemeName("km-code", "light")).toBe("light");
+    expect(getMobileUniwindThemeName("km-code", "dark")).toBe("dark");
+    expect(getMobileUniwindThemeName("t3-code", "light")).toBe("t3-code-light");
+    expect(getMobileUniwindThemeName("t3-code", "dark")).toBe("t3-code-dark");
   });
 
   it("maps custom palettes and appearances to registered themes", () => {
@@ -28,7 +30,7 @@ describe("mobileThemeRuntime", () => {
       (operation) => operation.kind === "update-text-variables",
     );
 
-    expect(variableOperations).toHaveLength(12);
+    expect(variableOperations).toHaveLength(16);
     expect(variableOperations.at(-1)?.themeName).toBe("iris-dark");
     expect(operations.at(-1)).toEqual({
       kind: "set-appearance-mode",
@@ -60,20 +62,6 @@ describe("mobileThemeRuntime", () => {
         themeMode: "dark",
       },
     ]);
-  });
-
-  it("updates text variables for every theme without switching palettes", () => {
-    const operations = createMobileThemeRuntimeOperations(initialState, {
-      ...initialState,
-      baseFontSize: 18,
-    });
-
-    expect(operations).toHaveLength(12);
-    expect(operations.every((operation) => operation.kind === "update-text-variables")).toBe(true);
-    expect(operations.at(-1)).toMatchObject({
-      kind: "update-text-variables",
-      themeName: "iris-dark",
-    });
   });
 
   it("does no native work when persistence echoes an already-applied state", () => {

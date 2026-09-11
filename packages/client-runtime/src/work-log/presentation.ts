@@ -47,9 +47,10 @@ function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean {
 }
 
 export function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean {
+  const title = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   return (
-    entry.itemType === "web_search" &&
-    /\bgrep\b/i.test(normalizeCompactToolLabel(entry.toolTitle ?? entry.label))
+    (entry.itemType === "web_search" && /\bgrep\b/i.test(title)) ||
+    (entry.itemType === "dynamic_tool_call" && /^(?:grep|glob|find[-\s]+files)$/i.test(title))
   );
 }
 
@@ -61,6 +62,7 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   ) {
     return "read";
   }
+  if (workLogEntryIsLocalCodeSearch(entry)) return "code-search";
   if (
     entry.requestKind === "file-change" ||
     entry.itemType === "file_change" ||
@@ -71,7 +73,6 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   if (entry.requestKind === "command" || entry.itemType === "command_execution" || entry.command) {
     return "command";
   }
-  if (workLogEntryIsLocalCodeSearch(entry)) return "code-search";
   if (entry.itemType === "web_search") return "search";
   return workLogEntryIsToolLike(entry) ? "other" : "update";
 }
@@ -139,28 +140,33 @@ export function omitSupersededLifecycleMarkers<T>(
 ): T[] {
   const laterTerminalIdentities = new Set<string>();
   const reversedEntries: T[] = [];
-
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;
     const workEntry = workEntryFor(entry);
-    const normalizedLabel = normalizeCompactToolLabel(workEntry.toolTitle ?? workEntry.label);
-    const identity = [
-      workEntry.turnId ?? "no-turn",
-      workEntry.itemType ?? "",
-      normalizedLabel,
-    ].join("\u001f");
+    const toolCallId = workEntry.toolCallId;
+    const identity =
+      toolCallId === undefined
+        ? undefined
+        : [workEntry.turnId ?? "no-turn", toolCallId].join("\u001f");
     const activityKind = workEntry.sourceActivityKind;
-    const isStatuslessIdlessMarker =
-      workEntry.toolCallId === undefined &&
+    const isStatuslessLifecycleMarker =
+      toolCallId !== undefined &&
       workEntry.toolLifecycleStatus === undefined &&
       (activityKind === "tool.started" || activityKind === "tool.updated");
-    if (isStatuslessIdlessMarker && laterTerminalIdentities.has(identity)) continue;
+    if (
+      identity !== undefined &&
+      isStatuslessLifecycleMarker &&
+      laterTerminalIdentities.has(identity)
+    ) {
+      continue;
+    }
 
     reversedEntries.push(entry);
     if (
-      activityKind === "tool.completed" ||
-      (workEntry.toolLifecycleStatus !== undefined &&
-        workEntry.toolLifecycleStatus !== "inProgress")
+      identity !== undefined &&
+      (activityKind === "tool.completed" ||
+        (workEntry.toolLifecycleStatus !== undefined &&
+          workEntry.toolLifecycleStatus !== "inProgress"))
     ) {
       laterTerminalIdentities.add(identity);
     }

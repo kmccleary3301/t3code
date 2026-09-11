@@ -54,6 +54,36 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("text-left");
   });
 
+  it("renders a fallback icon for an unknown provider icon name", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerCommandMenu
+        items={[
+          {
+            id: "provider:future",
+            type: "provider-slash-command",
+            provider: ProviderDriverKind.make("omp"),
+            command: {
+              name: "future",
+              icon: "future-icon",
+              source: "builtin",
+              executable: true,
+            },
+            label: "/future",
+            description: "Future command",
+          },
+        ]}
+        resolvedTheme="dark"
+        isLoading={false}
+        triggerKind="slash-command"
+        activeItemId="provider:future"
+        onHighlightedItemChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("lucide-circle-question-mark");
+  });
+
   it("renders the skill source icon inside its badge", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu

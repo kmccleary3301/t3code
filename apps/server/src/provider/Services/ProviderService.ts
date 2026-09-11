@@ -14,6 +14,7 @@
 import type {
   ProviderInterruptTurnInput,
   ProviderInstanceId,
+  ProviderNativeCommandsInput,
   ProviderNativeSessionListInput,
   ProviderNativeSessionSummary,
   ProviderRespondToRequestInput,
@@ -28,6 +29,7 @@ import type {
   ProviderUploadFeedbackResult,
   ThreadId,
   ProviderTurnStartResult,
+  ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -105,6 +107,9 @@ export interface ProviderServiceShape {
   readonly listNativeSessions?: (
     input: ProviderNativeSessionListInput,
   ) => Effect.Effect<ReadonlyArray<ProviderNativeSessionSummary>, ProviderServiceError>;
+  readonly discoverNativeCommands: (
+    input: ProviderNativeCommandsInput,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSlashCommand>, ProviderServiceError>;
 
   readonly readNativeHistory?: (input: {
     readonly threadId: ThreadId;

@@ -1,4 +1,9 @@
-# T3 Code
+# KM Code
+
+This is Kyle McCleary's KM Code fork. The T3 Code history and contributor guidance below
+come from upstream; upstream maintainer names, statistics, release channels, and services
+are not KM Code ownership or distribution claims. Preserve upstream attribution and the
+compatibility identifiers and state paths used by existing installations.
 
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs (Codex, Claude Code, Cursor, Grok, OpenCode) and serves web, desktop, and mobile clients.
 

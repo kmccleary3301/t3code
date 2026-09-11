@@ -9,8 +9,36 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  resolveComposerSlashCommandDispatch,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+
+describe("resolveComposerSlashCommandDispatch", () => {
+  it("routes an inert app-name harness row to the local implementation", () => {
+    expect(resolveComposerSlashCommandDispatch({ commandName: "plan", executable: false })).toEqual(
+      {
+        kind: "local",
+        command: "plan",
+      },
+    );
+  });
+
+  it("routes an executable app-name harness row to the provider", () => {
+    expect(resolveComposerSlashCommandDispatch({ commandName: "model", executable: true })).toEqual(
+      {
+        kind: "provider",
+      },
+    );
+  });
+
+  it("explains inert rows with no local implementation", () => {
+    expect(resolveComposerSlashCommandDispatch({ commandName: "goal", executable: false })).toEqual(
+      {
+        kind: "unavailable",
+      },
+    );
+  });
+});
 
 describe("composerSubmissionIntentForEnter", () => {
   it("submits plain Enter on desktop", () => {

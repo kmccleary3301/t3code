@@ -9,9 +9,12 @@
  */
 import type {
   ApprovalRequestId,
+  ChatImageAttachment,
+  ItemLifecyclePayload,
   ProviderApprovalDecision,
   ProviderDriverKind,
-  ProviderUserInputAnswers,
+  ProviderNativeCommandError,
+  ProviderNativeCommandsInput,
   ProviderNativeSessionError,
   ProviderNativeSessionListInput,
   ProviderNativeSessionSummary,
@@ -19,12 +22,16 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSubagentTranscriptReadResult,
+  ProviderUserInputAnswers,
   ProviderSessionStartInput,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
+  TaskProgressPayload,
+  TaskUpdatedPayload,
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
+  ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -47,13 +54,35 @@ export interface ProviderThreadSnapshot {
   readonly threadId: ThreadId;
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
-
-export interface ProviderNativeHistoryMessage {
+export interface ProviderNativeHistoryTextMessage {
   readonly role: "user" | "assistant" | "system";
   readonly text: string;
   readonly timestamp: string;
   readonly model?: string;
+  readonly sourceId?: string;
+  readonly sourceIndex?: number;
+  readonly images?: ReadonlyArray<{
+    readonly type: "image";
+    readonly data: string;
+    readonly mimeType: string;
+  }>;
+  readonly attachments?: ReadonlyArray<ChatImageAttachment>;
 }
+
+export interface ProviderNativeHistoryToolMessage {
+  readonly role: "tool";
+  readonly timestamp: string;
+  readonly toolCallId?: string;
+  readonly phase: "started" | "updated" | "completed";
+  readonly payload: ItemLifecyclePayload;
+  readonly sourceId?: string;
+  readonly sourceIndex?: number;
+  readonly tasks?: ReadonlyArray<TaskProgressPayload & Pick<TaskUpdatedPayload, "endedAt">>;
+}
+
+export type ProviderNativeHistoryMessage =
+  | ProviderNativeHistoryTextMessage
+  | ProviderNativeHistoryToolMessage;
 
 export interface ProviderNativeHistoryPage {
   readonly messages: ReadonlyArray<ProviderNativeHistoryMessage>;
@@ -136,6 +165,15 @@ export interface ProviderAdapterShape<TError> {
     ReadonlyArray<ProviderNativeSessionSummary>,
     TError | ProviderNativeSessionError
   >;
+  /**
+   * Discover provider-native slash commands in one explicit workspace.
+   */
+  readonly discoverNativeCommands?: (
+    input: ProviderNativeCommandsInput,
+  ) => Effect.Effect<
+    ReadonlyArray<ServerProviderSlashCommand>,
+    TError | ProviderNativeCommandError
+  >;
 
   /**
    * Read one bounded page from the native history of an active session.
@@ -162,6 +200,13 @@ export interface ProviderAdapterShape<TError> {
     subagentId: string,
     cursor?: string,
   ) => Effect.Effect<ProviderSubagentTranscriptReadResult, TError | ProviderNativeSessionError>;
+  /** Read a child transcript without starting its durable parent session. */
+  readonly readSubagentTranscriptBySession?: (input: {
+    readonly sessionId: string;
+    readonly subagentId: string;
+    readonly cwd: string;
+    readonly cursor?: string;
+  }) => Effect.Effect<ProviderSubagentTranscriptReadResult, TError | ProviderNativeSessionError>;
   /**
    * Rename the durable native session currently attached to a thread.
    */

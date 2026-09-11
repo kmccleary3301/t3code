@@ -53,11 +53,21 @@ it("keeps fork release and updater repositories explicit and isolated", () => {
   );
 });
 
-it("preserves the upstream repository fallback", () => {
+it("requires an explicit updater repository for upstream releases", () => {
+  assert.throws(
+    () =>
+      resolveReleaseConfig({
+        profile: "upstream",
+        currentRepository: "owner/t3code",
+      }),
+    /T3CODE_DESKTOP_UPDATE_REPOSITORY/,
+  );
+
   assert.deepEqual(
     resolveReleaseConfig({
       profile: "upstream",
       currentRepository: "owner/t3code",
+      updaterRepository: "owner/t3code",
     }),
     {
       profile: "upstream",
@@ -68,6 +78,7 @@ it("preserves the upstream repository fallback", () => {
       updaterRepository: "owner/t3code",
     },
   );
+
   assert.equal(
     normalizeRepository("https://github.com/owner/t3code", "repository"),
     "owner/t3code",

@@ -1,4 +1,4 @@
-import { ConnectionOnboarding } from "@t3tools/client-runtime/connection";
+import { ConnectionOnboarding, type SshConnectionInput } from "@t3tools/client-runtime/connection";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
@@ -18,6 +18,18 @@ export const connectPairingUrl = createRuntimeCommand(connectionAtomRuntime, {
     ConnectionOnboarding.pipe(
       Effect.flatMap((onboarding) => onboarding.registerPairing({ pairingUrl })),
     ),
+});
+
+export const connectSsh = createRuntimeCommand(connectionAtomRuntime, {
+  label: "mobile:connection:connect-ssh",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "singleFlight",
+    key: (input: SshConnectionInput) =>
+      `${input.target.hostname}:${input.target.port ?? 22}:${input.target.username ?? ""}`,
+  },
+  execute: (input: SshConnectionInput) =>
+    ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.registerSsh(input))),
 });
 
 export const updateBearerConnection = createRuntimeCommand(connectionAtomRuntime, {

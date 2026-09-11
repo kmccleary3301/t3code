@@ -26,12 +26,12 @@ function ReleaseNotesLink({
           } catch {
             // Surface rejected IPC calls through the same user-visible fallback.
           }
-          toastManager.add({ type: "error", title: "Unable to open release notes" });
+          toastManager.add({ type: "error", title: "Unable to open KM Code releases" });
         })();
       }}
       type="button"
     >
-      Read more
+      View KM Code releases
       <ArrowRightIcon
         aria-hidden
         className="ml-1 inline size-3 -rotate-45 align-[-0.125em]"

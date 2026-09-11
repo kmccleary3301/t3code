@@ -30,8 +30,7 @@ export function CompactBrandTitle(
   return (
     <View
       aria-level={1}
-      accessibilityLabel="T3 Code, Threads"
-      accessible
+      accessibilityLabel="KM Code, Threads"
       role="heading"
       className="flex-row items-center gap-1.5"
       style={{ marginLeft: titleOffset }}

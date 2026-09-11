@@ -124,6 +124,7 @@ overrides:
   "@types/node": "catalog:"
   effect: "catalog:"
   expo-router: 57.0.17
+  expo-sharing: 57.0.16
   "expo-sharing>@expo/config-plugins": 57.0.9
   "expo-sharing>@expo/config-types": 57.0.2
   vite: "catalog:"
@@ -157,6 +158,7 @@ patchedDependencies:
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
   expo-sharing@57.0.16: patches/expo-sharing@57.0.16.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
+  react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch

@@ -19,7 +19,7 @@ import {
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
   THEME_HALVES_STORAGE_KEY,
-  T3_CHAT_THEME,
+  KM_CODE_THEME,
   ThemePreference,
   type ThemeAppearance,
   type ThemeHalves,
@@ -370,11 +370,11 @@ function applyTheme(
     : (() => {
         const selectedTheme = resolveThemeHalf(theme, themeHalves, resolvedAppearance);
         applyThemePalette(selectedTheme, resolvedAppearance);
-        const definition = getThemeDefinition(selectedTheme) ?? T3_CHAT_THEME;
+        const definition = getThemeDefinition(selectedTheme) ?? KM_CODE_THEME;
         const lightDefinition =
-          getThemeDefinition(resolveThemeHalf(theme, themeHalves, "light")) ?? T3_CHAT_THEME;
+          getThemeDefinition(resolveThemeHalf(theme, themeHalves, "light")) ?? KM_CODE_THEME;
         const darkDefinition =
-          getThemeDefinition(resolveThemeHalf(theme, themeHalves, "dark")) ?? T3_CHAT_THEME;
+          getThemeDefinition(resolveThemeHalf(theme, themeHalves, "dark")) ?? KM_CODE_THEME;
         return applyAppearanceTheme(definition, resolvedAppearance, appearanceMode, {
           light: lightDefinition,
           dark: darkDefinition,

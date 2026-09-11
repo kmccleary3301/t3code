@@ -1,6 +1,7 @@
-# Release Checklist
+# KM Code Release Checklist
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. KM Code is Kyle McCleary's fork of T3 Code; compatibility and attribution
+> details remain in the root [README](../../README.md).
 
 This document covers the unified release workflow for stable and nightly desktop releases.
 
@@ -39,18 +40,16 @@ This document covers the unified release workflow for stable and nightly desktop
   - stable releases are aliased to the `latest` hosted app channel
   - nightly releases are aliased to the `nightly` hosted app channel
 - Signing is optional and auto-detected per platform from secrets, matching upstream behavior.
+  Fork releases use the same workflow with an isolated product profile:
 
-Fork releases use the same workflow with an isolated product profile:
-
+- display name: `KM Code` with `Local` or `Nightly` qualifier
 - stable tags: `fork-vX.Y.Z`
 - nightly tags: `fork-vX.Y.Z-nightly.DATE.RUN`
 - npm package and binary: `t3-pi-omp`
 - npm dist-tags: `latest` for stable and `nightly` for nightly
 - desktop identity: `com.t3tools.t3code.piomp`, `t3code-pi-omp`, and
   `t3code-pi-omp-dev`
-
-The upstream and fork products must never share package names, desktop schemes, bundle IDs, state
-directories, or release tags.
+  The upstream and fork products must never share package names, desktop schemes, bundle IDs, state directories, or release tags.
 
 The automated workflow also publishes `install.sh`, `RELEASE-MANIFEST.json`, and `SHA256SUMS`.
 Desktop assets are signed when platform credentials are configured. GitHub release assets receive

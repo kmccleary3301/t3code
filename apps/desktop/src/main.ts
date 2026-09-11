@@ -17,7 +17,7 @@ import * as Electron from "electron";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
-import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
+import type { RemoteT3RunnerOptions } from "@t3tools/ssh/remote-scripts";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";

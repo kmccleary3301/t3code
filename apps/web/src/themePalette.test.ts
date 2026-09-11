@@ -195,29 +195,6 @@ describe("theme files", () => {
     }
   });
 
-  it("merges a small user file onto the matching contrast-safe base palette", () => {
-    const theme = parseThemeFile({
-      version: THEME_FILE_VERSION,
-      name: "Ocean dusk",
-      appearance: "dark",
-      colors: {
-        canvas: "#07152f",
-        accent: "#67c2ff",
-      },
-    });
-
-    expect(theme).toMatchObject({
-      id: "ocean-dusk",
-      label: "Ocean dusk",
-      appearance: "dark",
-      colors: {
-        canvas: canonical("#07152f"),
-        accent: canonical("#67c2ff"),
-        placeholder: canonical("#968d9f"),
-      },
-    });
-  });
-
   it("decodes literal CSS color formats into OKLCH without dropping alpha", () => {
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,

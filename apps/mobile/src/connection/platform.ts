@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import Constants from "expo-constants";
 import * as Network from "expo-network";
 import { AppState } from "react-native";
@@ -28,11 +29,14 @@ import { AppState } from "react-native";
 import { authClientMetadata } from "../lib/authClientMetadata";
 import * as Runtime from "../lib/runtime";
 import * as MobileStorage from "../persistence/mobile-storage";
+import * as SecureStorage from "../persistence/mobile-secure-storage";
 import { appAtomRegistry } from "../state/atom-registry";
 import { clearThreadOutboxEnvironment } from "../state/thread-outbox-removal";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
 import { connectionStorageLayer } from "./storage";
+import { makeMobileSshGateway } from "./ssh-gateway";
+import { mobileSshNative } from "./nativeSsh";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
   if (state.isConnected === false) {
@@ -115,6 +119,12 @@ const wakeupsLayer = Wakeups.layer({
 const capabilitiesLayer = Layer.effectContext(
   Effect.gen(function* () {
     const storage = yield* MobileStorage.MobileStorage;
+    const secureStorage = yield* SecureStorage.MobileSecureStorage;
+    const httpClient = yield* HttpClient.HttpClient;
+    const presentation = ClientPresentation.of({
+      metadata: authClientMetadata(Constants.expoConfig?.version),
+      scopes: AuthStandardClientScopes,
+    });
     return Context.make(
       CloudSession,
       CloudSession.of({
@@ -164,31 +174,14 @@ const capabilitiesLayer = Layer.effectContext(
           ),
         }),
       ),
-      Context.add(
-        ClientPresentation,
-        ClientPresentation.of({
-          metadata: authClientMetadata(Constants.expoConfig?.version),
-          scopes: AuthStandardClientScopes,
-        }),
-      ),
+      Context.add(ClientPresentation, presentation),
       Context.add(
         SshEnvironmentGateway,
-        SshEnvironmentGateway.of({
-          provision: () =>
-            Effect.fail(
-              new ConnectionBlockedError({
-                reason: "unsupported",
-                detail: "SSH environments are only available in the desktop app.",
-              }),
-            ),
-          prepare: () =>
-            Effect.fail(
-              new ConnectionBlockedError({
-                reason: "unsupported",
-                detail: "SSH environments are only available in the desktop app.",
-              }),
-            ),
-          disconnect: () => Effect.void,
+        makeMobileSshGateway({
+          storage: secureStorage,
+          httpClient,
+          presentation,
+          native: mobileSshNative,
         }),
       ),
     );

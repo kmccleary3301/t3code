@@ -231,10 +231,10 @@ function AppearanceRecoverySurface(props: {
 }
 
 const recoveryStyles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f2f2f7" },
+  container: { flex: 1, backgroundColor: "#f5f1ea" },
   card: { flex: 1, justifyContent: "center", gap: 16, padding: 24 },
-  title: { color: "#1f1f21", fontSize: 24, fontWeight: "700" },
-  message: { color: "#4b4b50", fontSize: 16, lineHeight: 24 },
+  title: { color: "#2b211b", fontSize: 24, fontWeight: "700" },
+  message: { color: "#66554a", fontSize: 16, lineHeight: 24 },
   error: { color: "#b42318", fontSize: 15, lineHeight: 22 },
 });
 

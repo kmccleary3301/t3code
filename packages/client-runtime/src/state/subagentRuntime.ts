@@ -399,6 +399,17 @@ function applyStatus(agent: MutableAgent, status: RuntimeSubagentStatus, at: str
     // don't slide.
     return;
   }
+  if (
+    wasTerminal &&
+    (status === "running" || status === "pending") &&
+    agent.completedAt !== null &&
+    at <= agent.completedAt
+  ) {
+    // SQLite falls back to activity id when native lifecycle rows share a
+    // millisecond. A same-time progress row sorted after completion is stale,
+    // not a new activation.
+    return;
+  }
   if ((wasTerminal || agent.status === "idle") && (status === "running" || status === "pending")) {
     // Reactivation: same identity, new run. Clear the previous run's terminal
     // detail so a live card never shows the prior run's output.

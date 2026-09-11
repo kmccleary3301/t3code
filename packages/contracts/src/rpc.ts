@@ -73,8 +73,11 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
+  OrchestrationGetActivityDetailError,
 } from "./orchestration.ts";
 import {
+  ProviderNativeCommandError,
+  ProviderNativeCommandsInput,
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -184,6 +187,7 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  ServerProviderSlashCommand,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
@@ -245,6 +249,7 @@ export const WS_METHODS = {
 
   // Provider methods
   providerUploadFeedback: "provider.uploadFeedback",
+  providerNativeCommands: "provider.nativeCommands",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -765,6 +770,11 @@ export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFee
   success: ProviderUploadFeedbackResult,
   error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
 });
+export const WsProviderNativeCommandsRpc = Rpc.make(WS_METHODS.providerNativeCommands, {
+  payload: ProviderNativeCommandsInput,
+  success: Schema.Array(ServerProviderSlashCommand),
+  error: Schema.Union([ProviderNativeCommandError, EnvironmentAuthorizationError]),
+});
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
@@ -986,6 +996,14 @@ export const WsOrchestrationGetWorkflowScriptRpc = Rpc.make(
     error: Schema.Union([OrchestrationGetWorkflowScriptError, EnvironmentAuthorizationError]),
   },
 );
+export const WsOrchestrationGetActivityDetailRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getActivityDetail,
+  {
+    payload: OrchestrationRpcSchemas.getActivityDetail.input,
+    success: OrchestrationRpcSchemas.getActivityDetail.output,
+    error: Schema.Union([OrchestrationGetActivityDetailError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsOrchestrationGetTurnDiffRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getTurnDiff, {
   payload: OrchestrationGetTurnDiffInput,
@@ -1154,6 +1172,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
   WsProviderUploadFeedbackRpc,
+  WsProviderNativeCommandsRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
@@ -1196,6 +1215,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeResourceTelemetryRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetWorkflowScriptRpc,
+  WsOrchestrationGetActivityDetailRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationSearchThreadsRpc,

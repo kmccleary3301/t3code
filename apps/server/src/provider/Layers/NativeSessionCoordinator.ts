@@ -1,10 +1,12 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  ChatImageAttachment,
   CommandId,
   ProjectId,
   ProviderNativeSessionError,
   ProviderNativeSessionResumeCursor,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ThreadId,
   type ModelSelection,
   type OrchestrationThread,
@@ -17,26 +19,45 @@ import {
   type ProviderNativeSessionSummary,
   type ProviderSubagentTranscriptReadInput,
 } from "@t3tools/contracts";
-import * as Path from "effect/Path";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Semaphore from "effect/Semaphore";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
+import {
+  parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPath,
+  toSafeThreadAttachmentSegment,
+} from "../../attachmentStore.ts";
+import { parseBase64DataUrl } from "../../imageMime.ts";
+import * as ServerConfig from "../../config.ts";
 import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import type { ProviderServiceError } from "../Errors.ts";
 import * as NativeSessionCoordinator from "../Services/NativeSessionCoordinator.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
-import type { ProviderNativeHistoryPage } from "../Services/ProviderAdapter.ts";
-import { appendNativeHistoryPage, type ImportedNativeTurn } from "./NativeHistoryImport.ts";
+import type {
+  ProviderNativeHistoryMessage,
+  ProviderNativeHistoryPage,
+  ProviderNativeHistoryTextMessage,
+} from "../Services/ProviderAdapter.ts";
+import {
+  appendNativeHistoryPage,
+  NativeHistoryIdentities,
+  type ImportedNativeTurn,
+} from "./NativeHistoryImport.ts";
+import { resolvePiFamilyWorkspacePath } from "../piFamily/NativeSessionCatalog.ts";
 
 const isNativeSessionError = Schema.is(ProviderNativeSessionError);
 const isNativeResumeCursor = Schema.is(ProviderNativeSessionResumeCursor);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function asNativeSessionError(cause: unknown): ProviderNativeSessionError {
   if (isNativeSessionError(cause)) return cause;
@@ -51,6 +72,181 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> | undefined
     ? (value as Readonly<Record<string, unknown>>)
     : undefined;
 }
+type NativeHistoryImage = NonNullable<ProviderNativeHistoryTextMessage["images"]>[number];
+
+type DecodedNativeImage =
+  | {
+      readonly ok: true;
+      readonly bytes: Uint8Array;
+      readonly mimeType: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: string;
+    };
+
+function decodeNativeHistoryImage(image: NativeHistoryImage): DecodedNativeImage {
+  const mimeType = image.mimeType.trim().toLowerCase();
+  if (!mimeType.startsWith("image/")) {
+    return { ok: false, reason: `unsupported MIME type '${image.mimeType}'` };
+  }
+
+  const data = image.data.trim();
+  if (data.length === 0) {
+    return { ok: false, reason: "empty base64 payload" };
+  }
+  const dataUrl =
+    data.slice(0, 5).toLowerCase() === "data:" ? data : `data:${mimeType};base64,${data}`;
+  const parsed = parseBase64DataUrl(dataUrl);
+  if (parsed === null) {
+    return { ok: false, reason: "invalid base64 data URL" };
+  }
+  if (parsed.mimeType !== mimeType) {
+    return {
+      ok: false,
+      reason: `MIME type '${parsed.mimeType}' does not match '${mimeType}'`,
+    };
+  }
+
+  const bytes = Buffer.from(parsed.base64, "base64");
+  if (bytes.byteLength === 0) {
+    return { ok: false, reason: "empty decoded payload" };
+  }
+  if (bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+    return {
+      ok: false,
+      reason: `decoded payload is ${bytes.byteLength} bytes, exceeds the ${PROVIDER_SEND_TURN_MAX_IMAGE_BYTES}-byte limit`,
+    };
+  }
+  return { ok: true, bytes, mimeType };
+}
+
+function deterministicNativeImageAttachmentId(
+  threadId: ThreadId,
+  sourceIdentity: string,
+  sourceIndex: number,
+  imageIndex: number,
+): string | null {
+  const threadSegment = toSafeThreadAttachmentSegment(threadId);
+  if (threadSegment === null) return null;
+  const digest = NodeCrypto.createHash("sha256")
+    .update("t3-native-history-image\0")
+    .update(String(threadId))
+    .update("\0")
+    .update(sourceIdentity)
+    .update("\0")
+    .update(String(sourceIndex))
+    .update("\0")
+    .update(String(imageIndex))
+    .digest("hex");
+  const uuid = [
+    digest.slice(0, 8),
+    digest.slice(8, 12),
+    digest.slice(12, 16),
+    digest.slice(16, 20),
+    digest.slice(20, 32),
+  ].join("-");
+  const attachmentId = `${threadSegment}-${uuid}`;
+  return parseThreadSegmentFromAttachmentId(attachmentId) === threadSegment ? attachmentId : null;
+}
+
+export const materializeNativeHistoryImages = Effect.fn(
+  "NativeSessionCoordinator.materializeNativeHistoryImages",
+)(function* (input: {
+  readonly threadId: ThreadId;
+  readonly messages: ReadonlyArray<ProviderNativeHistoryMessage>;
+  readonly messageOffset: number;
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const messages: ProviderNativeHistoryMessage[] = [];
+
+  for (const [messageIndex, nativeMessage] of input.messages.entries()) {
+    if (nativeMessage.role === "tool" || nativeMessage.images === undefined) {
+      messages.push(nativeMessage);
+      continue;
+    }
+    if (nativeMessage.images.length === 0) {
+      messages.push(nativeMessage);
+      continue;
+    }
+
+    const sourceIdentity =
+      nativeMessage.sourceId ?? `offset-${input.messageOffset + messageIndex + 1}`;
+    const sourceIndex = nativeMessage.sourceIndex ?? input.messageOffset + messageIndex + 1;
+    const attachments: ChatImageAttachment[] = [];
+    for (const [imageIndex, image] of nativeMessage.images.entries()) {
+      const decoded = decodeNativeHistoryImage(image);
+      if (!decoded.ok) {
+        return yield* new ProviderNativeSessionError({
+          code: "invalid",
+          message: `Native history image ${sourceIdentity}/${sourceIndex}/${imageIndex} is invalid: ${decoded.reason}.`,
+        });
+      }
+      const attachmentId = deterministicNativeImageAttachmentId(
+        input.threadId,
+        sourceIdentity,
+        sourceIndex,
+        imageIndex,
+      );
+      if (attachmentId === null) {
+        return yield* new ProviderNativeSessionError({
+          code: "invalid",
+          message: `Native history image ${sourceIdentity}/${sourceIndex}/${imageIndex} has no safe attachment id.`,
+        });
+      }
+      const attachment = {
+        type: "image" as const,
+        id: attachmentId,
+        name: `native-image-${messageIndex + 1}-${imageIndex + 1}`,
+        mimeType: decoded.mimeType,
+        sizeBytes: decoded.bytes.byteLength,
+      };
+      if (!Schema.is(ChatImageAttachment)(attachment)) {
+        return yield* new ProviderNativeSessionError({
+          code: "invalid",
+          message: `Native history image ${sourceIdentity}/${sourceIndex}/${imageIndex} has invalid attachment metadata.`,
+        });
+      }
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment,
+      });
+      if (attachmentPath === null) {
+        return yield* new ProviderNativeSessionError({
+          code: "invalid",
+          message: `Native history image ${sourceIdentity}/${sourceIndex}/${imageIndex} has no safe attachment path.`,
+        });
+      }
+      yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderNativeSessionError({
+              code: "native",
+              message: `Failed to create storage for native history image ${sourceIdentity}/${sourceIndex}/${imageIndex}.`,
+            }),
+        ),
+      );
+      yield* fileSystem.writeFile(attachmentPath, decoded.bytes).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderNativeSessionError({
+              code: "native",
+              message: `Failed to persist native history image ${sourceIdentity}/${sourceIndex}/${imageIndex}.`,
+            }),
+        ),
+      );
+      attachments.push(attachment);
+    }
+    const { images: _images, ...messageWithoutImages } = nativeMessage;
+    messages.push({
+      ...messageWithoutImages,
+      attachments: [...(nativeMessage.attachments ?? []), ...attachments],
+    });
+  }
+  return messages;
+});
 
 function nativeProjectBaseId(workspaceRoot: string): ProjectId {
   const digest = NodeCrypto.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 24);
@@ -84,7 +280,7 @@ function chooseModelSelection(
       ? undefined
       : (providerModels.find(
           ({ slug }) => slug === summary.model || slug.endsWith(`/${summary.model}`),
-        )?.slug ?? (providerModels.length === 0 ? summary.model : undefined));
+        )?.slug ?? summary.model);
   const model =
     summaryModel ??
     (projectDefault?.instanceId === summary.providerInstanceId
@@ -99,7 +295,10 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const turnRepository = yield* ProjectionTurnRepository;
   const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const openSemaphore = yield* Semaphore.make(1);
 
@@ -139,8 +338,28 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     threadId: ThreadId,
     readPage: (cursor?: string) => Effect.Effect<ProviderNativeHistoryPage, ProviderServiceError>,
   ) {
+    const existingThread = Option.getOrUndefined(yield* snapshots.getThreadDetailById(threadId));
+    const existingTurns = yield* turnRepository.listByThreadId({ threadId });
+    const identities = new NativeHistoryIdentities({
+      threadId,
+      messages: existingThread?.messages ?? [],
+      activities: existingThread?.activities ?? [],
+      turns: existingTurns.flatMap((turn): ImportedNativeTurn[] =>
+        turn.turnId === null || turn.state === "pending"
+          ? []
+          : [
+              {
+                turnId: turn.turnId,
+                state: turn.state,
+                requestedAt: turn.requestedAt,
+                startedAt: turn.startedAt,
+                completedAt: turn.completedAt,
+                assistantMessageId: turn.assistantMessageId,
+              },
+            ],
+      ),
+    });
     let cursor: string | undefined;
-    let pageIndex = 0;
     let messageOffset = 0;
     let turnOffset = 0;
     let currentTurn: ImportedNativeTurn | null = null;
@@ -148,27 +367,51 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     do {
       const page = yield* readPage(cursor);
       totalMessages = page.totalMessages;
-      const imported = appendNativeHistoryPage({
+      const materializedMessages = yield* materializeNativeHistoryImages({
         threadId,
         messages: page.messages,
         messageOffset,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(ServerConfig.ServerConfig, serverConfig),
+      );
+      const imported = appendNativeHistoryPage({
+        threadId,
+        messages: materializedMessages,
+        messageOffset,
         turnOffset,
         currentTurn,
+        identities,
       });
       messageOffset = imported.messageOffset;
       turnOffset = imported.turnOffset;
       currentTurn = imported.currentTurn;
       const importedAt = DateTime.formatIso(yield* DateTime.now);
+      const importDigest = NodeCrypto.createHash("sha256")
+        .update(encodeJson({ messages: imported.messages, turns: imported.turns }))
+        .digest("hex");
       yield* engine.dispatch({
         type: "thread.native-history.import",
-        commandId: CommandId.make(`native-history:${threadId}:${page.totalMessages}:${pageIndex}`),
+        commandId: CommandId.make(`native-history-source:${threadId}:${importDigest}`),
         threadId,
         messages: imported.messages,
         turns: imported.turns,
         importedAt,
       });
+      for (const activity of imported.activities) {
+        const activityDigest = NodeCrypto.createHash("sha256")
+          .update(encodeJson(activity))
+          .digest("hex");
+        yield* engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`native-history-tool:${activity.id}:${activityDigest}`),
+          threadId,
+          activity,
+          createdAt: activity.createdAt,
+        });
+      }
       cursor = page.nextCursor;
-      pageIndex += 1;
     } while (cursor !== undefined);
     return totalMessages;
   });
@@ -185,7 +428,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       });
     }
 
-    const workspaceRoot = path.resolve(summary.cwd);
+    let workspaceRoot = path.resolve(summary.cwd);
     let readModel = yield* snapshots.getCommandReadModel();
     const providers = yield* providerRegistry.getProviders;
     const provider = providers.find(
@@ -197,9 +440,52 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
         message: `Provider instance '${input.providerInstanceId}' was not found.`,
       });
     }
-    const existingProject = Option.getOrUndefined(
-      yield* snapshots.getActiveProjectByWorkspaceRoot(workspaceRoot),
+    const bindings = yield* directory.listBindings();
+    const existingBinding = bindings.find(
+      (binding) =>
+        binding.providerInstanceId === input.providerInstanceId &&
+        isNativeResumeCursor(binding.resumeCursor) &&
+        binding.resumeCursor.runtime === summary.runtime &&
+        binding.resumeCursor.sessionId === input.sessionId,
     );
+    const boundThread =
+      existingBinding === undefined
+        ? undefined
+        : readModel.threads.find(
+            (thread) => thread.id === existingBinding.threadId && thread.deletedAt === null,
+          );
+    const boundProject =
+      boundThread === undefined
+        ? undefined
+        : readModel.projects.find(
+            (candidate) => candidate.id === boundThread.projectId && candidate.deletedAt === null,
+          );
+    let existingProject =
+      boundProject ??
+      Option.getOrUndefined(yield* snapshots.getActiveProjectByWorkspaceRoot(workspaceRoot));
+    if (existingProject === undefined) {
+      existingProject = yield* Effect.tryPromise({
+        try: async () => {
+          const canonicalWorkspace = await resolvePiFamilyWorkspacePath(workspaceRoot);
+          for (const candidate of readModel.projects) {
+            if (candidate.deletedAt !== null) continue;
+            if (
+              (await resolvePiFamilyWorkspacePath(path.resolve(candidate.workspaceRoot))) ===
+              canonicalWorkspace
+            ) {
+              return candidate;
+            }
+          }
+          return undefined;
+        },
+        catch: (cause) =>
+          new ProviderNativeSessionError({
+            code: "native",
+            message: `Could not resolve native workspace paths: ${String(cause)}`,
+          }),
+      });
+      if (existingProject !== undefined) workspaceRoot = existingProject.workspaceRoot;
+    }
     const provisionalModelSelection = chooseModelSelection(
       summary,
       existingProject?.defaultModelSelection ?? null,
@@ -253,39 +539,12 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       });
     }
 
-    const bindings = yield* directory.listBindings();
-    const existingBinding = bindings.find(
-      (binding) =>
-        binding.providerInstanceId === input.providerInstanceId &&
-        isNativeResumeCursor(binding.resumeCursor) &&
-        binding.resumeCursor.runtime === summary.runtime &&
-        binding.resumeCursor.sessionId === input.sessionId,
-    );
-    const boundThread =
-      existingBinding === undefined
-        ? undefined
-        : readModel.threads.find(
-            (thread) => thread.id === existingBinding.threadId && thread.deletedAt === null,
-          );
     const baseThreadId = ThreadId.make(
       nativeThreadBaseId(input.providerInstanceId, input.sessionId),
     );
-    let deterministicThread = readModel.threads.find(
+    const deterministicThread = readModel.threads.find(
       (thread) => thread.id === baseThreadId && thread.deletedAt === null,
     );
-    if (
-      input.indexOnly === true &&
-      existingBinding === undefined &&
-      deterministicThread !== undefined
-    ) {
-      yield* engine.dispatch({
-        type: "thread.delete",
-        commandId: CommandId.make(`native-thread-retry-delete:${deterministicThread.id}`),
-        threadId: deterministicThread.id,
-      });
-      readModel = yield* snapshots.getCommandReadModel();
-      deterministicThread = undefined;
-    }
     let thread: Pick<OrchestrationThread, "id" | "modelSelection" | "archivedAt"> | undefined =
       boundThread ?? deterministicThread;
 
@@ -317,9 +576,6 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     }
 
     const threadId = thread.id;
-    if (input.indexOnly === true && existingBinding !== undefined && boundThread !== undefined) {
-      return { projectId: project.id, threadId };
-    }
     const activeSession = (yield* providerService.listSessions()).find(
       (session) => session.threadId === threadId,
     );
@@ -334,6 +590,12 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
         code: "invalid",
         message: `Thread '${threadId}' is already bound to a different provider session.`,
       });
+    }
+    if (activeSession !== undefined) {
+      const activeThread = Option.getOrUndefined(yield* snapshots.getThreadDetailById(threadId));
+      if (activeThread !== undefined && nativeThreadHasActiveTurn(activeThread)) {
+        return { projectId: project.id, threadId };
+      }
     }
     if (input.indexOnly === true) {
       const readNativeHistoryBySession = providerService.readNativeHistoryBySession;

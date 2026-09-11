@@ -746,6 +746,10 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    nativeCommands: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:native-commands",
+      tag: WS_METHODS.providerNativeCommands,
+    }),
     nativeSessions: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:native-sessions",
       tag: WS_METHODS.serverListNativeSessions,

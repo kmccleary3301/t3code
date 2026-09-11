@@ -12,10 +12,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-
+import { Resvg } from "@resvg/resvg-js";
 import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
 import { encodePngIco, readPngDimensions, WINDOWS_ICON_SIZES } from "./lib/icon-export.ts";
-
 const DESIGN_GENERATION = 26;
 const ICON_COMPOSER_EXECUTABLE_PARTS = [
   "Contents",
@@ -475,6 +474,125 @@ const resolveIconComposerTool = Effect.fn("iconExport.resolveIconComposerTool")(
   });
 });
 
+const PortableIconLayer = Schema.Struct({
+  "image-name": Schema.String,
+  opacity: Schema.optional(Schema.Number),
+  hidden: Schema.optional(Schema.Boolean),
+  position: Schema.optional(
+    Schema.Struct({
+      scale: Schema.optional(Schema.Number),
+      "translation-in-points": Schema.optional(Schema.Tuple([Schema.Number, Schema.Number])),
+    }),
+  ),
+});
+const decodePortableIconProject = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      groups: Schema.Array(Schema.Struct({ layers: Schema.Array(PortableIconLayer) })),
+    }),
+  ),
+);
+
+function portableIconSvg(
+  iconJson: string,
+  layerSources: ReadonlyMap<string, string>,
+  safeArea: boolean,
+): string {
+  const project = decodePortableIconProject(iconJson);
+  const layers = project.groups
+    .flatMap((group) => group.layers)
+    .toReversed()
+    .filter((layer) => !layer.hidden);
+  const fill = "#171411";
+  const inset = safeArea ? 100 : 0;
+  const bodySize = safeArea ? 824 : 1024;
+  const children = layers.flatMap((layer) => {
+    const source = layerSources.get(layer["image-name"]);
+    if (source === undefined) {
+      throw new IconExportSourceMissingError({ sourcePath: layer["image-name"] });
+    }
+    const encoded = Buffer.from(source, "utf8").toString("base64");
+    const scale = (layer.position?.scale ?? 8.5) / 8.5;
+    const translation = layer.position?.["translation-in-points"] ?? [0, 0];
+    const translateX = (translation[0] * bodySize) / 1024;
+    const translateY = (translation[1] * bodySize) / 1024;
+    return [
+      `<image href="data:image/svg+xml;base64,${encoded}" x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" opacity="${layer.opacity ?? 1}" transform="translate(${translateX} ${translateY}) scale(${scale})" preserveAspectRatio="none"/>`,
+    ];
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><clipPath id="body-clip"><rect x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" rx="${Math.round(bodySize * 0.22)}"/></clipPath></defs><rect x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" rx="${Math.round(bodySize * 0.22)}" fill="${fill}"/><g clip-path="url(#body-clip)">${children.join("")}</g></svg>`;
+}
+
+const renderSvg = Effect.fn("iconExport.renderSvg")(function* (
+  sourcePath: string,
+  outputPath: string,
+  size: number,
+  svg: string,
+) {
+  const contents = yield* Effect.try({
+    try: () => new Resvg(svg, { fitTo: { mode: "width", value: size } }).render().asPng(),
+    catch: (cause) =>
+      new IconExportRenditionError({ sourcePath, outputPath, expectedSize: size, cause }),
+  });
+  const dimensions = readPngDimensions(contents);
+  if (dimensions.width !== size || dimensions.height !== size) {
+    return yield* new IconExportRenditionError({
+      sourcePath,
+      outputPath,
+      expectedSize: size,
+      actualWidth: dimensions.width,
+      actualHeight: dimensions.height,
+    });
+  }
+  return contents;
+});
+
+const renderPortableIcon = Effect.fn("iconExport.renderPortableIcon")(function* (
+  repositoryRoot: string,
+  sourceRelativePath: string,
+  outputPath: string,
+  size: number,
+  safeArea: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const sourceDirectory = path.join(repositoryRoot, sourceRelativePath, "Assets");
+  const sourceProject = path.join(repositoryRoot, sourceRelativePath, "icon.json");
+  const iconJson = yield* fs
+    .readFileString(sourceProject)
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new IconExportFileSystemError({ operation: "read-file", path: sourceProject, cause }),
+      ),
+    );
+  const assetNames = yield* fs.readDirectory(sourceDirectory).pipe(
+    Effect.mapError(
+      (cause) =>
+        new IconExportFileSystemError({
+          operation: "read-directory",
+          path: sourceDirectory,
+          cause,
+        }),
+    ),
+  );
+  const layerSources = new Map<string, string>();
+  for (const assetName of assetNames.filter((name) => name.endsWith(".svg"))) {
+    const assetPath = path.join(sourceDirectory, assetName);
+    const asset = yield* fs
+      .readFileString(assetPath)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new IconExportFileSystemError({ operation: "read-file", path: assetPath, cause }),
+        ),
+      );
+    layerSources.set(assetName, asset);
+  }
+  const wrapper = portableIconSvg(iconJson, layerSources, safeArea);
+  return yield* renderSvg(sourceRelativePath, outputPath, size, wrapper);
+});
+
 const renderIcon = Effect.fn("iconExport.renderIcon")(function* (
   toolPath: string,
   sourcePath: string,
@@ -548,7 +666,7 @@ const renderIcon = Effect.fn("iconExport.renderIcon")(function* (
 });
 
 const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
-  toolPath: string,
+  toolPath: string | null,
   repositoryRoot: string,
   temporaryDirectory: string,
   variant: IconVariant,
@@ -580,7 +698,10 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     if (cached) return cached;
 
     const outputPath = path.join(temporaryDirectory, `${variant.label}-${platform}-${size}.png`);
-    const contents = yield* renderIcon(toolPath, sourcePath, outputPath, platform, size);
+    const contents =
+      toolPath === null
+        ? yield* renderPortableIcon(repositoryRoot, variant.source, outputPath, size, false)
+        : yield* renderIcon(toolPath, sourcePath, outputPath, platform, size);
     renditionCache.set(cacheKey, contents);
     return contents;
   });
@@ -596,7 +717,7 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
   });
 
-  return new Map<string, Buffer>([
+  const generated = new Map<string, Buffer>([
     [variant.outputs.ios, ios],
     [variant.outputs.universal, ios],
     [variant.outputs.appleTouch, yield* render("iOS", 180)],
@@ -605,6 +726,14 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     [variant.outputs.faviconIco, ico],
     [variant.outputs.windowsIco, ico],
   ]);
+  if (toolPath === null) {
+    const macosPath = path.join(temporaryDirectory, `${variant.label}-macOS-1024.png`);
+    generated.set(
+      variant.outputs.macos,
+      yield* renderPortableIcon(repositoryRoot, variant.source, macosPath, 1024, true),
+    );
+  }
+  return generated;
 });
 
 const logManualMacOsExportInstructions = Effect.fn("iconExport.logManualMacOsExportInstructions")(
@@ -718,7 +847,9 @@ const isCurrent = Effect.fn("iconExport.isCurrent")(function* (
 export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOnly: boolean) {
   const fs = yield* FileSystem.FileSystem;
   const repositoryRoot = yield* RepositoryRoot;
-  const tool = yield* resolveIconComposerTool();
+  const tool = yield* resolveIconComposerTool().pipe(
+    Effect.catchTag("IconExportToolResolutionError", () => Effect.succeed(null)),
+  );
   const temporaryDirectory = yield* fs
     .makeTempDirectoryScoped({
       prefix: "t3-icon-export-",
@@ -733,15 +864,21 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
           }),
       ),
     );
-  yield* Console.log(
-    `Exporting icons with Icon Composer ${tool.version}, design generation ${DESIGN_GENERATION}.`,
-  );
+  if (tool) {
+    yield* Console.log(
+      `Exporting icons with Icon Composer ${tool.version}, design generation ${DESIGN_GENERATION}.`,
+    );
+  } else {
+    yield* Console.log(
+      "Icon Composer is unavailable; exporting deterministic SVG sources through resvg.",
+    );
+  }
 
   const generated = new Map<string, Buffer>();
   for (const variant of ICON_VARIANTS) {
     yield* Console.log(`Rendering ${variant.label} from ${variant.source}...`);
     const variantAssets = yield* renderVariant(
-      tool.path,
+      tool?.path ?? null,
       repositoryRoot,
       temporaryDirectory,
       variant,
@@ -749,6 +886,37 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
     for (const [relativePath, contents] of variantAssets) {
       generated.set(relativePath, contents);
     }
+  }
+
+  const androidAssets = [
+    {
+      source: BRAND_ASSET_PATHS.androidAdaptiveForegroundSvg,
+      output: BRAND_ASSET_PATHS.androidAdaptiveForegroundPng,
+      size: 432,
+    },
+    {
+      source: BRAND_ASSET_PATHS.androidMonochromeSvg,
+      output: BRAND_ASSET_PATHS.androidMonochromePng,
+      size: 432,
+    },
+    {
+      source: BRAND_ASSET_PATHS.androidNotificationSvg,
+      output: BRAND_ASSET_PATHS.androidNotificationPng,
+      size: 96,
+    },
+  ];
+  const path = yield* Path.Path;
+  for (const asset of androidAssets) {
+    const sourcePath = path.join(repositoryRoot, asset.source);
+    const svg = yield* fs
+      .readFileString(sourcePath)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new IconExportFileSystemError({ operation: "read-file", path: sourcePath, cause }),
+        ),
+      );
+    generated.set(asset.output, yield* renderSvg(asset.source, asset.output, asset.size, svg));
   }
 
   for (const override of DEVELOPMENT_PUBLIC_ICON_OVERRIDES) {
@@ -774,7 +942,7 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
       });
     }
     yield* Console.log(`All ${generated.size} generated icon assets are current.`);
-    yield* logManualMacOsExportInstructions();
+    if (tool) yield* logManualMacOsExportInstructions();
     return;
   }
 
@@ -784,7 +952,7 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
     { concurrency: 1, discard: true },
   );
   yield* Console.log(`Updated ${generated.size} generated icon assets.`);
-  yield* logManualMacOsExportInstructions();
+  if (tool) yield* logManualMacOsExportInstructions();
 });
 
 export const exportBrandIconsCommand = Command.make(

@@ -1,6 +1,7 @@
 import {
   ChatAttachment,
   CheckpointRef,
+  EventId,
   IsoDateTime,
   MessageId,
   NativeCheckpointDescriptor,
@@ -351,6 +352,20 @@ function mapProposedPlanRow(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+function mapActivityRow(
+  row: Schema.Schema.Type<typeof ProjectionThreadActivityDbRowSchema>,
+): OrchestrationThreadActivity {
+  const activity = {
+    id: row.activityId,
+    tone: row.tone,
+    kind: row.kind,
+    summary: row.summary,
+    payload: row.payload,
+    turnId: row.turnId,
+    createdAt: row.createdAt,
+  };
+  return row.sequence === null ? activity : { ...activity, sequence: row.sequence };
 }
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
@@ -1064,6 +1079,27 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           activity_id ASC
       `,
   });
+  const getActivityDetailRowByIds = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: ThreadId, activityId: EventId }),
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, activityId }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND activity_id = ${activityId}
+        LIMIT 1
+      `,
+  });
 
   const listThreadActivityRowsByThreadAndKinds = SqlSchema.findAll({
     Request: ThreadActivityKindsLookupInput,
@@ -1378,6 +1414,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             )
             AND json_extract(activity.payload_json, '$.requestId') IS NOT NULL
         ),
+        command_catalogs AS (
+          SELECT
+            activity_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY json_extract(payload_json, '$.providerInstanceId')
+              ORDER BY sequence DESC, created_at DESC, activity_id DESC
+            ) AS catalog_order
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND kind = 'provider.commands.updated'
+        ),
         pinned_activity_ids AS (
           SELECT activity_id
           FROM pending_approval_activities
@@ -1387,6 +1434,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           FROM user_input_lifecycle
           WHERE request_order = 1
             AND kind = 'user-input.requested'
+          UNION ALL
+          SELECT activity_id
+          FROM command_catalogs
+          WHERE catalog_order = 1
         )
         SELECT
           activity.activity_id AS "activityId",
@@ -2778,6 +2829,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     threadId,
     query,
   ) => getThreadDetailByIdBounded(threadId, undefined, query);
+  const getActivityDetail: ProjectionSnapshotQueryShape["getActivityDetail"] = (
+    threadId,
+    activityId,
+  ) =>
+    getActivityDetailRowByIds({ threadId, activityId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getActivityDetail:query",
+          "ProjectionSnapshotQuery.getActivityDetail:decodeRow",
+        ),
+      ),
+      Effect.map((row) => Option.map(row, mapActivityRow)),
+    );
 
   // Bounds pathological fan-out: one user turn that spawned hundreds of
   // subagent turns still pages in bounded chunks, at the cost of splitting the
@@ -2928,6 +2992,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getArchivedShellSnapshot,
     searchThreads,
     getSnapshotSequence,
+    getThreadDetailById,
+    getActivityDetail,
     getCounts,
     getActiveProjectByWorkspaceRoot,
     getProjectShellById,
@@ -2935,7 +3001,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,
-    getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
 });

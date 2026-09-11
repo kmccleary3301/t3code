@@ -22,14 +22,13 @@ const commands = [
 ];
 
 describe("buildProviderSlashArgumentCompletions", () => {
-  it("completes subcommands and later static values", () => {
+  it("completes subcommands in declaration order using prefix matching", () => {
+    const allSubcommands = buildProviderSlashArgumentCompletions({ commands, query: "goal " });
+    expect(allSubcommands?.items.map((item) => item.label)).toEqual(["/goal set", "/goal budget"]);
+
     const subcommands = buildProviderSlashArgumentCompletions({ commands, query: "goal bud" });
-    expect(subcommands?.searchQuery).toBe("bud");
-    expect(subcommands?.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ label: "/goal budget", insertText: "/goal budget " }),
-      ]),
-    );
+    expect(subcommands?.searchQuery).toBe("");
+    expect(subcommands?.items.map((item) => item.label)).toEqual(["/goal budget"]);
     expect(
       buildProviderSlashArgumentCompletions({ commands, query: "goal budget o" }),
     ).toMatchObject({
@@ -52,7 +51,7 @@ describe("buildProviderSlashArgumentCompletions", () => {
     ).toEqual(["project", "user"]);
     expect(buildProviderSlashArgumentCompletions({ commands, query: "memory mm l" })).toMatchObject(
       {
-        searchQuery: "mm l",
+        searchQuery: "",
         items: [{ label: "/memory mm list", insertText: "/memory mm list " }],
       },
     );

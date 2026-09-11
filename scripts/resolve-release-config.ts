@@ -50,9 +50,9 @@ export function resolveReleaseConfig(input: {
       "T3_PI_OMP_RELEASE_REPOSITORY is required for pi-omp releases; refusing to use an implicit repository.",
     );
   }
-  if (profile === "pi-omp" && configuredUpdaterRepository.length === 0) {
+  if (configuredUpdaterRepository.length === 0) {
     throw new Error(
-      "T3CODE_DESKTOP_UPDATE_REPOSITORY is required for pi-omp releases; refusing to point updates at an implicit repository.",
+      "T3CODE_DESKTOP_UPDATE_REPOSITORY is required for releases; refusing to point updates at an implicit repository.",
     );
   }
 
@@ -61,7 +61,7 @@ export function resolveReleaseConfig(input: {
       ? normalizeRepository(configuredReleaseRepository, "T3_PI_OMP_RELEASE_REPOSITORY")
       : currentRepository;
   const updaterRepository = normalizeRepository(
-    configuredUpdaterRepository.length > 0 ? configuredUpdaterRepository : releaseRepository,
+    configuredUpdaterRepository,
     "T3CODE_DESKTOP_UPDATE_REPOSITORY",
   );
 

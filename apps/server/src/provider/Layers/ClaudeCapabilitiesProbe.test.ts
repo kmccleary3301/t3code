@@ -118,7 +118,9 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
         slashCommands: [
           {
             name: "review",
+            source: "builtin",
             description: "Review changes",
+            matchDescription: "Review changes",
             input: { hint: "[path]" },
           },
         ],

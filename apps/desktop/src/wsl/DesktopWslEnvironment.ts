@@ -9,12 +9,15 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { buildRemoteNodeEnvScript } from "@t3tools/ssh/tunnel";
+import { parseProductProfile, resolveProductIdentity } from "@t3tools/contracts";
+import { buildRemoteNodeEnvScript } from "@t3tools/ssh/remote-scripts";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
-
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
 
+const DESKTOP_PRODUCT_NAME = resolveProductIdentity(
+  parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+).baseName;
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 const LIST_TIMEOUT = Duration.seconds(8);
 const PRE_WARM_TIMEOUT = Duration.seconds(10);
@@ -493,7 +496,7 @@ const NODE_PTY_PREBUILD_MISSING_EXIT_CODE = 4;
 
 export const formatNodePtyProbeFailureReason = (exitCode: number): string | null =>
   exitCode === NODE_PTY_PREBUILD_MISSING_EXIT_CODE
-    ? "WSL support is missing from this T3 Code build: the packaged Linux node-pty binary was not included. Rebuild the Windows artifact with `--wsl-prebuild <path-to-linux-pty.node>` or install a build that includes WSL support."
+    ? `WSL support is missing from this ${DESKTOP_PRODUCT_NAME} build: the packaged Linux node-pty binary was not included. Rebuild the Windows artifact with \`--wsl-prebuild <path-to-linux-pty.node>\` or install a build that includes WSL support.`
     : null;
 
 const NODE_PTY_PROBE_SCRIPT = (

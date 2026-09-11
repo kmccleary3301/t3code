@@ -7,6 +7,7 @@ import {
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
+  KM_CODE_THEME,
   OCEAN_THEME,
   T3_CHAT_THEME,
   RESERVED_THEME_IDS,
@@ -18,10 +19,20 @@ import {
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 
-export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
+export {
+  EMBER_THEME,
+  GROVE_THEME,
+  IRIS_THEME,
+  KM_CODE_THEME,
+  OCEAN_THEME,
+  T3_CHAT_THEME,
+  THEME_COLOR_ROLES,
+};
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
 export const T3_CHAT_THEME_ID = "t3-chat" as const;
+export const KM_CODE_THEME_ID = "km-code" as const;
+export const KM_CODE_THEME_LABEL = "KM Code";
 export const T3_CHAT_THEME_LABEL = "T3 Chat";
 export const GROVE_THEME_ID = "grove" as const;
 export const GROVE_THEME_LABEL = "Grove";
@@ -1245,9 +1256,9 @@ export function createManagedThemeColors(
   };
 }
 
-/** Theme-file defaults follow the flagship palette for the requested mode. */
+/** Theme-file defaults follow the KM Code palette for the requested mode. */
 export function getDefaultThemeColors(appearance: ThemeAppearance): ThemeColors {
-  return appearance === "dark" ? T3_CHAT_THEME.variants!.dark! : T3_CHAT_THEME.colors;
+  return appearance === "dark" ? KM_CODE_THEME.variants!.dark! : KM_CODE_THEME.colors;
 }
 
 /**

@@ -2,7 +2,10 @@ import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
 import * as Schema from "effect/Schema";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
-import { isWorktreeSetupActivity } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  isWorktreeSetupActivity,
+  normalizeCompactToolLabel,
+} from "@t3tools/client-runtime/work-log/presentation";
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
@@ -110,10 +113,12 @@ export interface WorkLogEntry {
 }
 
 const workLogCollapseKey = Symbol();
+const workLogCommandFromDetail = Symbol();
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
   sourceActivityKind: OrchestrationThreadActivity["kind"];
   [workLogCollapseKey]?: string;
+  [workLogCommandFromDetail]?: boolean;
   toolCallId?: string;
   isWorkflowCoordinator?: boolean;
   /** Shell/monitor/plan tasks: ordinary work-log rows, never spawn CTAs. */
@@ -818,7 +823,6 @@ export function deriveWorkLogEntries(
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
-    if (activity.kind === "tool.started") continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
     // under later synthetic turns and must not start new batches). They
@@ -827,6 +831,7 @@ export function deriveWorkLogEntries(
     if (activity.kind === "task.updated") continue;
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "provider.commands.updated") continue;
     if (activity.kind === "ui.status.updated" || activity.kind === "ui.widget.updated") continue;
     if (activity.kind === "turn.plan.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
@@ -910,7 +915,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       : null;
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
-  const title = extractToolTitle(payload);
+  const title = extractToolTitle(payload) ?? extractToolTitleFromActivity(activity);
   const isTaskActivity =
     activity.kind === "task.started" ||
     activity.kind === "task.progress" ||
@@ -934,7 +939,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       payload.detail.length > 0
       ? stripTrailingExitCode(payload.detail).output
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : extractToolDetail(payload, title ?? activity.summary, commandPreview);
+
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
@@ -953,6 +959,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (nativeTerminalFallback) {
     entry.nativeTerminalFallback = nativeTerminalFallback;
   }
+  if (commandPreview.fromDetail) {
+    entry[workLogCommandFromDetail] = true;
+  }
+
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   if (detail) {
@@ -970,7 +980,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (title) {
     entry.toolTitle = title;
   }
-  if (itemType === "mcp_tool_call") {
+  if (
+    itemType === "mcp_tool_call" ||
+    itemType === "dynamic_tool_call" ||
+    itemType === "collab_agent_tool_call"
+  ) {
     const data = asRecord(payload?.data);
     if (data?.item !== undefined) {
       entry.toolData = data.item;
@@ -986,6 +1000,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.toolCallId = toolCallId;
   }
   let toolLifecycleStatus = extractWorkLogToolLifecycleStatus(payload);
+  if (!toolLifecycleStatus && activity.kind === "tool.started") {
+    toolLifecycleStatus = "inProgress";
+  }
   if (!toolLifecycleStatus && activity.kind === "tool.completed") {
     toolLifecycleStatus = "completed";
   }
@@ -1044,6 +1061,7 @@ function agentSpawnGroupKey(entry: DerivedWorkLogEntry): string {
 
 function toolLifecycleCollapseMapKey(entry: DerivedWorkLogEntry): string | undefined {
   if (
+    entry.sourceActivityKind !== "tool.started" &&
     entry.sourceActivityKind !== "tool.updated" &&
     entry.sourceActivityKind !== "tool.completed"
   ) {
@@ -1151,54 +1169,64 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (
-    previous.sourceActivityKind !== "tool.updated" &&
-    previous.sourceActivityKind !== "tool.completed"
-  ) {
-    return false;
-  }
-  if (next.sourceActivityKind !== "tool.updated" && next.sourceActivityKind !== "tool.completed") {
-    return false;
-  }
-  if (previous.turnId !== next.turnId) {
-    return false;
-  }
-  if (previous.sourceActivityKind === "tool.completed") {
-    return false;
-  }
-  if (
+  const previousIsLifecycle =
+    previous.sourceActivityKind === "tool.started" ||
+    previous.sourceActivityKind === "tool.updated" ||
+    previous.sourceActivityKind === "tool.completed";
+  const nextIsLifecycle =
+    next.sourceActivityKind === "tool.started" ||
+    next.sourceActivityKind === "tool.updated" ||
+    next.sourceActivityKind === "tool.completed";
+  return (
+    previousIsLifecycle &&
+    nextIsLifecycle &&
+    previous.turnId === next.turnId &&
     previous[workLogCollapseKey] !== undefined &&
     previous[workLogCollapseKey] === next[workLogCollapseKey]
-  ) {
-    return true;
-  }
-  return (
-    previous.toolCallId !== undefined &&
-    next.toolCallId === undefined &&
-    previous.itemType === next.itemType &&
-    normalizeCompactToolLabel(previous.toolTitle ?? previous.label) ===
-      normalizeCompactToolLabel(next.toolTitle ?? next.label)
   );
+}
+
+function mergeToolData(previous: unknown, next: unknown): unknown {
+  if (next === undefined) return previous;
+  if (previous === undefined) return next;
+  const previousRecord = asRecord(previous);
+  const nextRecord = asRecord(next);
+  return previousRecord && nextRecord ? { ...previousRecord, ...nextRecord } : next;
 }
 
 function mergeDerivedWorkLogEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): DerivedWorkLogEntry {
-  const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
+  const commandFromDetail = next[workLogCommandFromDetail] === true;
+  const command =
+    commandFromDetail && previous.command !== undefined
+      ? previous.command
+      : (next.command ?? previous.command);
+  const rawCommand =
+    commandFromDetail && previous.command !== undefined
+      ? previous.rawCommand
+      : (next.rawCommand ?? previous.rawCommand);
+  const mergedCommandFromDetail =
+    commandFromDetail && previous.command !== undefined
+      ? previous[workLogCommandFromDetail]
+      : next.command !== undefined
+        ? commandFromDetail
+        : previous[workLogCommandFromDetail];
   const detail = next.detail ?? previous.detail;
-  const command = next.command ?? previous.command;
-  const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next[workLogCollapseKey] ?? previous[workLogCollapseKey];
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
-  const toolData = next.toolData ?? previous.toolData;
+  const toolData = mergeToolData(previous.toolData, next.toolData);
   return {
     ...previous,
     ...next,
+    id: next.id,
+    createdAt: previous.createdAt,
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
@@ -1210,6 +1238,7 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    [workLogCommandFromDetail]: mergedCommandFromDetail === true,
   };
 }
 
@@ -1225,34 +1254,18 @@ function mergeChangedFiles(
 }
 
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
-  // Subagent lifecycle rows collapse by agent identity: one row per agent,
-  // progress ticks fold into it, the terminal row wins the label.
+  // Tool lifecycle rows collapse by call identity, not display labels.
   if (
-    entry.taskId &&
-    (entry.sourceActivityKind === "task.progress" || entry.sourceActivityKind === "task.completed")
-  ) {
-    return `task${entry.taskId}`;
-  }
-  if (
+    entry.sourceActivityKind !== "tool.started" &&
     entry.sourceActivityKind !== "tool.updated" &&
     entry.sourceActivityKind !== "tool.completed"
   ) {
     return undefined;
   }
-  if (entry.toolCallId) {
-    return `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}`;
-  }
-  const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
-  const detail = entry.detail?.trim() ?? "";
-  const itemType = entry.itemType ?? "";
-  if (normalizedLabel.length === 0 && detail.length === 0 && itemType.length === 0) {
+  if (!entry.toolCallId) {
     return undefined;
   }
-  return [itemType, normalizedLabel, detail].join("\u001f");
-}
-
-function normalizeCompactToolLabel(value: string): string {
-  return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+  return `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}`;
 }
 
 function toLatestProposedPlanState(proposedPlan: ProposedPlan): LatestProposedPlanState {
@@ -1431,10 +1444,13 @@ function toRawToolCommand(value: unknown, normalizedCommand: string | null): str
   return formatted === normalizedCommand ? null : formatted;
 }
 
-function extractToolCommand(payload: Record<string, unknown> | null): {
+interface ToolCommandPreview {
   command: string | null;
   rawCommand: string | null;
-} {
+  fromDetail: boolean;
+}
+
+function extractToolCommand(payload: Record<string, unknown> | null): ToolCommandPreview {
   const data = asRecord(payload?.data);
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
@@ -1446,7 +1462,6 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     itemInput?.command,
     itemResult?.command,
     data?.command,
-    itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
   ];
 
   for (const candidate of candidates) {
@@ -1457,17 +1472,99 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     return {
       command,
       rawCommand: toRawToolCommand(candidate, command),
+      fromDetail: false,
     };
+  }
+
+  if (itemType === "command_execution" && detail) {
+    const candidate = stripTrailingExitCode(detail).output;
+    const command = normalizeCommandValue(candidate);
+    if (command) {
+      return {
+        command,
+        rawCommand: toRawToolCommand(candidate, command),
+        fromDetail: true,
+      };
+    }
   }
 
   return {
     command: null,
     rawCommand: null,
+    fromDetail: false,
   };
+}
+function extractToolDetail(
+  payload: Record<string, unknown> | null,
+  heading: string,
+  commandPreview: ToolCommandPreview,
+): string | null {
+  const rawDetail = asTrimmedString(payload?.detail);
+  const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
+  const normalizedHeading = normalizePreviewForComparison(heading);
+  const normalizedDetail = normalizePreviewForComparison(detail);
+  const commandTool = isCommandToolDetail(payload, heading);
+  const command = commandPreview.command;
+  const normalizedCommand = normalizePreviewForComparison(command);
+  const normalizedRawCommand = normalizePreviewForComparison(commandPreview.rawCommand);
+
+  if (
+    detail &&
+    normalizedHeading !== normalizedDetail &&
+    (!commandTool ||
+      (normalizedCommand !== normalizedDetail && normalizedRawCommand !== normalizedDetail))
+  ) {
+    return detail;
+  }
+
+  if (commandTool) {
+    if (commandPreview.fromDetail) {
+      return detail;
+    }
+    if (!command) {
+      return null;
+    }
+
+    const output = extractToolOutput(payload);
+    const normalizedOutput = normalizePreviewForComparison(output);
+    if (
+      output &&
+      normalizedOutput !== normalizedHeading &&
+      normalizedOutput !== normalizedCommand
+    ) {
+      return output;
+    }
+    return null;
+  }
+
+  const rawOutputSummary = summarizeToolRawOutput(payload);
+  if (rawOutputSummary) {
+    const normalizedRawOutputSummary = normalizePreviewForComparison(rawOutputSummary);
+    if (normalizedRawOutputSummary !== normalizedHeading) {
+      return rawOutputSummary;
+    }
+  }
+
+  return null;
 }
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
   return asTrimmedString(payload?.title);
+}
+
+function extractToolTitleFromActivity(activity: OrchestrationThreadActivity): string | null {
+  if (
+    activity.kind !== "tool.started" &&
+    activity.kind !== "tool.updated" &&
+    activity.kind !== "tool.completed"
+  ) {
+    return null;
+  }
+  const summary = asTrimmedString(activity.summary);
+  if (!summary) {
+    return null;
+  }
+  return activity.kind === "tool.started" ? summary.replace(/\s+started$/iu, "").trim() : summary;
 }
 
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
@@ -1612,59 +1709,6 @@ function isCommandToolDetail(payload: Record<string, unknown> | null, heading: s
     title === "terminal" ||
     title === "ran command"
   );
-}
-
-function extractToolDetail(
-  payload: Record<string, unknown> | null,
-  heading: string,
-): string | null {
-  const rawDetail = asTrimmedString(payload?.detail);
-  const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
-  const normalizedHeading = normalizePreviewForComparison(heading);
-  const normalizedDetail = normalizePreviewForComparison(detail);
-  const commandTool = isCommandToolDetail(payload, heading);
-  const commandPreview = commandTool
-    ? extractToolCommand(payload)
-    : { command: null, rawCommand: null };
-  const command = commandPreview.command;
-  const normalizedCommand = normalizePreviewForComparison(command);
-  const normalizedRawCommand = normalizePreviewForComparison(commandPreview.rawCommand);
-
-  if (
-    detail &&
-    normalizedHeading !== normalizedDetail &&
-    (!commandTool ||
-      (normalizedCommand !== normalizedDetail && normalizedRawCommand !== normalizedDetail))
-  ) {
-    return detail;
-  }
-
-  if (commandTool) {
-    if (!command) {
-      return null;
-    }
-
-    const output = extractToolOutput(payload);
-    const normalizedOutput = normalizePreviewForComparison(output);
-    if (
-      output &&
-      normalizedOutput !== normalizedHeading &&
-      normalizedOutput !== normalizedCommand
-    ) {
-      return output;
-    }
-    return null;
-  }
-
-  const rawOutputSummary = summarizeToolRawOutput(payload);
-  if (rawOutputSummary) {
-    const normalizedRawOutputSummary = normalizePreviewForComparison(rawOutputSummary);
-    if (normalizedRawOutputSummary !== normalizedHeading) {
-      return rawOutputSummary;
-    }
-  }
-
-  return null;
 }
 
 function stripTrailingExitCode(value: string): {

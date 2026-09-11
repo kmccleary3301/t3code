@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -93,6 +93,8 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
     fontVariant: nativeLigatureVariant(theme.ligatures ?? terminalTypography.ligatures),
   } satisfies TextStyle;
   const inputRef = useRef<TextInput>(null);
+  const inputTextRef = useRef("");
+  const [inputText, setInputText] = useState("");
   const statusLabel = props.isRunning
     ? "Native terminal unavailable. Using text fallback."
     : "Open terminal to start a shell.";
@@ -156,6 +158,10 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
           autoCorrect={false}
           blurOnSubmit={false}
           editable={props.isRunning}
+          onChangeText={(value) => {
+            inputTextRef.current = value;
+            setInputText(value);
+          }}
           placeholder="type and press return"
           placeholderTextColor={theme.mutedForeground}
           returnKeyType="send"
@@ -168,9 +174,13 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
               padding: 0,
             },
           ]}
-          onSubmitEditing={(event) => {
-            const text = event.nativeEvent.text;
+          value={inputText}
+          onSubmitEditing={() => {
+            const text = inputTextRef.current;
             if (text.length > 0) {
+              // Clear before writing so a second Enter cannot resend the command.
+              inputTextRef.current = "";
+              setInputText("");
               // Terminal Enter is CR. LF is Ctrl+J and raw-mode TUIs can treat it as J.
               props.onInput(`${text}\r`);
             }

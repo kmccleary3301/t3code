@@ -13,7 +13,12 @@ import {
   type DirectoryRecord,
 } from "@electron/asar";
 
-import { ProductProfile, parseProductProfile, resolveProductIdentity } from "@t3tools/contracts";
+import {
+  ProductProfile,
+  parseProductProfile,
+  resolveProductDisplayName,
+  resolveProductIdentity,
+} from "@t3tools/contracts";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
@@ -2052,15 +2057,9 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
 ) {
   const env = yield* Config.all({
     updateRepository: Config.string("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
-    githubRepository: Config.string("GITHUB_REPOSITORY").pipe(Config.option),
   });
   const configuredUpdaterRepository = Option.getOrUndefined(env.updateRepository)?.trim() || "";
-  const rawRepo = (
-    configuredUpdaterRepository ||
-    (BUILD_PRODUCT_PROFILE === "pi-omp"
-      ? ""
-      : Option.getOrUndefined(env.githubRepository)?.trim() || "")
-  ).trim();
+  const rawRepo = configuredUpdaterRepository;
   if (!rawRepo) return undefined;
 
   const [owner, repo, ...rest] = rawRepo.split("/");
@@ -2125,10 +2124,10 @@ export function resolveDesktopProductName(
 ): string {
   const identity = resolveProductIdentity(profile);
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? `${identity.baseName} (Nightly)`
+    ? resolveProductDisplayName(identity.profile, "Nightly")
     : profile === "upstream"
-      ? (desktopPackageJson.productName ?? `${identity.baseName} (Alpha)`)
-      : `${identity.baseName} (Alpha)`;
+      ? (desktopPackageJson.productName ?? resolveProductDisplayName(identity.profile, "Local"))
+      : resolveProductDisplayName(identity.profile, "Local");
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2152,7 +2151,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const identity = DESKTOP_PRODUCT_IDENTITY;
   const productName = resolveDesktopProductName(version, identity.profile);
   const protocolSchemes = [identity.productionScheme, identity.developmentScheme];
-  const artifactPrefix = identity.profile === "upstream" ? "T3-Code" : "T3-Code-Pi-OMP";
+  const artifactPrefix = identity.artifactNamePrefix;
   const buildConfig: Record<string, unknown> = {
     appId: identity.bundleIdentifier,
     productName,
@@ -2200,7 +2199,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           schemes: protocolSchemes,
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      sign: path.join(repoRoot, "scripts/sign-macos.ts"),
+      ...(signed ? {} : { identity: "-", hardenedRuntime: false, notarize: false }),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3198,7 +3198,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Code desktop build",
+    description: "KM Code desktop build",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
@@ -3467,7 +3467,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for T3 Code."),
+  Command.withDescription("Build a desktop artifact for KM Code."),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 

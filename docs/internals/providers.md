@@ -65,11 +65,18 @@ Pi resumes the exact ID with `--session`; OMP uses `--resume`.
 An unavailable recorded working directory fails before process spawn instead of leaving an attachment
 request pending.
 
-History reconciliation follows the active JSONL parent chain and projects user, system, and assistant
-text through `thread.native-history-imported`. Message and turn IDs are deterministic and projection
-writes are upserts, so reopening imports newly appended history without duplicating prior transcript
-records. Native tool records remain owned by the native runtime; later live events use the normal
-canonical thread pipeline.
+History reconciliation follows the active JSONL parent chain and imports user, system, assistant,
+and tool records through `thread.native-history-imported`. It reuses live message, turn, and activity
+identities when source evidence matches; repeated text alone is not an identity. Assistant messages
+remain distinct across tool rounds. Reopening upserts newly appended history without duplicating
+prior transcript records or work groups.
+
+Tool previews are bounded, but expanded details load the native arguments and results from durable
+activity data, including text, structured content, and supported images. OMP image blob references
+resolve read-only from the configured native agent's blob store; missing blobs retain their native
+reference. Provider-supplied remote image URLs are not automatically fetched.
+If the native runtime later prunes a result, T3 retains any full result it already captured. An
+external session imported only after native pruning can expose only the remaining native content.
 
 For attached OMP threads, the web **Agents** panel can select a discovered child agent and tail its
 read-only transcript with an incremental cursor; selecting a child never switches or mutates the
@@ -77,12 +84,19 @@ parent native session. OMP `setStatus` and string-array `setWidget` updates are 
 native UI shelf instead of appended to the work log. Successful OMP `todo` tool results project into
 the canonical plan activity used by the existing todo UI. Mobile keeps the canonical parent thread
 and plan activities, but does not expose the web-only child transcript or native widget shelf.
+Native child completion evidence, including terminal `yield` results, survives process cleanup and
+history import. Terminal snapshots reconcile all completion records for the same invocation without
+backdating them before captured progress. Failed or interrupted children are not labelled successful. Terminal keybindings
+and interactive extension components remain native TUI behavior rather than browser widgets.
 
-Provider health discovery also reads Pi `get_commands` and OMP `get_available_commands`. Primary
-command names, OMP aliases, descriptions, input hints, subcommands, and usage syntax populate the
-web, desktop, and mobile composers’ slash suggestions. Static alternatives and flags in native usage
-syntax are suggested for later arguments; selecting any provider suggestion leaves it in the prompt
-for native dispatch.
+Workspace command discovery reads Pi `get_commands` and OMP `get_available_commands` from the
+configured runtime in the thread's working directory. The native catalog supplies command names,
+OMP aliases, descriptions, input hints, subcommands, and usage syntax to web, desktop, and mobile
+slash suggestions; there is no separate built-in command table. OMP `available_commands_update`
+refreshes the live catalog. Pi uses its startup snapshot. Static alternatives and flags in native
+usage syntax are suggested for later arguments; selecting a suggestion leaves it in the prompt for
+native dispatch. Metadata probes and text-generation helpers use `--no-session`, keeping title and
+catalog requests out of durable native session history.
 
 Rename and fork use each runtime's RPC lifecycle commands. Forking rebinds the native process, so the
 coordinator stops the source attachment before opening the returned session ID as its own T3 thread.

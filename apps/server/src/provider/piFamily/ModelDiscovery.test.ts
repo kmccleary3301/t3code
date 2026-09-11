@@ -10,6 +10,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   discoverPiFamilyModels,
   mapPiFamilyModels,
+  mapPiFamilySlashCommands,
   modelDiscoverySnapshotMessage,
   PiFamilyModelDiscoveryError,
   resolvePiFamilyLaunchArguments,
@@ -394,7 +395,7 @@ describe("Pi-family model discovery RPC", () => {
     }),
   );
 
-  it.effect("negotiates OMP and reassembles a chunked model response", () =>
+  it.effect("uses the OMP TUI command update and reassembles a chunked model response", () =>
     Effect.gen(function* () {
       const commands: unknown[] = [];
       const killed = { value: 0 };
@@ -407,6 +408,23 @@ describe("Pi-family model discovery RPC", () => {
       };
       const frames = [
         ready,
+        {
+          type: "available_commands_update",
+          commands: [
+            {
+              name: "security",
+              aliases: ["secure"],
+              description: "Manage native security scans",
+              icon: "shield",
+              usage: 7,
+              input: { hint: "<plan|scan>" },
+              subcommands: [
+                { name: "plan", description: "Create a scan plan" },
+                { name: "scan", description: "Start a scan", usage: "[path]" },
+              ],
+            },
+          ],
+        },
         {
           id: "protocol-1",
           type: "response",
@@ -441,14 +459,7 @@ describe("Pi-family model discovery RPC", () => {
           command: "get_available_commands",
           success: true,
           data: {
-            commands: [
-              {
-                name: "agents",
-                aliases: ["agent"],
-                description: "Manage agents",
-                input: { hint: "<command>" },
-              },
-            ],
+            commands: [{ name: "rpc-fallback", description: "Must not replace the TUI update" }],
           },
         },
       ];
@@ -468,8 +479,18 @@ describe("Pi-family model discovery RPC", () => {
       );
       expect(result.models.map((model) => model.slug)).toEqual(["p/m"]);
       expect(result.slashCommands).toEqual([
-        { name: "agents", description: "Manage agents", input: { hint: "<command>" } },
-        { name: "agent", description: "Manage agents", input: { hint: "<command>" } },
+        {
+          name: "security",
+          aliases: ["secure"],
+          description: "Manage native security scans",
+          icon: "shield",
+          usage: 7,
+          input: { hint: "<plan|scan>" },
+          subcommands: [
+            { name: "plan", description: "Create a scan plan" },
+            { name: "scan", description: "Start a scan", usage: "[path]" },
+          ],
+        },
       ]);
       expect(killed.value).toBeGreaterThan(0);
     }),
@@ -541,10 +562,11 @@ it.layer(NodeServices.layer)("Pi-family executable discovery boundaries", (it) =
         slashCommands: [
           {
             name: "agents",
+            aliases: ["agent"],
             description: "Manage agents",
             input: { hint: "<command>" },
+            source: "builtin",
           },
-          { name: "agent", description: "Manage agents", input: { hint: "<command>" } },
           {
             name: "goal",
             description: "Manage goal mode",
@@ -553,8 +575,9 @@ it.layer(NodeServices.layer)("Pi-family executable discovery boundaries", (it) =
               { name: "set", description: "Set the goal", usage: "<objective>" },
               { name: "budget", description: "Adjust token budget", usage: "<N|off>" },
             ],
+            source: "builtin",
           },
-          { name: "todo", description: "Manage todos" },
+          { name: "todo", description: "Manage todos", source: "builtin" },
         ],
       });
 
@@ -577,6 +600,49 @@ it.layer(NodeServices.layer)("Pi-family executable discovery boundaries", (it) =
       expect(empty).toMatchObject({ code: "empty" });
     }).pipe(Effect.scoped),
   );
+});
+it("preserves native command identity, metadata, and candidate order", () => {
+  expect(
+    mapPiFamilySlashCommands([
+      {
+        name: "first",
+        aliases: ["one"],
+        description: "Dynamic first",
+        matchDescription: "Static first",
+        source: "builtin",
+        executable: false,
+      },
+      {
+        name: "second",
+        description: "Second",
+        source: "extension",
+      },
+      {
+        name: "first",
+        description: "Repeated first",
+        source: "custom",
+      },
+    ]),
+  ).toEqual([
+    {
+      name: "first",
+      aliases: ["one"],
+      description: "Dynamic first",
+      matchDescription: "Static first",
+      source: "builtin",
+      executable: false,
+    },
+    {
+      name: "second",
+      description: "Second",
+      source: "extension",
+    },
+    {
+      name: "first",
+      description: "Repeated first",
+      source: "custom",
+    },
+  ]);
 });
 
 it("does not duplicate native mode arguments", () => {

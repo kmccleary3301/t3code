@@ -6,7 +6,7 @@ export type ThemePreviewColors = Readonly<{
   messageAction: string;
 }>;
 
-/** The standard T3 Code artwork is not a built-in theme, so its preview colors live here. */
+/** Legacy t3-code artwork remains available for saved mobile preferences. */
 export const STANDARD_THEME_PREVIEW_COLORS: Readonly<Record<ThemeAppearance, ThemePreviewColors>> =
   {
     light: {

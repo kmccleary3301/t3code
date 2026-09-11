@@ -4,10 +4,48 @@ import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
-  normalizeCompactToolLabel,
+  formatAgentSpawnOutcome,
   resolveAssistantMessageCopyState,
   shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
+import {
+  toolGroupAction,
+  workLogEntryIsLocalCodeSearch,
+} from "@t3tools/client-runtime/work-log/presentation";
+
+describe("work-log tool classification", () => {
+  it("recognizes native OMP grep, glob, and find-files tool rows", () => {
+    const base = {
+      id: "tool",
+      createdAt: "2026-08-21T00:00:00.000Z",
+      turnId: TurnId.make("turn"),
+      label: "Native tool",
+      tone: "tool" as const,
+      itemType: "dynamic_tool_call" as const,
+    };
+    for (const toolTitle of ["Grep", "Glob", "Find Files"]) {
+      expect(toolGroupAction({ ...base, toolTitle, changedFiles: ["src/server.ts"] })).toBe(
+        "code-search",
+      );
+      expect(workLogEntryIsLocalCodeSearch({ ...base, toolTitle })).toBe(true);
+    }
+    expect(workLogEntryIsLocalCodeSearch({ ...base, toolTitle: "Read File" })).toBe(false);
+  });
+});
+
+describe("formatAgentSpawnOutcome", () => {
+  it("does not present stopped children as a successful aggregate", () => {
+    expect(formatAgentSpawnOutcome(0, 2)).toBe("2 stopped");
+  });
+
+  it("reports mixed failed and stopped child outcomes", () => {
+    expect(formatAgentSpawnOutcome(1, 1)).toBe("1 failed · 1 stopped");
+  });
+
+  it("keeps an all-success aggregate checkmarked", () => {
+    expect(formatAgentSpawnOutcome(0, 0)).toBe("✓ completed");
+  });
+});
 
 describe("shouldPreserveAssistantLineBreaks", () => {
   it("preserves Claude insight formatting without changing regular markdown", () => {
@@ -206,16 +244,6 @@ describe("computeMessageDurationStart", () => {
 
   it("returns empty map for empty input", () => {
     expect(computeMessageDurationStart([])).toEqual(new Map());
-  });
-});
-
-describe("normalizeCompactToolLabel", () => {
-  it("removes trailing completion wording from command labels", () => {
-    expect(normalizeCompactToolLabel("Ran command complete")).toBe("Ran command");
-  });
-
-  it("removes trailing completion wording from other labels", () => {
-    expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
   });
 });
 

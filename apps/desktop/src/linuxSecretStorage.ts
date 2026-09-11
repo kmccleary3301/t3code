@@ -1,3 +1,9 @@
+import { parseProductProfile, resolveProductIdentity } from "@t3tools/contracts";
+
+const DESKTOP_PRODUCT_NAME = resolveProductIdentity(
+  parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+).baseName;
+
 export type LinuxPasswordStorePreference =
   | "auto"
   | "gnome-libsecret"
@@ -112,11 +118,11 @@ export function resolveLinuxSecretStorageUnavailableMessage(input: {
 }
 
 function getGnomeKeyringRemediationMessage(): string {
-  return "T3 Code could not access GNOME Keyring to save this environment credential. Install and start GNOME Keyring, then restart T3 Code.";
+  return `${DESKTOP_PRODUCT_NAME} could not access GNOME Keyring to save this environment credential. Install and start GNOME Keyring, then restart ${DESKTOP_PRODUCT_NAME}.`;
 }
 
 function getKWalletRemediationMessage(): string {
-  return "T3 Code could not access KWallet to save this environment credential. Enable the KDE wallet subsystem in System Settings, then restart T3 Code.";
+  return `${DESKTOP_PRODUCT_NAME} could not access KWallet to save this environment credential. Enable the KDE wallet subsystem in System Settings, then restart ${DESKTOP_PRODUCT_NAME}.`;
 }
 
 // Advisory only: this picks between the GNOME Keyring and KWallet wording in the failure notice. It

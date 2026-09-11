@@ -254,7 +254,7 @@ export const installAppearancePackage = DesktopIpc.makeIpcMethod({
       owner,
       defaultPath: Option.none(),
       multiple: false,
-      filters: [{ name: "T3 appearance package", extensions: ["zip", "t3appearance"] }],
+      filters: [{ name: "KM Code appearance package", extensions: ["zip", "t3appearance"] }],
     });
     const source =
       files[0] ??

@@ -1,17 +1,91 @@
 import type { ProviderDriverKind, ServerProviderSlashCommand } from "@t3tools/contracts";
 import {
-  insertRankedSearchResult,
-  normalizeSearchQuery,
-  scoreQueryMatch,
-} from "@t3tools/shared/searchRanking";
-import { buildProviderSlashArgumentCompletions } from "@t3tools/shared/providerSlashCommandCompletion";
+  buildProviderSlashArgumentCompletions,
+  scoreSlashCommandTextMatch,
+  slashCommandFuzzyMatch,
+  slashCommandFuzzyScore,
+  slashCommandSkillBreakoutTier,
+} from "@t3tools/shared/providerSlashCommandCompletion";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
-import { scoreProviderSkill } from "../../providerSkillSearch";
+import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 
 type SlashSearchItem = Extract<
   ComposerCommandItem,
   { type: "slash-command" | "provider-slash-command" | "provider-slash-argument" | "skill" }
+>;
+
+function commandNameForItem(item: SlashSearchItem): string {
+  if (item.type === "slash-command") return item.command;
+  if (item.type === "provider-slash-command") return item.command.name;
+  if (item.type === "provider-slash-argument") return item.searchValue;
+  return `skill:${item.skill.name}`;
+}
+
+function commandAliasesForItem(item: SlashSearchItem): ReadonlyArray<string> {
+  return item.type === "provider-slash-command" ? (item.command.aliases ?? []) : [];
+}
+
+function staticDescriptionForItem(item: SlashSearchItem): string {
+  if (item.type === "provider-slash-command") {
+    return item.command.matchDescription ?? item.command.description ?? "";
+  }
+  return item.description;
+}
+
+function isSkillItem(item: SlashSearchItem): boolean {
+  if (item.type === "skill") return true;
+  return (
+    item.type === "provider-slash-command" &&
+    (item.command.source === "skill" || item.command.name.startsWith("skill:"))
+  );
+}
+
+function scoreSlashCommandItem(
+  item: SlashSearchItem,
+  query: string,
+): { readonly score: number; readonly matchedName: string } | null {
+  const primaryNameValue = commandNameForItem(item);
+  const primaryName = primaryNameValue.toLowerCase();
+  const staticDescription = staticDescriptionForItem(item).toLowerCase();
+  const isSkillCommand = primaryName.startsWith("skill:");
+  const nameScore =
+    query.length === 0 && isSkillItem(item)
+      ? 950
+      : isSkillCommand
+        ? Math.max(
+            scoreSlashCommandTextMatch(query, primaryName),
+            scoreSlashCommandTextMatch(query, primaryName.slice("skill:".length)),
+          )
+        : scoreSlashCommandTextMatch(query, primaryName);
+  let bestScore = Math.max(
+    nameScore,
+    slashCommandFuzzyMatch(query, staticDescription)
+      ? slashCommandFuzzyScore(query, staticDescription) * 0.5
+      : 0,
+  );
+  let matchedName = primaryNameValue;
+  if (item.type === "skill") {
+    const displayNameScore = scoreSlashCommandTextMatch(
+      query,
+      formatProviderSkillDisplayName(item.skill).toLowerCase(),
+    );
+    if (displayNameScore > bestScore) bestScore = displayNameScore;
+  }
+  for (const alias of commandAliasesForItem(item)) {
+    const aliasScore = scoreSlashCommandTextMatch(query, alias.toLowerCase());
+    if (aliasScore > bestScore) {
+      bestScore = aliasScore;
+      matchedName = alias;
+    }
+  }
+  if (bestScore <= 0) return null;
+  return { score: bestScore, matchedName };
+}
+
+type SlashCommandItem = Extract<
+  ComposerCommandItem,
+  { type: "slash-command" | "provider-slash-command" }
 >;
 
 export function slashCommandItemsForPromptPosition(
@@ -23,72 +97,29 @@ export function slashCommandItemsForPromptPosition(
   }
   return items.filter((item) => item.type !== "skill");
 }
-
-function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | null {
-  if (item.type === "skill") {
-    if (query === "skill") {
-      return 0;
-    }
-    const skillQuery = query.startsWith("skill:") ? query.slice("skill:".length) : query;
-    const skillScore = skillQuery ? scoreProviderSkill(item.skill, skillQuery) : 0;
-    if (skillScore !== null) {
-      return skillScore;
-    }
-    return "skill".startsWith(query) ? Number.MAX_SAFE_INTEGER : null;
-  }
-
-  const primaryValue =
-    item.type === "slash-command"
-      ? item.command.toLowerCase()
-      : item.type === "provider-slash-command"
-        ? item.command.name.toLowerCase()
-        : item.searchValue.toLowerCase();
-  const description = item.description.toLowerCase();
-
-  const scores = [
-    scoreQueryMatch({
-      value: primaryValue,
-      query,
-      exactBase: 0,
-      prefixBase: 2,
-      boundaryBase: 4,
-      includesBase: 6,
-      fuzzyBase: 100,
-      boundaryMarkers: ["-", "_", "/"],
-    }),
-    scoreQueryMatch({
-      value: description,
-      query,
-      exactBase: 20,
-      prefixBase: 22,
-      boundaryBase: 24,
-      includesBase: 26,
-    }),
-  ].filter((score): score is number => score !== null);
-
-  if (scores.length === 0) {
-    return null;
-  }
-
-  return Math.min(...scores);
-}
-
-type SlashCommandItem = Extract<
-  ComposerCommandItem,
-  { type: "slash-command" | "provider-slash-command" }
->;
-
 export function mergeSlashCommandItems(
   builtInItems: ReadonlyArray<SlashCommandItem>,
   providerItems: ReadonlyArray<SlashCommandItem>,
 ): SlashCommandItem[] {
-  const merged: SlashCommandItem[] = [];
-  const commandNames = new Set<string>();
-  for (const item of [...builtInItems, ...providerItems]) {
-    const commandName = item.type === "slash-command" ? item.command : item.command.name;
-    if (commandNames.has(commandName)) continue;
-    commandNames.add(commandName);
-    merged.push(item);
+  const providerNames = new Set<string>();
+  for (const item of providerItems) {
+    providerNames.add(
+      (item.type === "slash-command" ? item.command : item.command.name).toLowerCase(),
+    );
+    if (item.type === "provider-slash-command") {
+      for (const alias of item.command.aliases ?? []) {
+        providerNames.add(alias.toLowerCase());
+      }
+    }
+  }
+  const merged = [...providerItems];
+  for (const item of builtInItems) {
+    const commandName = (
+      item.type === "slash-command" ? item.command : item.command.name
+    ).toLowerCase();
+    if (!providerNames.has(commandName)) {
+      merged.push(item);
+    }
   }
   return merged;
 }
@@ -121,44 +152,118 @@ export function buildProviderSlashArgumentItems(input: {
   };
 }
 
+function collapseSkillNamespace(
+  items: ReadonlyArray<SlashSearchItem>,
+  query: string,
+): SlashSearchItem[] {
+  if (query.startsWith("skill:")) return [...items];
+  const approachesNamespace = "skill:".startsWith(query);
+  let commandTier = 0;
+  if (!approachesNamespace) {
+    for (const item of items) {
+      if (item.type !== "provider-slash-command") continue;
+      const name = item.command.name.toLowerCase();
+      if (name.startsWith("skill:")) continue;
+      commandTier = Math.max(commandTier, slashCommandSkillBreakoutTier(query, name));
+      for (const alias of item.command.aliases ?? []) {
+        commandTier = Math.max(
+          commandTier,
+          slashCommandSkillBreakoutTier(query, alias.toLowerCase()),
+        );
+      }
+      if (commandTier === 1000) break;
+    }
+  }
+
+  let skillCount = 0;
+  let skillIcon: string | undefined;
+  let skillProvider: Extract<SlashSearchItem, { type: "provider-slash-command" }> | undefined;
+  const rest: SlashSearchItem[] = [];
+  for (const item of items) {
+    if (
+      item.type !== "provider-slash-command" ||
+      !item.command.name.toLowerCase().startsWith("skill:")
+    ) {
+      rest.push(item);
+      continue;
+    }
+
+    skillCount += 1;
+    skillIcon ??= item.command.icon;
+    skillProvider ??= item;
+    if (
+      !approachesNamespace &&
+      slashCommandSkillBreakoutTier(query, item.command.name.slice("skill:".length).toLowerCase()) >
+        commandTier
+    ) {
+      rest.push(item);
+    }
+  }
+
+  if (skillCount === 0 || skillProvider === undefined) return [...items];
+  if (!"skill:".startsWith(query)) return rest;
+
+  rest.push({
+    id: `provider-slash-command:${skillProvider.provider}:skill:`,
+    type: "provider-slash-command",
+    provider: skillProvider.provider,
+    command: {
+      name: "skill:",
+      description: `${skillCount} skill${skillCount === 1 ? "" : "s"}`,
+      matchDescription: `${skillCount} skill${skillCount === 1 ? "" : "s"}`,
+      ...(skillIcon ? { icon: skillIcon } : {}),
+      source: "builtin",
+      executable: false,
+    },
+    label: "/skill:",
+    description: `${skillCount} skill${skillCount === 1 ? "" : "s"}`,
+  });
+  return rest;
+}
+
 export function searchSlashCommandItems(
   items: ReadonlyArray<SlashSearchItem>,
   query: string,
 ): SlashSearchItem[] {
-  const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\/+/ });
-  if (!normalizedQuery) {
-    return [...items];
-  }
-
-  const ranked: Array<{
-    item: SlashSearchItem;
-    score: number;
-    tieBreaker: string;
-  }> = [];
-
-  for (const item of items) {
-    const score = scoreSlashCommandItem(item, normalizedQuery);
-    if (score === null) {
-      continue;
-    }
-
-    insertRankedSearchResult(
-      ranked,
-      {
-        item,
-        score,
-        tieBreaker:
-          item.type === "slash-command"
-            ? `0\u0000${item.command}`
-            : item.type === "provider-slash-command"
-              ? `1\u0000${item.command.name}\u0000${item.provider}`
-              : item.type === "provider-slash-argument"
-                ? `2\u0000${item.searchValue}\u0000${item.provider}`
-                : `3\u0000${item.skill.name}\u0000${item.provider}`,
-      },
-      Number.POSITIVE_INFINITY,
-    );
-  }
-
-  return ranked.map((entry) => entry.item);
+  const normalizedQuery = query.trim().replace(/^\/+/, "").toLowerCase();
+  const candidateItems = collapseSkillNamespace(items, normalizedQuery);
+  const ranked = candidateItems
+    .map((item, index) => {
+      const match = scoreSlashCommandItem(item, normalizedQuery);
+      return match ? { item, index, ...match } : null;
+    })
+    .filter(
+      (
+        entry,
+      ): entry is {
+        item: SlashSearchItem;
+        index: number;
+        score: number;
+        matchedName: string;
+      } => entry !== null,
+    )
+    .sort((left, right) => {
+      const scoreDiff = right.score - left.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      const leftUsage =
+        left.item.type === "provider-slash-command" ? (left.item.command.usage ?? 0) : 0;
+      const rightUsage =
+        right.item.type === "provider-slash-command" ? (right.item.command.usage ?? 0) : 0;
+      const usageDiff = rightUsage - leftUsage;
+      if (usageDiff !== 0) return usageDiff;
+      return left.index - right.index;
+    })
+    .map(({ item, matchedName }) => {
+      if (item.type !== "provider-slash-command" || matchedName === item.command.name) return item;
+      return {
+        ...item,
+        id: `${item.id.slice(0, item.id.lastIndexOf(":") + 1)}${matchedName}`,
+        command: { ...item.command, name: matchedName },
+        label: `/${matchedName}`,
+      };
+    });
+  return [
+    ...ranked.filter((item) => item.type !== "slash-command"),
+    ...ranked.filter((item) => item.type === "slash-command"),
+  ];
 }

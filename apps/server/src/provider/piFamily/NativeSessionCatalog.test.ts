@@ -1,15 +1,20 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 
 import {
   listPiFamilyNativeSessions,
   readPiFamilyNativeHistoryMessages,
+  readPiFamilyNativeSubagentTranscript,
   resolvePiFamilySessionDirectory,
   type PiFamilySessionCatalogConfig,
 } from "./NativeSessionCatalog.ts";
@@ -17,14 +22,13 @@ import {
 const temporaryDirectories: string[] = [];
 
 function config(
-  agentDirectory: string,
+  agentDirectory?: string,
   runtime: PiFamilySessionCatalogConfig["runtime"] = "omp",
 ): PiFamilySessionCatalogConfig {
-  return {
-    runtime,
-    cwd: "/workspace",
-    agentDirectory,
-  };
+  if (agentDirectory === undefined) {
+    return { runtime, cwd: "/workspace" };
+  }
+  return { runtime, cwd: "/workspace", agentDirectory };
 }
 
 afterEach(async () => {
@@ -48,6 +52,20 @@ describe("NativeSessionCatalog", () => {
       environment: { PI_CODING_AGENT_SESSION_DIR: "/pi-sessions" },
     };
     expect(resolvePiFamilySessionDirectory(environmentConfig)).toBe("/pi-sessions");
+
+    expect(
+      resolvePiFamilySessionDirectory({
+        ...config(),
+        environment: { HOME: "/configured-home" },
+      }),
+    ).toBe("/configured-home/.omp/agent/sessions");
+    expect(
+      resolvePiFamilySessionDirectory({
+        ...config(),
+        launchArguments: ["--profile", "work"],
+        environment: { HOME: "/configured-home" },
+      }),
+    ).toBe("/configured-home/.omp/profiles/work/agent/sessions");
   });
 
   it.effect("lists only top-level OMP sessions for the requested cwd", () =>
@@ -153,15 +171,19 @@ describe("NativeSessionCatalog", () => {
         "session-1",
         "/workspace",
       );
-      expect(history.map(({ text }) => text)).toEqual(["continue this", "done"]);
-      const boundedHistory = yield* readPiFamilyNativeHistoryMessages(
-        config(temporaryDirectory),
-        "session-1",
-        "/workspace",
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - Exact byte size of the JSONL fixture row.
-        { maxBytes: Buffer.byteLength(JSON.stringify(lines[4])) + 10 },
-      );
-      expect(boundedHistory.map(({ text }) => text)).toEqual(["done"]);
+      expect(history).toMatchObject([
+        {
+          role: "user",
+          text: "continue this",
+          timestamp: "2026-08-01T12:00:01.000Z",
+        },
+        {
+          role: "assistant",
+          text: "done",
+          timestamp: "2026-08-01T12:00:02.000Z",
+          model: "gpt-5.6",
+        },
+      ]);
 
       const allSessions = yield* listPiFamilyNativeSessions(
         config(temporaryDirectory),
@@ -217,7 +239,7 @@ describe("NativeSessionCatalog", () => {
       });
       expect(
         yield* readPiFamilyNativeHistoryMessages(nativeConfig, "pi-session-1", "/workspace"),
-      ).toEqual([
+      ).toMatchObject([
         {
           role: "user",
           text: "Pi prompt",
@@ -277,15 +299,55 @@ describe("NativeSessionCatalog", () => {
           timestamp: "2026-08-01T12:00:04.000Z",
           message: {
             role: "assistant",
-            content: [{ type: "text", text: "active answer" }],
+            content: [
+              { type: "thinking", thinking: "consider\nthis" },
+              { type: "text", text: "active answer\nwith formatting" },
+              {
+                type: "toolCall",
+                id: "call-1",
+                name: "read",
+                arguments: { path: "src/a.ts" },
+              },
+              {
+                type: "toolCall",
+                id: "call-2",
+                name: "bash",
+                arguments: { command: "printf x" },
+              },
+            ],
             model: "gpt-5.6",
+          },
+        },
+        {
+          type: "message",
+          id: "active-tool-result-1",
+          parentId: "active-assistant",
+          timestamp: "2026-08-01T12:00:05.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "read",
+            content: [{ type: "text", text: "file\ncontents" }],
+          },
+        },
+        {
+          type: "message",
+          id: "active-tool-result-2",
+          parentId: "active-tool-result-1",
+          timestamp: "2026-08-01T12:00:06.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-2",
+            toolName: "bash",
+            content: [{ type: "text", text: "failed output" }],
+            isError: true,
           },
         },
         {
           type: "title_change",
           id: "leaf",
-          parentId: "active-assistant",
-          timestamp: "2026-08-01T12:00:05.000Z",
+          parentId: "active-tool-result-2",
+          timestamp: "2026-08-01T12:00:07.000Z",
           title: "Active branch",
         },
       ];
@@ -308,19 +370,448 @@ describe("NativeSessionCatalog", () => {
         "session-history",
         "/workspace",
       );
-      expect(messages).toEqual([
+      expect(messages.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+        "assistant",
+        "tool",
+        "tool",
+        "tool",
+        "tool",
+      ]);
+      expect(messages[0]).toMatchObject({
+        text: "active prompt",
+        timestamp: "2026-08-01T12:00:03.000Z",
+      });
+      expect(messages[1]).toMatchObject({
+        text: "consider\nthis",
+        timestamp: "2026-08-01T12:00:04.000Z",
+      });
+      expect(messages[2]).toMatchObject({
+        text: "active answer\nwith formatting",
+        model: "gpt-5.6",
+      });
+      expect(messages.slice(3)).toMatchObject([
         {
-          role: "user",
-          text: "active prompt",
-          timestamp: "2026-08-01T12:00:03.000Z",
+          role: "tool",
+          toolCallId: "call-1",
+          phase: "started",
+          sourceId: "active-assistant",
+          sourceIndex: 2,
+          payload: {
+            title: "Read File",
+            data: {
+              toolCallId: "call-1",
+              item: { name: "read", input: { path: "src/a.ts" } },
+            },
+          },
         },
         {
-          role: "assistant",
-          text: "active answer",
-          timestamp: "2026-08-01T12:00:04.000Z",
-          model: "gpt-5.6",
+          role: "tool",
+          toolCallId: "call-2",
+          phase: "started",
+          sourceIndex: 3,
+        },
+        {
+          role: "tool",
+          toolCallId: "call-1",
+          phase: "completed",
+          sourceId: "active-tool-result-1",
+          payload: {
+            status: "completed",
+            data: {
+              toolCallId: "call-1",
+              item: {
+                input: { path: "src/a.ts" },
+                result: { content: [{ type: "text", text: "file\ncontents" }] },
+              },
+            },
+          },
+        },
+        {
+          role: "tool",
+          toolCallId: "call-2",
+          phase: "completed",
+          payload: {
+            status: "failed",
+            data: {
+              toolCallId: "call-2",
+              item: {
+                result: { content: [{ type: "text", text: "failed output" }], isError: true },
+              },
+            },
+          },
         },
       ]);
+    }),
+  );
+
+  it.effect(
+    "recovers persisted child task state without treating the task-tool result as success",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-native-task-catalog-")),
+        );
+        temporaryDirectories.push(root);
+        const parentPath = NodePath.join(root, "parent.jsonl");
+        const childDirectory = NodePath.join(root, "parent");
+        const childPath = NodePath.join(childDirectory, "ProofA.jsonl");
+        const longPrompt = "historical child input ".repeat(4_000);
+        const parentLines = [
+          {
+            type: "session",
+            id: "parent",
+            cwd: "/workspace",
+            timestamp: "2026-08-01T12:00:00.000Z",
+          },
+          {
+            type: "message",
+            id: "assistant",
+            parentId: "parent",
+            timestamp: "2026-08-01T12:00:01.000Z",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "task-call",
+                  name: "task",
+                  arguments: { tasks: [{ name: "ProofA", task: "Return proof" }] },
+                },
+              ],
+            },
+          },
+          {
+            type: "message",
+            id: "result",
+            parentId: "assistant",
+            timestamp: "2026-08-01T12:00:02.000Z",
+            message: {
+              role: "toolResult",
+              toolCallId: "task-call",
+              toolName: "task",
+              details: {
+                progress: [
+                  {
+                    id: "ProofA",
+                    agent: "scout",
+                    assignment: "Return proof",
+                    status: "pending",
+                  },
+                ],
+              },
+            },
+          },
+        ];
+        const childLines = [
+          { type: "session", id: "child-session", cwd: "/workspace" },
+          {
+            type: "message",
+            id: "child-user",
+            parentId: "child-session",
+            timestamp: "2026-08-01T12:00:03.000Z",
+            message: { role: "user", content: longPrompt },
+          },
+          {
+            type: "message",
+            id: "child-tool-call",
+            parentId: "child-user",
+            timestamp: "2026-08-01T12:00:04.000Z",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "read-call",
+                  name: "read",
+                  arguments: { path: "proof.txt" },
+                },
+              ],
+            },
+          },
+          {
+            type: "message",
+            id: "child-tool-result",
+            parentId: "child-tool-call",
+            timestamp: "2026-08-01T12:00:05.000Z",
+            message: {
+              role: "toolResult",
+              toolCallId: "read-call",
+              toolName: "read",
+              content: [{ type: "text", text: "proof output" }],
+            },
+          },
+          {
+            type: "message",
+            id: "child-assistant",
+            parentId: "child-tool-result",
+            timestamp: "2026-08-01T12:00:06.000Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "partial proof" }],
+              stopReason: "aborted",
+              errorMessage: "Request was aborted",
+            },
+          },
+        ];
+        yield* Effect.promise(() =>
+          NodeFSP.mkdir(childDirectory, { recursive: true }).then(() =>
+            Promise.all([
+              NodeFSP.writeFile(
+                parentPath,
+                `${parentLines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+              ),
+              NodeFSP.writeFile(
+                childPath,
+                `${childLines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+              ),
+            ]),
+          ),
+        );
+        const messages = yield* readPiFamilyNativeHistoryMessages(
+          { ...config(root), launchArguments: ["--session-dir", root] },
+          "parent",
+          "/workspace",
+        );
+        const taskMessage = messages.find(
+          (message) => message.role === "tool" && message.phase === "completed",
+        );
+        expect(taskMessage).toMatchObject({
+          toolCallId: "task-call",
+          tasks: [
+            {
+              taskId: "ProofA",
+              status: "interrupted",
+              summary: "partial proof",
+              error: "Request was aborted",
+            },
+          ],
+        });
+        const nativeConfig = { ...config(root), launchArguments: ["--session-dir", root] };
+        const transcript = yield* readPiFamilyNativeSubagentTranscript(
+          nativeConfig,
+          "parent",
+          "ProofA",
+          "/workspace",
+        );
+        expect(transcript.entries.map((entry) => entry.kind)).toEqual([
+          "user",
+          "tool",
+          "tool",
+          "assistant",
+        ]);
+        expect(transcript.entries[0]?.text).toBe(longPrompt);
+        expect(transcript.entries[1]).toMatchObject({
+          toolName: "read",
+          text: 'Called read\n{\n  "path": "proof.txt"\n}',
+        });
+        expect(transcript.entries[2]).toMatchObject({
+          kind: "tool",
+          toolName: "read",
+          text: "proof output",
+        });
+        expect(transcript.entries[3]).toMatchObject({ text: "partial proof" });
+        expect(
+          yield* readPiFamilyNativeSubagentTranscript(
+            nativeConfig,
+            "parent",
+            "ProofA",
+            "/workspace",
+            transcript.nextCursor,
+          ),
+        ).toMatchObject({ entries: [], reset: false, nextCursor: transcript.nextCursor });
+
+        const missing = yield* Effect.exit(
+          readPiFamilyNativeSubagentTranscript(nativeConfig, "parent", "Missing", "/workspace"),
+        );
+        expect(Exit.isFailure(missing)).toBe(true);
+        if (Exit.isFailure(missing)) {
+          expect(Cause.squash(missing.cause)).toMatchObject({ code: "not_found" });
+        }
+        const encodeMessage = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+        const appendYield = (type: string | string[]) =>
+          encodeMessage({
+            type: "message",
+            timestamp: "2026-08-01T12:00:09.000Z",
+            message: {
+              role: "toolResult",
+              toolName: "yield",
+              isError: false,
+              details: { status: "success", type, data: { proof: "accepted" } },
+            },
+          }).pipe(
+            Effect.flatMap((encoded) =>
+              Effect.promise(() => NodeFSP.appendFile(childPath, `${encoded}\n`)),
+            ),
+          );
+        yield* appendYield(["progress"]);
+        const incremental = yield* readPiFamilyNativeHistoryMessages(
+          nativeConfig,
+          "parent",
+          "/workspace",
+        );
+        const incrementalMessage = incremental.find(
+          (message) => message.role === "tool" && message.phase === "completed",
+        );
+        expect(
+          incrementalMessage?.role === "tool" ? incrementalMessage.tasks?.[0]?.status : undefined,
+        ).toBe("interrupted");
+        yield* appendYield("final");
+        const final = yield* readPiFamilyNativeHistoryMessages(
+          nativeConfig,
+          "parent",
+          "/workspace",
+        );
+        const completedMessage = final.find(
+          (message) => message.role === "tool" && message.phase === "completed",
+        );
+        const completedTask =
+          completedMessage?.role === "tool" ? completedMessage.tasks?.[0] : undefined;
+        expect(completedTask?.status).toBe("completed");
+        expect(completedTask?.error).toBeUndefined();
+        expect(Date.parse(completedTask?.endedAt ?? "")).toBeGreaterThan(
+          Date.parse(completedMessage?.timestamp ?? ""),
+        );
+      }),
+  );
+
+  it.effect("resolves archived OMP image blobs without escaping the agent blob store", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-native-image-blobs-")),
+      );
+      temporaryDirectories.push(root);
+      const agentDirectory = NodePath.join(root, "agent");
+      const sessionDirectory = NodePath.join(root, "external-sessions");
+      const blobDirectory = NodePath.join(agentDirectory, "blobs");
+      const imageData =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+iRFUAAAAASUVORK5CYII=";
+      const bytes = Buffer.from(imageData, "base64");
+      const hash = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+      const image = { type: "image", mimeType: "image/png", data: `blob:sha256:${hash}` };
+      const invalidImage = { ...image, data: "blob:sha256:../private.txt" };
+      const records = [
+        {
+          type: "session",
+          id: "blob-session",
+          cwd: "/workspace",
+          timestamp: "2026-08-01T12:00:00.000Z",
+        },
+        {
+          type: "message",
+          id: "user",
+          parentId: null,
+          timestamp: "2026-08-01T12:00:01.000Z",
+          message: { role: "user", content: [image] },
+        },
+        {
+          type: "message",
+          id: "assistant",
+          parentId: "user",
+          timestamp: "2026-08-01T12:00:02.000Z",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "image-call",
+                name: "read",
+                arguments: { path: "image.png" },
+              },
+            ],
+          },
+        },
+        {
+          type: "message",
+          id: "result",
+          parentId: "assistant",
+          timestamp: "2026-08-01T12:00:03.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: "image-call",
+            toolName: "read",
+            content: [image, invalidImage],
+          },
+        },
+      ];
+      const encodeRecord = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+      const lines = yield* Effect.forEach(records, (record) => encodeRecord(record));
+      const source = `${lines.join("\n")}\n`;
+      const sessionFile = NodePath.join(sessionDirectory, "session.jsonl");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(blobDirectory, { recursive: true });
+        await NodeFSP.mkdir(sessionDirectory);
+        await Promise.all([
+          NodeFSP.writeFile(NodePath.join(blobDirectory, hash), bytes),
+          NodeFSP.writeFile(NodePath.join(agentDirectory, "private.txt"), "PRIVATE_DATA"),
+          NodeFSP.writeFile(sessionFile, source),
+        ]);
+      });
+      const history = yield* readPiFamilyNativeHistoryMessages(
+        { ...config(agentDirectory), launchArguments: ["--session-dir", sessionDirectory] },
+        "blob-session",
+        "/workspace",
+      );
+      expect(history[0]).toMatchObject({ role: "user", images: [{ ...image, data: imageData }] });
+      expect(
+        history.find((message) => message.role === "tool" && message.phase === "completed"),
+      ).toMatchObject({
+        payload: {
+          data: { item: { result: { content: [{ ...image, data: imageData }, invalidImage] } } },
+        },
+      });
+      expect(yield* Effect.promise(() => NodeFSP.readFile(sessionFile, "utf8"))).toBe(source);
+    }),
+  );
+
+  it.effect("reads native history through another path to the same workspace", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-native-workspace-alias-")),
+      );
+      temporaryDirectories.push(root);
+      const workspace = NodePath.join(root, "workspace");
+      const alias = NodePath.join(root, "alias");
+      yield* Effect.promise(() => NodeFSP.mkdir(workspace));
+      yield* Effect.promise(() => NodeFSP.symlink(workspace, alias, "dir"));
+      const canonicalWorkspace = yield* Effect.promise(() => NodeFSP.realpath(workspace));
+      const nativeConfig = { ...config(root, "pi"), launchArguments: ["--session-dir", root] };
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(root, "session.jsonl"),
+          [
+            {
+              type: "session",
+              version: 3,
+              id: "alias-session",
+              cwd: canonicalWorkspace,
+              timestamp: "2026-08-01T12:00:00.000Z",
+            },
+            {
+              type: "message",
+              id: "user",
+              parentId: null,
+              timestamp: "2026-08-01T12:00:01.000Z",
+              message: { role: "user", content: "Same workspace" },
+            },
+          ]
+            .map((record) => JSON.stringify(record))
+            .join("\n") + "\n",
+        ),
+      );
+      const sessions = yield* listPiFamilyNativeSessions(
+        nativeConfig,
+        ProviderInstanceId.make("pi"),
+        alias,
+      );
+      expect(sessions.map((session) => session.sessionId)).toEqual(["alias-session"]);
+      const history = yield* readPiFamilyNativeHistoryMessages(
+        nativeConfig,
+        "alias-session",
+        alias,
+      );
+      expect(history).toMatchObject([{ role: "user", text: "Same workspace" }]);
     }),
   );
 });

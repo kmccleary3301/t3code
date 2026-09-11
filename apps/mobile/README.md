@@ -1,7 +1,7 @@
-# T3 Code Mobile
+# KM Code Mobile
 
-> [!WARNING]
-> T3 Code Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
+KM Code Mobile is Kyle McCleary's mobile fork of [T3 Code](https://github.com/pingdotgg/t3code).
+It is currently in development and is not distributed yet; build it from source to try it.
 
 ## Quickstart
 
@@ -10,9 +10,9 @@
 
 This app has three variants:
 
-- `development`: Expo dev client, installable side-by-side as `T3 Code Dev`
-- `preview`: persistent internal preview build, installable side-by-side as `T3 Code Preview`
-- `production`: store/release build as `T3 Code`
+- `development`: Expo dev client, installable side-by-side as `KM Code (Dev)`
+- `preview`: persistent internal preview build, installable side-by-side as `KM Code (Preview)`
+- `production`: local/store-style build as `KM Code (Local)`
 
 Run commands from `apps/mobile`.
 

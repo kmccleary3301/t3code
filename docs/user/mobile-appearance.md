@@ -1,8 +1,8 @@
 # Mobile appearance
 
-T3 Code Mobile includes the T3 Code, T3 Chat, Grove, Ocean, Ember, and Iris themes. Each theme has
-light and dark colors that apply throughout the app, including code reviews, file previews, the
-terminal, native headers, and sheets.
+KM Code Mobile includes KM Code, T3 Chat, Grove, Ocean, Ember, and Iris themes. Each has
+light and dark colors for the app, including reviews, file previews, terminals, headers,
+and sheets. New installs default to KM Code; existing theme preferences are preserved.
 
 On supported iOS versions, the new-task and thread composers, working timer, and scroll-to-end
 button use the system glass material. Other platforms use a themed background.
