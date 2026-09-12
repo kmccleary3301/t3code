@@ -176,6 +176,13 @@ export class NativeHistoryIdentities {
   getTurn(id: TurnId | null | undefined): ImportedNativeTurn | undefined {
     return id == null ? undefined : this.turnsById.get(id);
   }
+  hasActivity(id: EventId): boolean {
+    return this.activitiesById.has(id);
+  }
+
+  hasMessage(id: MessageId): boolean {
+    return this.messagesById.has(id);
+  }
 
   private turnForTimestamp(timestamp: string): ImportedNativeTurn | undefined {
     let match: ImportedNativeTurn | undefined;

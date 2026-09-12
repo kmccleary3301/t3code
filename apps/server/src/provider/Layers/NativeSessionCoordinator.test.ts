@@ -257,6 +257,10 @@ describe("NativeSessionCoordinator syncThread", () => {
       const nativeSync = yield* coordinator.syncThread(ThreadId.make("native:omp:session-1"));
       expect(nativeSync).toEqual({ synced: true, messageCount: 1 });
       expect(dispatchedCommands.some((c) => c.type === "thread.native-history.import")).toBe(true);
+      const beforeCount = dispatchedCommands.length;
+      const secondSync = yield* coordinator.syncThread(ThreadId.make("native:omp:session-1"));
+      expect(secondSync).toEqual({ synced: true, messageCount: 1 });
+      expect(dispatchedCommands.length).toBe(beforeCount);
 
       const unboundNativeSync = yield* coordinator.syncThread(
         ThreadId.make("native:omp:session-2"),

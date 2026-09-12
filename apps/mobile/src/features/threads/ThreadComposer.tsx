@@ -386,7 +386,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     serverConfig: props.serverConfig,
     states: uploadStates,
   });
-  const canSend = hasContent && !voiceInput.blocksSubmission && attachmentBlockReason === null;
+  const canSend =
+    hasContent &&
+    !voiceInput.blocksSubmission &&
+    attachmentBlockReason === null &&
+    props.threadSyncPhase === null;
 
   // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
@@ -657,13 +661,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 ref={inputRef}
                 multiline
                 value={props.draftMessage}
-                readOnly={voiceInput.freezesEditor}
+                readOnly={voiceInput.freezesEditor || props.threadSyncPhase !== null}
                 skills={selectedProviderStatus?.skills ?? []}
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
                 onSelectionChange={composerMenu.onSelectionChange}
                 onPasteImages={(uris) => void props.onNativePasteImages(uris)}
-                placeholder={props.placeholder}
+                placeholder={
+                  props.threadSyncPhase !== null
+                    ? props.threadSyncPhase === "loading"
+                      ? "Loading messages..."
+                      : "Syncing messages..."
+                    : props.placeholder
+                }
                 onFocus={handleFocus}
                 onBlur={handleBlur}
                 onSubmit={handleSend}

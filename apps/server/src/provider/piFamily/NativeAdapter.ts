@@ -79,6 +79,7 @@ import {
   resolvePiFamilyLaunchArguments,
 } from "./ModelDiscovery.ts";
 import {
+  findPiFamilySessionFile,
   listPiFamilyNativeSessions,
   readPiFamilyNativeHistoryMessages,
   readPiFamilyNativeSubagentTranscript,
@@ -1903,28 +1904,61 @@ export const makePiFamilyAdapter = (
         totalMessages: messages.length,
       });
     };
-    const offlineHistoryCache = new Map<string, ReadonlyArray<ProviderNativeHistoryMessage>>();
+    interface OfflineHistoryCacheEntry {
+      readonly mtimeMs: number;
+      readonly size: number;
+      readonly messages: ReadonlyArray<ProviderNativeHistoryMessage>;
+    }
+    const offlineHistoryCache = new Map<string, OfflineHistoryCacheEntry>();
     const readNativeHistoryBySession = (input: {
       readonly sessionId: string;
       readonly cwd: string;
       readonly cursor?: string;
     }): Effect.Effect<ProviderNativeHistoryPage, ProviderNativeSessionError> => {
       const cacheKey = `${config.instanceId}:${input.sessionId}`;
-      if (input.cursor === undefined) {
-        offlineHistoryCache.delete(cacheKey);
-      }
-      const cached = offlineHistoryCache.get(cacheKey);
-      if (cached !== undefined && input.cursor !== undefined) {
-        return pageNativeHistory(cached, input.cursor, 1024);
-      }
-      return readPiFamilyNativeHistoryMessages(config, input.sessionId, input.cwd).pipe(
-        Effect.tap((messages) =>
-          Effect.sync(() => {
-            offlineHistoryCache.set(cacheKey, messages);
-          }),
-        ),
-        Effect.flatMap((messages) => pageNativeHistory(messages, input.cursor, 1024)),
-      );
+      return Effect.gen(function* () {
+        const cached = offlineHistoryCache.get(cacheKey);
+        const sessionFile = yield* Effect.tryPromise({
+          try: () => findPiFamilySessionFile(config, input.sessionId, input.cwd),
+          catch: (cause) =>
+            new ProviderNativeSessionError({
+              code: "native",
+              message: cause instanceof Error ? cause.message : "Failed to find session file",
+            }),
+        });
+
+        if (sessionFile === undefined) {
+          return yield* new ProviderNativeSessionError({
+            code: "not_found",
+            message: `${config.runtime.toUpperCase()} session '${input.sessionId}' was not found in this project.`,
+          });
+        }
+
+        const stat = yield* Effect.tryPromise({
+          try: () => NodeFS.promises.stat(sessionFile),
+          catch: (cause) =>
+            new ProviderNativeSessionError({
+              code: "native",
+              message: cause instanceof Error ? cause.message : "Failed to stat session file",
+            }),
+        });
+
+        if (cached !== undefined && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+          return yield* pageNativeHistory(cached.messages, input.cursor, 1024);
+        }
+
+        const messages = yield* readPiFamilyNativeHistoryMessages(
+          config,
+          input.sessionId,
+          input.cwd,
+        );
+        offlineHistoryCache.set(cacheKey, {
+          mtimeMs: stat.mtimeMs,
+          size: stat.size,
+          messages,
+        });
+        return yield* pageNativeHistory(messages, input.cursor, 1024);
+      });
     };
     const readNativeHistory = (
       threadId: ThreadId,

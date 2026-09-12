@@ -88,7 +88,7 @@ import {
   type ComposerTasksProgress,
 } from "./ComposerTasksBadge";
 import { ComposerActivityRow } from "./ComposerActivityStatus";
-import type { ThreadSyncPhase } from "../../threadSync";
+import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
 import {
@@ -877,7 +877,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           })
       : null);
   const sendDisabledReason =
-    externalSendDisabledReason ?? (activePendingProgress ? null : attachmentBlockReason);
+    props.threadSyncPhase !== null
+      ? threadSyncLabel(props.threadSyncPhase)
+      : (externalSendDisabledReason ?? (activePendingProgress ? null : attachmentBlockReason));
   const isSendDisabled = sendDisabledReason !== null;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -4171,22 +4173,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onCommandKeyDown={onComposerCommandKey}
                   onPaste={onComposerPaste}
                   placeholder={
-                    isComposerApprovalState
-                      ? (activePendingApproval?.detail ??
-                        "Resolve this approval request to continue")
-                      : activePendingProgress
-                        ? "Type your own answer, or leave this blank to use the selected option"
-                        : showPlanFollowUpPrompt && activeProposedPlan
-                          ? "Add feedback to refine the plan, or leave this blank to implement it"
-                          : projectSelectionRequired
-                            ? "Choose a project above to start a thread"
-                            : noProviderAvailable
-                              ? "Enable a provider in Settings to send a message"
-                              : phase === "disconnected"
-                                ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                    props.threadSyncPhase !== null
+                      ? threadSyncLabel(props.threadSyncPhase)
+                      : isComposerApprovalState
+                        ? (activePendingApproval?.detail ??
+                          "Resolve this approval request to continue")
+                        : activePendingProgress
+                          ? "Type your own answer, or leave this blank to use the selected option"
+                          : showPlanFollowUpPrompt && activeProposedPlan
+                            ? "Add feedback to refine the plan, or leave this blank to implement it"
+                            : projectSelectionRequired
+                              ? "Choose a project above to start a thread"
+                              : noProviderAvailable
+                                ? "Enable a provider in Settings to send a message"
+                                : phase === "disconnected"
+                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
                   }
-                  disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                  disabled={
+                    isConnecting ||
+                    isComposerApprovalState ||
+                    projectSelectionRequired ||
+                    Boolean(props.threadSyncPhase)
+                  }
                 />
                 {showMobilePendingAnswerActions ? (
                   <div

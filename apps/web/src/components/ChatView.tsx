@@ -384,7 +384,7 @@ import {
   codexArtifactTemplatePromptToAppend,
   waitForStartedServerThread,
 } from "./ChatView.logic";
-import type { ThreadSyncPhase } from "../threadSync";
+import { threadSyncLabel, type ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import {
@@ -7437,9 +7437,11 @@ function ChatViewContent(props: ChatViewProps) {
                             sendDisabledReason={
                               feedbackUploading
                                 ? "Sending feedback"
-                                : threadDetailLoading
-                                  ? "Messages loading"
-                                  : null
+                                : threadSyncPhase !== null
+                                  ? threadSyncLabel(threadSyncPhase)
+                                  : threadDetailLoading
+                                    ? "Messages loading"
+                                    : null
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}

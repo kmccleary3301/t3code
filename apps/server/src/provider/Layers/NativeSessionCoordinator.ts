@@ -388,19 +388,28 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       messageOffset = imported.messageOffset;
       turnOffset = imported.turnOffset;
       currentTurn = imported.currentTurn;
-      const importedAt = DateTime.formatIso(yield* DateTime.now);
-      const importDigest = NodeCrypto.createHash("sha256")
-        .update(encodeJson({ messages: imported.messages, turns: imported.turns }))
-        .digest("hex");
-      yield* engine.dispatch({
-        type: "thread.native-history.import",
-        commandId: CommandId.make(`native-history-source:${threadId}:${importDigest}`),
-        threadId,
-        messages: imported.messages,
-        turns: imported.turns,
-        importedAt,
-      });
+      const hasNewMessages = imported.messages.some((msg) => !identities.hasMessage(msg.id));
+      const hasNewTurns = imported.turns.some(
+        (turn) => identities.getTurn(turn.turnId) === undefined,
+      );
+      if (hasNewMessages || hasNewTurns) {
+        const importedAt = DateTime.formatIso(yield* DateTime.now);
+        const importDigest = NodeCrypto.createHash("sha256")
+          .update(encodeJson({ messages: imported.messages, turns: imported.turns }))
+          .digest("hex");
+        yield* engine.dispatch({
+          type: "thread.native-history.import",
+          commandId: CommandId.make(`native-history-source:${threadId}:${importDigest}`),
+          threadId,
+          messages: imported.messages,
+          turns: imported.turns,
+          importedAt,
+        });
+      }
       for (const activity of imported.activities) {
+        if (identities.hasActivity(activity.id)) {
+          continue;
+        }
         const activityDigest = NodeCrypto.createHash("sha256")
           .update(encodeJson(activity))
           .digest("hex");
@@ -707,9 +716,15 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
         binding.resumeCursor.sessionId === input.sessionId,
     )?.threadId;
   });
+  const syncedCountsByThread = new Map<ThreadId, number>();
+  const activeSyncsByThread = new Set<ThreadId>();
   const syncThreadInternal = Effect.fn("NativeSessionCoordinator.syncThreadInternal")(function* (
     threadId: ThreadId,
   ) {
+    if (activeSyncsByThread.has(threadId)) {
+      return { synced: false, inProgress: true };
+    }
+
     const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
     let providerInstanceId: string | undefined = binding?.providerInstanceId;
     let sessionId: string | undefined =
@@ -749,6 +764,22 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
       workspaceRoot = serverConfig.cwd;
     }
 
+    const firstPage = yield* readNativeHistoryBySession({
+      providerInstanceId: ProviderInstanceId.make(providerInstanceId!),
+      sessionId: sessionId!,
+      cwd: workspaceRoot!,
+    }).pipe(Effect.orElseSucceed(() => undefined));
+
+    if (firstPage === undefined) {
+      return { synced: false };
+    }
+
+    const previousCount = syncedCountsByThread.get(threadId);
+    if (previousCount !== undefined && previousCount === firstPage.totalMessages) {
+      return { synced: true, messageCount: firstPage.totalMessages };
+    }
+
+    activeSyncsByThread.add(threadId);
     const nativeHistoryMessageCount = yield* importHistory(threadId, (cursor) =>
       readNativeHistoryBySession({
         providerInstanceId: ProviderInstanceId.make(providerInstanceId!),
@@ -756,11 +787,16 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
         cwd: workspaceRoot!,
         ...(cursor === undefined ? {} : { cursor }),
       }),
-    ).pipe(Effect.orElseSucceed(() => undefined));
+    ).pipe(
+      Effect.ensuring(Effect.sync(() => activeSyncsByThread.delete(threadId))),
+      Effect.orElseSucceed(() => undefined),
+    );
 
     if (nativeHistoryMessageCount === undefined) {
       return { synced: false };
     }
+
+    syncedCountsByThread.set(threadId, nativeHistoryMessageCount);
 
     const currentBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
     if (currentBinding !== undefined) {
@@ -872,9 +908,7 @@ const makeNativeSessionCoordinator = Effect.gen(function* () {
     open: (input) =>
       openSemaphore.withPermits(1)(openInternal(input)).pipe(Effect.mapError(asNativeSessionError)),
     syncThread: (threadId) =>
-      openSemaphore
-        .withPermits(1)(syncThreadInternal(threadId))
-        .pipe(Effect.mapError(asNativeSessionError)),
+      syncThreadInternal(threadId).pipe(Effect.mapError(asNativeSessionError)),
     rename: (input) =>
       openSemaphore
         .withPermits(1)(renameInternal(input))
