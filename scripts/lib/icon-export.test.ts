@@ -54,9 +54,13 @@ describe("icon export", () => {
       <image href="data:image/png;base64,${redPng.toString("base64")}" x="0" y="0" width="64" height="64"/>
     </svg>`;
     const resvg = new Resvg(svg, { fitTo: { mode: "width", value: 64 } });
-    const rendered = resvg.render().asPng();
-    const dimensions = readPngDimensions(rendered);
+    const rendered = resvg.render();
+    const dimensions = readPngDimensions(rendered.asPng());
     assert.deepEqual(dimensions, { width: 64, height: 64 });
-    assert.isTrue(rendered.length > 50);
+    // Assert pixels are not blank / transparent (the dropped layer bug produced 0 alpha/RGB)
+    const pixels = rendered.pixels;
+    assert.isTrue(pixels.length === 64 * 64 * 4);
+    assert.isTrue(pixels[0] > 100, "expected red channel to be rendered");
+    assert.isTrue(pixels[3] > 100, "expected alpha channel to be rendered");
   });
 });
