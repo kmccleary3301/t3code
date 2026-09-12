@@ -37,29 +37,20 @@ space outside the body. Do not edit generated PNG or ICO files directly.
 ## Android adaptive and monochrome marks
 
 `apps/mobile/assets/android-icon-foreground.svg` is the source of truth for
-the normal Android adaptive launcher foreground. Its paired PNG is generated
-with:
-
-```sh
-rsvg-convert -w 432 -h 432 \
-  -o apps/mobile/assets/android-icon-foreground.png \
-  apps/mobile/assets/android-icon-foreground.svg
-```
+the normal Android adaptive launcher foreground. It contains the transparent
+portrait cutout centered within Android's 264px diameter safe zone, allowing
+the launcher to apply its mask over the dark background without nested-shape
+distortion.
 
 `apps/mobile/assets/android-icon-mark.svg` is the source of truth for the
-flat monochrome and notification silhouette. Generate both tracked PNGs with:
+flat monochrome silhouette and status bar notification mark. It uses the
+clean KM monogram geometry and is rendered to:
 
-```sh
-rsvg-convert -w 432 -h 432 \
-  -o apps/mobile/assets/android-icon-mark.png \
-  apps/mobile/assets/android-icon-mark.svg
-rsvg-convert -w 96 -h 96 \
-  -o apps/mobile/assets/android-notification-icon.png \
-  apps/mobile/assets/android-icon-mark.svg
-```
+- `apps/mobile/assets/android-icon-mark.png` (432×432)
+- `apps/mobile/assets/android-notification-icon.png` (96×96)
 
-Both source marks are transparent, use the same KM geometry, and keep their
-strokes within Android's adaptive safe zone.
+Both source marks remain transparent outside their subjects and keep their
+artwork strictly within Android's adaptive safe zone.
 
 ## Generated outputs
 

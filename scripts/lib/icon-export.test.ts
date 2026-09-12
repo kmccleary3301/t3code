@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Resvg } from "@resvg/resvg-js";
-
-import { encodePngIco, readPngDimensions } from "./icon-export.ts";
+import { encodePngIco, portableIconSvg, readPngDimensions } from "./icon-export.ts";
 const pngHeader = (width: number, height: number) => {
   const contents = Buffer.alloc(24);
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(contents);
@@ -45,14 +44,27 @@ describe("icon export", () => {
     );
   });
 
-  it("renders a non-blank raster from an SVG with embedded PNG layer", () => {
+  it("renders a non-blank raster from portableIconSvg with an embedded PNG layer", () => {
     const redPng = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
       "base64",
     );
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-      <image href="data:image/png;base64,${redPng.toString("base64")}" x="0" y="0" width="64" height="64"/>
-    </svg>`;
+    const iconJson = JSON.stringify({
+      groups: [
+        {
+          layers: [
+            {
+              "image-name": "layer.png",
+              position: { scale: 8.5, "translation-in-points": [0, 0] },
+            },
+          ],
+        },
+      ],
+    });
+    const layerSources = new Map([["layer.png", redPng]]);
+    const svg = portableIconSvg(iconJson, layerSources, false);
+    assert.isTrue(svg.includes("data:image/png;base64,"));
+
     const resvg = new Resvg(svg, { fitTo: { mode: "width", value: 64 } });
     const rendered = resvg.render();
     const dimensions = readPngDimensions(rendered.asPng());
@@ -60,7 +72,8 @@ describe("icon export", () => {
     // Assert pixels are not blank / transparent (the dropped layer bug produced 0 alpha/RGB)
     const pixels = rendered.pixels;
     assert.isTrue(pixels.length === 64 * 64 * 4);
-    assert.isTrue(pixels[0] > 100, "expected red channel to be rendered");
-    assert.isTrue(pixels[3] > 100, "expected alpha channel to be rendered");
+    const centerOffset = (32 * 64 + 32) * 4;
+    assert.isTrue(pixels[centerOffset] > 100, "expected red channel to be rendered");
+    assert.isTrue(pixels[centerOffset + 3] > 100, "expected alpha channel to be rendered");
   });
 });

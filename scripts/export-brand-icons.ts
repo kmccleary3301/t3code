@@ -14,7 +14,12 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Resvg } from "@resvg/resvg-js";
 import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
-import { encodePngIco, readPngDimensions, WINDOWS_ICON_SIZES } from "./lib/icon-export.ts";
+import {
+  encodePngIco,
+  portableIconSvg,
+  readPngDimensions,
+  WINDOWS_ICON_SIZES,
+} from "./lib/icon-export.ts";
 const DESIGN_GENERATION = 26;
 const ICON_COMPOSER_EXECUTABLE_PARTS = [
   "Contents",
@@ -473,57 +478,6 @@ const resolveIconComposerTool = Effect.fn("iconExport.resolveIconComposerTool")(
     designGeneration: DESIGN_GENERATION,
   });
 });
-
-const PortableIconLayer = Schema.Struct({
-  "image-name": Schema.String,
-  opacity: Schema.optional(Schema.Number),
-  hidden: Schema.optional(Schema.Boolean),
-  position: Schema.optional(
-    Schema.Struct({
-      scale: Schema.optional(Schema.Number),
-      "translation-in-points": Schema.optional(Schema.Tuple([Schema.Number, Schema.Number])),
-    }),
-  ),
-});
-const decodePortableIconProject = Schema.decodeUnknownSync(
-  Schema.fromJsonString(
-    Schema.Struct({
-      groups: Schema.Array(Schema.Struct({ layers: Schema.Array(PortableIconLayer) })),
-    }),
-  ),
-);
-
-function portableIconSvg(
-  iconJson: string,
-  layerSources: ReadonlyMap<string, Buffer>,
-  safeArea: boolean,
-): string {
-  const project = decodePortableIconProject(iconJson);
-  const layers = project.groups
-    .flatMap((group) => group.layers)
-    .toReversed()
-    .filter((layer) => !layer.hidden);
-  const fill = "#171411";
-  const inset = safeArea ? 100 : 0;
-  const bodySize = safeArea ? 824 : 1024;
-  const children = layers.flatMap((layer) => {
-    const source = layerSources.get(layer["image-name"]);
-    if (source === undefined) {
-      throw new IconExportSourceMissingError({ sourcePath: layer["image-name"] });
-    }
-    const isPng = layer["image-name"].endsWith(".png");
-    const mime = isPng ? "image/png" : "image/svg+xml";
-    const encoded = source.toString("base64");
-    const scale = (layer.position?.scale ?? 8.5) / 8.5;
-    const translation = layer.position?.["translation-in-points"] ?? [0, 0];
-    const translateX = (translation[0] * bodySize) / 1024;
-    const translateY = (translation[1] * bodySize) / 1024;
-    return [
-      `<image href="data:${mime};base64,${encoded}" x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" opacity="${layer.opacity ?? 1}" transform="translate(${translateX} ${translateY}) scale(${scale})" preserveAspectRatio="none"/>`,
-    ];
-  });
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><clipPath id="body-clip"><rect x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" rx="${Math.round(bodySize * 0.22)}"/></clipPath></defs><rect x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" rx="${Math.round(bodySize * 0.22)}" fill="${fill}"/><g clip-path="url(#body-clip)">${children.join("")}</g></svg>`;
-}
 
 const renderSvg = Effect.fn("iconExport.renderSvg")(function* (
   sourcePath: string,
