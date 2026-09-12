@@ -110,8 +110,18 @@ function ThinkingTimelineRow() {
   const { isPreparingWorktree } = useTimelineRowActivityState();
   // Reserve the activity row during setup so the handoff keeps the same height.
   return (
-    <div className="min-h-7" data-t3-part="timeline-status">
-      {isPreparingWorktree ? null : <LiveActivityRow label="Thinking" />}
+    <div className="flex min-h-7 items-center gap-1.5" data-t3-part="timeline-status">
+      {isPreparingWorktree ? null : (
+        <>
+          <img
+            src="/mascot/kyle-mascot-64.png"
+            alt="Thinking Mascot"
+            className="h-4 w-4 shrink-0 rounded-full object-cover shadow-xs motion-safe:animate-pulse"
+            draggable={false}
+          />
+          <LiveActivityRow label="Thinking" />
+        </>
+      )}
     </div>
   );
 }

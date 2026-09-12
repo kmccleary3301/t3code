@@ -167,14 +167,28 @@ export function DraftHeroHeadline({
   );
 
   return (
-    <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-      {hasResolvedProject ? (
-        <>What should we build in {projectSelector}?</>
-      ) : canChooseProject ? (
-        <>{projectSelector} to start</>
-      ) : (
-        <>Add a project to start</>
-      )}
-    </h1>
+    <div className="flex flex-col items-center select-none">
+      <div
+        className="mb-4 relative group cursor-pointer"
+        title="KM Code — Serious software, classic hacker spirit"
+      >
+        <div className="absolute -inset-1.5 rounded-full bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 opacity-60 blur-xs transition duration-500 group-hover:opacity-100 group-hover:blur-sm" />
+        <img
+          src="/mascot/kyle-mascot-256.png"
+          alt="KM Code Mascot"
+          className="relative h-20 w-20 rounded-full object-cover shadow-lg border-2 border-background ring-2 ring-primary/20 transition-transform duration-300 group-hover:scale-105 group-active:scale-95"
+          draggable={false}
+        />
+      </div>
+      <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+        {hasResolvedProject ? (
+          <>What should we build in {projectSelector}?</>
+        ) : canChooseProject ? (
+          <>{projectSelector} to start</>
+        ) : (
+          <>Add a project to start</>
+        )}
+      </h1>
+    </div>
   );
 }
