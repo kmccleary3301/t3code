@@ -495,7 +495,7 @@ const decodePortableIconProject = Schema.decodeUnknownSync(
 
 function portableIconSvg(
   iconJson: string,
-  layerSources: ReadonlyMap<string, string>,
+  layerSources: ReadonlyMap<string, Buffer>,
   safeArea: boolean,
 ): string {
   const project = decodePortableIconProject(iconJson);
@@ -511,13 +511,15 @@ function portableIconSvg(
     if (source === undefined) {
       throw new IconExportSourceMissingError({ sourcePath: layer["image-name"] });
     }
-    const encoded = Buffer.from(source, "utf8").toString("base64");
+    const isPng = layer["image-name"].endsWith(".png");
+    const mime = isPng ? "image/png" : "image/svg+xml";
+    const encoded = source.toString("base64");
     const scale = (layer.position?.scale ?? 8.5) / 8.5;
     const translation = layer.position?.["translation-in-points"] ?? [0, 0];
     const translateX = (translation[0] * bodySize) / 1024;
     const translateY = (translation[1] * bodySize) / 1024;
     return [
-      `<image href="data:image/svg+xml;base64,${encoded}" x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" opacity="${layer.opacity ?? 1}" transform="translate(${translateX} ${translateY}) scale(${scale})" preserveAspectRatio="none"/>`,
+      `<image href="data:${mime};base64,${encoded}" x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" opacity="${layer.opacity ?? 1}" transform="translate(${translateX} ${translateY}) scale(${scale})" preserveAspectRatio="none"/>`,
     ];
   });
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><clipPath id="body-clip"><rect x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" rx="${Math.round(bodySize * 0.22)}"/></clipPath></defs><rect x="${inset}" y="${inset}" width="${bodySize}" height="${bodySize}" rx="${Math.round(bodySize * 0.22)}" fill="${fill}"/><g clip-path="url(#body-clip)">${children.join("")}</g></svg>`;
@@ -576,18 +578,20 @@ const renderPortableIcon = Effect.fn("iconExport.renderPortableIcon")(function* 
         }),
     ),
   );
-  const layerSources = new Map<string, string>();
-  for (const assetName of assetNames.filter((name) => name.endsWith(".svg"))) {
+  const layerSources = new Map<string, Buffer>();
+  for (const assetName of assetNames.filter(
+    (name) => name.endsWith(".svg") || name.endsWith(".png"),
+  )) {
     const assetPath = path.join(sourceDirectory, assetName);
     const asset = yield* fs
-      .readFileString(assetPath)
+      .readFile(assetPath)
       .pipe(
         Effect.mapError(
           (cause) =>
             new IconExportFileSystemError({ operation: "read-file", path: assetPath, cause }),
         ),
       );
-    layerSources.set(assetName, asset);
+    layerSources.set(assetName, Buffer.from(asset));
   }
   const wrapper = portableIconSvg(iconJson, layerSources, safeArea);
   return yield* renderSvg(sourceRelativePath, outputPath, size, wrapper);

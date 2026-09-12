@@ -86,30 +86,28 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-full w-fit min-w-0 shrink-0 items-center gap-2 overflow-visible rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-full w-fit min-w-0 shrink-0 items-center gap-1 overflow-visible rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
     >
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1">
         <KMMark />
         <span
           className={cn(
-            "truncate text-[18px] font-bold tracking-tight leading-none",
-            onBackdrop ? "text-white/85" : "text-foreground/90",
+            "truncate text-[15px] font-bold tracking-tight leading-none",
+            onBackdrop ? "text-white/90" : "text-foreground",
           )}
         >
           Code
         </span>
       </div>
-      <div className="relative flex size-7 shrink-0 items-center justify-center overflow-visible">
-        <img
-          src="/mascot/kyle-mascot-256.png"
-          alt="Kyle"
-          className="size-7 shrink-0 rounded-full object-cover select-none shadow-sm border-2 border-white/20 bg-background/50 transition-all duration-200 hover:scale-125 hover:shadow-md hover:border-white/50 active:scale-95"
-          draggable={false}
-        />
-      </div>
+      <img
+        src="/mascot/kyle-head.png"
+        alt="Kyle"
+        className="h-[18px] w-auto shrink-0 object-contain select-none transition-transform duration-200 hover:scale-115 active:scale-95"
+        draggable={false}
+      />
     </Link>
   );
 }
@@ -118,7 +116,7 @@ function KMMark() {
   return (
     <svg
       aria-label="KM"
-      className="h-[15px] w-auto shrink-0"
+      className="h-[11px] w-auto shrink-0"
       viewBox="-12.25 29.5 152.5 72"
       xmlns="http://www.w3.org/2000/svg"
     >
