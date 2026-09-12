@@ -1,14 +1,20 @@
-import { Loader2Icon } from "lucide-react";
 import { cn } from "~/lib/utils";
 
-function Spinner({ className, ...props }: React.ComponentProps<typeof Loader2Icon>) {
+function Spinner({ className, ...props }: React.ComponentProps<"span">) {
   return (
-    <Loader2Icon
+    <span
       aria-label="Loading"
-      className={cn("animate-spin", className)}
+      className={cn("relative inline-flex items-center justify-center shrink-0", className)}
       role="status"
       {...props}
-    />
+    >
+      <img
+        src="/mascot/kyle-mascot-64.png"
+        alt="Loading"
+        className="size-full rounded-full object-cover select-none motion-safe:animate-spin"
+        draggable={false}
+      />
+    </span>
   );
 }
 
