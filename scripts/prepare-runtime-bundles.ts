@@ -7,6 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 import * as NodeStreamPromises from "node:stream/promises";
+import * as NodeStreamWeb from "node:stream/web";
 
 export type RuntimeBundleProvider = "pi" | "omp";
 export type RuntimeBundlePlatform = "darwin" | "linux";
@@ -155,7 +156,7 @@ async function downloadBundle(spec: RuntimeBundleSpec, destination: string): Pro
   });
   try {
     await NodeStreamPromises.pipeline(
-      NodeStream.Readable.fromWeb(body),
+      NodeStream.Readable.fromWeb(body as unknown as NodeStreamWeb.ReadableStream),
       meter,
       NodeFS.createWriteStream(temporary, { mode: 0o600 }),
     );

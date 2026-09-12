@@ -60,7 +60,7 @@ export function piFamilyVersionCompatibilityError(
     return `${provider} native version '${version}' is malformed or unsupported. Configure a stable ${provider} release in ${supportedRange} and refresh provider health.`;
   }
   if (!satisfiesSemverRange(version, supportedRange)) {
-    return `${provider} native version '${version}' is unsupported. T3 supports ${provider} releases in ${supportedRange}; configure a compatible binary and refresh provider health.`;
+    return `${provider} native version '${version}' is unsupported. KM Code supports ${provider} releases in ${supportedRange}; configure a compatible binary and refresh provider health.`;
   }
   return undefined;
 }
@@ -210,6 +210,7 @@ function makeSnapshot(
     return {
       ...base,
       models: discovery.success.models,
+      slashCommands: discovery.success.slashCommands,
       installed: true,
       version,
       status: "ready" as const,
@@ -243,6 +244,7 @@ export function resolvePiFamilyWorkingDirectory(
 function makeAdapter(
   input: ProviderDriverCreateInput<PiFamilySettings>,
   provider: ProviderDriverKind,
+  noSession = false,
 ): Effect.Effect<
   ProviderAdapterShape<ProviderAdapterError>,
   never,
@@ -266,7 +268,9 @@ function makeAdapter(
       ...(config.agentDirectory ? { agentDirectory: config.agentDirectory } : {}),
       attachmentsDir: serverConfig.attachmentsDir,
       environment: processEnvironment,
-      launchArguments: config.launchArguments,
+      launchArguments: noSession
+        ? [...(config.launchArguments ?? []), "--no-session"]
+        : config.launchArguments,
       trustMode: config.trustMode,
       requestTimeoutMs: config.requestTimeoutMs,
       startupTimeoutMs: config.startupTimeoutMs,
@@ -301,7 +305,7 @@ export function makePiFamilyDriver<Config extends PiFamilySettings>(input: {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const serverConfig = yield* ServerConfig;
         const adapter = yield* makeAdapter(createInput, input.provider);
-        const textGenerationAdapter = yield* makeAdapter(createInput, input.provider);
+        const textGenerationAdapter = yield* makeAdapter(createInput, input.provider, true);
         return {
           instanceId: createInput.instanceId,
           driverKind: input.provider,

@@ -27,6 +27,7 @@ import {
 } from "./nativeShowcaseScene";
 import {
   buildShowcasePendingTasks,
+  parseShowcaseEpochMs,
   SHOWCASE_PENDING_TASK_DEFINITIONS,
 } from "./showcasePendingTasks";
 import { retryShowcaseOperation } from "./showcaseRetry";
@@ -38,6 +39,10 @@ import {
 } from "./showcaseRenderSignal";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
+const SHOWCASE_EPOCH_MS = parseShowcaseEpochMs(
+  SHOWCASE_ENABLED,
+  process.env.EXPO_PUBLIC_SHOWCASE_EPOCH_MS,
+);
 const SHOWCASE_THREAD_ID = "remote-command-center";
 
 type ShowcaseResetRoute = PartialState<NavigationState>["routes"][number];
@@ -186,9 +191,11 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   const showcaseThread = threads.find((thread) => String(thread.id) === SHOWCASE_THREAD_ID);
 
   useEffect(() => {
-    if (!SHOWCASE_ENABLED || !hasServerFixture || pendingTasksReady) return;
+    if (!SHOWCASE_ENABLED || SHOWCASE_EPOCH_MS === null || !hasServerFixture || pendingTasksReady) {
+      return;
+    }
 
-    const pendingTasks = buildShowcasePendingTasks(projects, Date.now());
+    const pendingTasks = buildShowcasePendingTasks(projects, SHOWCASE_EPOCH_MS);
     if (pendingTasks.length !== SHOWCASE_PENDING_TASK_DEFINITIONS.length) return;
 
     let cancelled = false;

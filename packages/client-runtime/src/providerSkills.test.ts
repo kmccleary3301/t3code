@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatProviderSkillDisplayName,
+  getProviderSlashCommandsForSlashMenu,
+  getProviderSkillsForSlashMenu,
   resolveProviderSkillSourceKind,
 } from "./providerSkills.ts";
 
@@ -21,6 +23,38 @@ describe("formatProviderSkillDisplayName", () => {
         name: "review-follow-up",
       }),
     ).toBe("Review Follow Up");
+  });
+});
+
+describe("getProviderSkillsForSlashMenu", () => {
+  it("keeps the skill alias when the provider also exposes it as a slash command", () => {
+    const askMatt = {
+      name: "ask-matt",
+      path: "/Users/matt/.agents/skills/ask-matt/SKILL.md",
+      enabled: true,
+    };
+    expect(getProviderSkillsForSlashMenu([askMatt], true).map((skill) => skill.name)).toEqual([
+      "ask-matt",
+    ]);
+  });
+});
+
+describe("getProviderSlashCommandsForSlashMenu", () => {
+  it("preserves harness catalog rows and order when a visible skill shares a name", () => {
+    const commands = [
+      { name: "compact", description: "Compact the conversation." },
+      { name: "skill:ask-matt", source: "skill" as const, description: "Ask which skill fits." },
+      { name: "goal", description: "Set the current objective." },
+    ];
+    const visibleSkills = [
+      {
+        name: "ask-matt",
+        path: "/Users/matt/.agents/skills/ask-matt/SKILL.md",
+        enabled: true,
+      },
+    ];
+
+    expect(getProviderSlashCommandsForSlashMenu(commands, visibleSkills)).toEqual(commands);
   });
 });
 

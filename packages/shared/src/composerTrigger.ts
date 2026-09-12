@@ -40,6 +40,10 @@ export function serializeComposerFileLink(path: string): string {
   return `[${label}](${encodeMarkdownLinkDestination(path)})`;
 }
 
+export function providerSlashCommandInsertText(commandName: string, executable?: boolean): string {
+  return commandName === "skill:" && executable === false ? "/skill:" : `/${commandName} `;
+}
+
 function clampCursor(text: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return text.length;
   return Math.max(0, Math.min(text.length, Math.floor(cursor)));
@@ -64,36 +68,27 @@ export function detectComposerTrigger(
   const cursor = clampCursor(text, cursorInput);
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
+  const trimmedLinePrefix = linePrefix.trimStart();
 
-  if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
-    if (commandMatch) {
-      const commandQuery = commandMatch[1] ?? "";
-      if (commandQuery.toLowerCase() === "model") {
-        return {
-          kind: "slash-model",
-          query: "",
-          rangeStart: lineStart,
-          rangeEnd: cursor,
-        };
-      }
-      return {
-        kind: "slash-command",
-        query: commandQuery,
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
-
-    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
+  if (trimmedLinePrefix.startsWith("/")) {
+    const leadingWhitespace = linePrefix.length - trimmedLinePrefix.length;
+    const rangeStart = lineStart + leadingWhitespace;
+    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(trimmedLinePrefix);
     if (modelMatch) {
       return {
         kind: "slash-model",
         query: (modelMatch[1] ?? "").trim(),
-        rangeStart: lineStart,
+        rangeStart,
         rangeEnd: cursor,
       };
     }
+
+    return {
+      kind: "slash-command",
+      query: trimmedLinePrefix.slice(1),
+      rangeStart,
+      rangeEnd: cursor,
+    };
   }
 
   const wsCheck = isWhitespaceChar ?? isWhitespace;

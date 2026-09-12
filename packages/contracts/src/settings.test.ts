@@ -5,6 +5,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
+  ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
   defaultEnabledForDriver,
   resolveProviderInstanceEnabled,
@@ -17,6 +18,36 @@ const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("ClaudeSettings auto-compaction", () => {
+  it("uses Claude's default threshold when no override is configured", () => {
+    expect(decodeClaudeSettings({}).autoCompactWindow).toBe("");
+  });
+
+  it.each(["100000", "300000", "1000000"])(
+    "accepts a supported auto-compaction threshold: %s",
+    (value) => {
+      expect(decodeClaudeSettings({ autoCompactWindow: value }).autoCompactWindow).toBe(value);
+    },
+  );
+
+  it.each(["99999", "1000001", "300k", "invalid"])(
+    "rejects an unsupported auto-compaction threshold: %s",
+    (value) => {
+      expect(() => decodeClaudeSettings({ autoCompactWindow: value })).toThrow();
+    },
+  );
+
+  it("rejects an unsupported threshold at the settings patch boundary", () => {
+    expect(() =>
+      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300k" } } }),
+    ).toThrow();
+    expect(
+      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300000" } } }),
+    ).toBeDefined();
+  });
+});
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -35,6 +66,26 @@ describe("ClientSettings word wrap", () => {
   });
 });
 
+describe("ClientSettings browser recording frame rate", () => {
+  it("defaults to 30 fps", () => {
+    expect(decodeClientSettings({}).browserRecordingFrameRate).toBe(30);
+  });
+
+  it.each([30, 60])("accepts a supported frame rate: %s", (frameRate) => {
+    expect(
+      decodeClientSettings({ browserRecordingFrameRate: frameRate }).browserRecordingFrameRate,
+    ).toBe(frameRate);
+    expect(
+      decodeClientSettingsPatch({ browserRecordingFrameRate: frameRate }).browserRecordingFrameRate,
+    ).toBe(frameRate);
+  });
+
+  it.each([24, 59, 120])("rejects an unsupported frame rate: %s", (frameRate) => {
+    expect(() => decodeClientSettings({ browserRecordingFrameRate: frameRate })).toThrow();
+    expect(() => decodeClientSettingsPatch({ browserRecordingFrameRate: frameRate })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);
@@ -48,6 +99,22 @@ describe("ClientSettings glass opacity", () => {
   it.each([40, 75, 100])("accepts a glass opacity within the supported range: %s", (value) => {
     expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
     expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
+  });
+});
+
+describe("ClientSettings appearance contrast", () => {
+  it("defaults to the theme's original contrast", () => {
+    expect(decodeClientSettings({}).appearanceContrast).toBe(100);
+  });
+
+  it.each([49, 201, 92.5])("rejects an invalid appearance contrast: %s", (value) => {
+    expect(() => decodeClientSettings({ appearanceContrast: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ appearanceContrast: value })).toThrow();
+  });
+
+  it.each([50, 100, 150, 200])("accepts an appearance contrast in range: %s", (value) => {
+    expect(decodeClientSettings({ appearanceContrast: value }).appearanceContrast).toBe(value);
+    expect(decodeClientSettingsPatch({ appearanceContrast: value }).appearanceContrast).toBe(value);
   });
 });
 
@@ -92,6 +159,12 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(
       true,
     );
+  });
+
+  it("keeps unpin confirmation opt-in and patchable", () => {
+    expect(decodeClientSettings({}).confirmThreadUnpin).toBe(false);
+    expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
+    expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
 
   it("allows auto-settle by inactivity to be disabled", () => {
@@ -298,17 +371,31 @@ describe("provider enabled defaults", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providers.codex.enabled).toBe(true);
     expect(decoded.providers.claudeAgent.enabled).toBe(true);
-    expect(decoded.providers.cursor.enabled).toBe(true);
+    expect(decoded.providers.cursor.enabled).toBe(false);
     expect(decoded.providers.grok.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
   });
 
   it("derives per-driver defaults from the settings schemas", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
-    expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(true);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(false);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
+  });
+
+  it("keeps Cursor enabled when an existing user explicitly opted in", () => {
+    const cursor = ProviderDriverKind.make("cursor");
+    const cursorId = ProviderInstanceId.make("cursor");
+    const decoded = decodeServerSettings({
+      providers: { cursor: { enabled: true } },
+      providerInstances: {
+        [cursorId]: { driver: cursor, enabled: true, config: {} },
+      },
+    });
+
+    expect(decoded.providers.cursor.enabled).toBe(true);
+    expect(resolveProviderInstanceEnabled(decoded.providerInstances[cursorId]!)).toBe(true);
   });
 
   it("resolves instance enabled state with explicit false winning", () => {

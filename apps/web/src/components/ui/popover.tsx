@@ -44,10 +44,12 @@ function PopoverPopup({
         anchor={anchor}
         className="z-[130] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none"
         data-slot="popover-positioner"
+        data-t3-surface="popover"
         side={side}
         sideOffset={sideOffset}
       >
         <PopoverPrimitive.Popup
+          {...props}
           className={cn(
             "dropdown-glass relative flex h-(--popup-height,auto) w-(--popup-width,auto) origin-(--transform-origin) rounded-lg text-popover-foreground outline-none transition-[width,height,scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] has-data-[slot=calendar]:rounded-xl has-data-[slot=calendar]:before:rounded-[calc(var(--radius-xl)-1px)] data-starting-style:scale-98 data-starting-style:opacity-0 dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
             tooltipStyle &&
@@ -57,7 +59,7 @@ function PopoverPopup({
             className,
           )}
           data-slot="popover-popup"
-          {...props}
+          data-t3-part="popover"
         >
           <PopoverPrimitive.Viewport
             className={cn(

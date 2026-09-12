@@ -1,4 +1,4 @@
-import type { ServerProviderModel } from "@t3tools/contracts";
+import type { ServerProviderModel, ServerProviderSlashCommand } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Result from "effect/Result";
@@ -47,6 +47,7 @@ export interface PiFamilyModelDiscoveryConfig {
 
 export interface PiFamilyModelDiscoveryResult {
   readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 }
 
 export type PiFamilyModelDiscoveryErrorCode =
@@ -92,6 +93,50 @@ export function resolvePiFamilyLaunchArguments(
   return resolved;
 }
 
+interface PiFamilyModelListItem {
+  readonly model: ServerProviderModel;
+  readonly provider: string;
+  readonly id: string;
+  readonly priority: number;
+  readonly isCurrent: boolean;
+}
+
+const MODEL_DATE_SUFFIX = /-(\d{8})$/;
+const MODEL_LATEST_SUFFIX = /-latest$/;
+
+function extractModelVersion(id: string): number {
+  const dotted = id.match(/(?:^|[-_])(\d+\.\d+)/);
+  if (dotted) return Number.parseFloat(dotted[1]!);
+  const dashed = id.match(/(?:^|[-_])(\d{1,2})-(\d{1,2})(?=-|$)/);
+  if (dashed) return Number.parseFloat(`${dashed[1]}.${dashed[2]}`);
+  const single = id.match(/(?:^|[-_])(\d+)/);
+  return single ? Number.parseFloat(single[1]!) : 0;
+}
+
+/** Mirrors OMP's provider/version ordering after promoting the active session model. */
+function compareOmpModels(a: PiFamilyModelListItem, b: PiFamilyModelListItem): number {
+  if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+
+  const providerOrder = a.provider.localeCompare(b.provider);
+  if (providerOrder !== 0) return providerOrder;
+  if (a.priority !== b.priority) return a.priority - b.priority;
+
+  const versionOrder = extractModelVersion(b.id) - extractModelVersion(a.id);
+  if (versionOrder !== 0) return versionOrder;
+
+  const aLatest = MODEL_LATEST_SUFFIX.test(a.id);
+  const bLatest = MODEL_LATEST_SUFFIX.test(b.id);
+  const aDate = a.id.match(MODEL_DATE_SUFFIX)?.[1] ?? "";
+  const bDate = b.id.match(MODEL_DATE_SUFFIX)?.[1] ?? "";
+  const aHasRecency = aLatest || aDate !== "";
+  const bHasRecency = bLatest || bDate !== "";
+  if (aHasRecency !== bHasRecency) return aHasRecency ? -1 : 1;
+  if (!aHasRecency) return a.id.localeCompare(b.id);
+  if (aLatest !== bLatest) return aLatest ? -1 : 1;
+  if (aDate && bDate) return bDate.localeCompare(aDate);
+  return aLatest ? -1 : bLatest ? 1 : a.id.localeCompare(b.id);
+}
+
 /** Map only native rows with the provider/id identity needed by NativeAdapter. */
 export function mapPiFamilyModels(input: {
   readonly runtime: PiFamilyRuntimeKind;
@@ -114,27 +159,39 @@ export function mapPiFamilyModels(input: {
       ? undefined
       : `${currentProvider}/${currentId}`;
   const seen = new Set<string>();
-  const models: ServerProviderModel[] = [];
+  const models: PiFamilyModelListItem[] = [];
 
   for (const row of input.rows) {
-    const model = asRecord(row);
-    const provider = nonEmptyString(model?.provider);
-    const id = nonEmptyString(model?.id);
+    const nativeModel = asRecord(row);
+    const provider = nonEmptyString(nativeModel?.provider);
+    const id = nonEmptyString(nativeModel?.id);
     if (provider === undefined || id === undefined) continue;
     const slug = `${provider}/${id}`;
     if (seen.has(slug)) continue;
     seen.add(slug);
-    const name = nonEmptyString(model?.name) ?? id;
+    const isCurrent = slug === currentSlug;
+    const name = nonEmptyString(nativeModel?.name) ?? id;
+    const advertisedPriority = nativeModel?.priority;
     models.push({
-      slug,
-      name,
-      isCustom: false,
-      ...(slug === currentSlug ? { isDefault: true } : {}),
-      capabilities: nativeThinkingCapabilities(
-        input.runtime,
-        model,
-        slug === currentSlug ? input.currentThinkingLevel : undefined,
-      ),
+      provider,
+      id,
+      isCurrent,
+      priority:
+        typeof advertisedPriority === "number" && Number.isFinite(advertisedPriority)
+          ? advertisedPriority
+          : Number.MAX_SAFE_INTEGER,
+      model: {
+        slug,
+        name,
+        ...(input.runtime === "omp" ? { subProvider: slug } : {}),
+        isCustom: false,
+        ...(isCurrent ? { isDefault: true } : {}),
+        capabilities: nativeThinkingCapabilities(
+          input.runtime,
+          nativeModel,
+          isCurrent ? input.currentThinkingLevel : undefined,
+        ),
+      },
     });
   }
 
@@ -144,7 +201,83 @@ export function mapPiFamilyModels(input: {
       "Native model discovery returned no selectable models.",
     );
   }
-  return models;
+  if (input.runtime === "omp") models.sort(compareOmpModels);
+  return models.map((model) => model.model);
+}
+
+export function mapPiFamilySlashCommands(rows: unknown): ReadonlyArray<ServerProviderSlashCommand> {
+  if (!Array.isArray(rows)) {
+    throw new PiFamilyModelDiscoveryError(
+      "protocol",
+      "Native command discovery returned a malformed command list.",
+    );
+  }
+
+  const slashCommands: ServerProviderSlashCommand[] = [];
+  for (const row of rows) {
+    const nativeCommand = asRecord(row);
+    const name = nonEmptyString(nativeCommand?.name);
+    if (name === undefined) continue;
+
+    const description = nonEmptyString(nativeCommand?.description);
+    const matchDescription = nonEmptyString(nativeCommand?.matchDescription);
+    const hint = nonEmptyString(asRecord(nativeCommand?.input)?.hint);
+    const icon = nonEmptyString(nativeCommand?.icon);
+    const usage =
+      typeof nativeCommand?.usage === "number" &&
+      Number.isInteger(nativeCommand.usage) &&
+      nativeCommand.usage >= 0
+        ? nativeCommand.usage
+        : undefined;
+    const subcommands = Array.isArray(nativeCommand?.subcommands)
+      ? nativeCommand.subcommands.flatMap((entry) => {
+          const nativeSubcommand = asRecord(entry);
+          const subcommandName = nonEmptyString(nativeSubcommand?.name);
+          if (subcommandName === undefined) return [];
+          const subcommandDescription = nonEmptyString(nativeSubcommand?.description);
+          const usage = nonEmptyString(nativeSubcommand?.usage);
+          return [
+            {
+              name: subcommandName,
+              ...(subcommandDescription === undefined
+                ? {}
+                : { description: subcommandDescription }),
+              ...(usage === undefined ? {} : { usage }),
+            },
+          ];
+        })
+      : [];
+    const aliases = Array.isArray(nativeCommand?.aliases)
+      ? nativeCommand.aliases.flatMap((alias) => {
+          const normalized = nonEmptyString(alias);
+          return normalized === undefined ? [] : [normalized];
+        })
+      : [];
+    const source =
+      nativeCommand?.source === "builtin" ||
+      nativeCommand?.source === "skill" ||
+      nativeCommand?.source === "extension" ||
+      nativeCommand?.source === "custom" ||
+      nativeCommand?.source === "mcp_prompt" ||
+      nativeCommand?.source === "file"
+        ? nativeCommand.source
+        : undefined;
+    slashCommands.push({
+      name,
+      ...(aliases.length === 0 ? {} : { aliases }),
+      ...(description === undefined ? {} : { description }),
+      ...(matchDescription === undefined ? {} : { matchDescription }),
+      ...(hint === undefined ? {} : { input: { hint } }),
+      ...(subcommands.length === 0 ? {} : { subcommands }),
+      ...(source === undefined ? {} : { source }),
+      ...(typeof nativeCommand?.executable === "boolean"
+        ? { executable: nativeCommand.executable }
+        : {}),
+      ...(icon === undefined ? {} : { icon }),
+      ...(usage === undefined ? {} : { usage }),
+    });
+  }
+  return slashCommands;
 }
 
 export function modelDiscoverySnapshotMessage(provider: string, error: unknown): string {
@@ -159,20 +292,27 @@ export function modelDiscoverySnapshotMessage(provider: string, error: unknown):
       : `${provider} native runtime is unsupported.`;
   }
   if (code === "protocol") {
-    return `${provider} returned invalid native RPC data. Configure a release in T3's supported compatibility range and refresh models.`;
+    return `${provider} returned invalid native RPC data. Configure a release in KM Code's supported compatibility range and refresh models.`;
   }
   if (code === "limit") return `${provider} model discovery exceeded its output limit.`;
   return `${provider} model discovery failed.`;
 }
 
-export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(function* (
+export const discoverPiFamilyModels = (config: PiFamilyModelDiscoveryConfig) =>
+  discoverPiFamilyCatalog(config, "models");
+
+export const discoverPiFamilyCommands = (config: PiFamilyModelDiscoveryConfig) =>
+  discoverPiFamilyCatalog(config, "commands").pipe(Effect.map((result) => result.slashCommands));
+
+const discoverPiFamilyCatalog = Effect.fn("discoverPiFamilyCatalog")(function* (
   config: PiFamilyModelDiscoveryConfig,
+  contents: "models" | "commands",
 ) {
   const requestTimeoutMs = boundedTimeout(config.requestTimeoutMs, 1);
   const startupTimeoutMs = boundedTimeout(config.startupTimeoutMs, 1);
   const totalTimeoutMs = Math.min(
     MAX_DISCOVERY_TOTAL_TIMEOUT_MS,
-    Math.max(requestTimeoutMs, startupTimeoutMs + requestTimeoutMs * 2),
+    Math.max(requestTimeoutMs, startupTimeoutMs + requestTimeoutMs * 3),
   );
   const run = Effect.scoped(
     Effect.gen(function* () {
@@ -181,10 +321,10 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
         ...config.environment,
         ...(config.agentDirectory ? { PI_CODING_AGENT_DIR: config.agentDirectory } : {}),
       };
-      const launchArguments = resolvePiFamilyLaunchArguments(
-        config.launchArguments,
-        config.trustMode,
-      );
+      const launchArguments = [
+        ...resolvePiFamilyLaunchArguments(config.launchArguments, config.trustMode),
+        "--no-session",
+      ];
       const spawnCommand = yield* resolveSpawnCommand(config.binaryPath, launchArguments, {
         env: environment,
         extendEnv: true,
@@ -213,6 +353,7 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
         config.runtime === "omp"
           ? yield* Deferred.make<void, PiFamilyModelDiscoveryError>()
           : undefined;
+      let ompAvailableCommands: ReadonlyArray<unknown> | undefined;
       const decoder = new StrictJsonlDecoder(
         Math.min(Math.max(1, config.maxLineBytes), MAX_DISCOVERY_LINE_BYTES),
       );
@@ -254,6 +395,18 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
               catch: (cause) => asError(cause),
             });
             if (ready) yield* Deferred.succeed(ready, undefined).pipe(Effect.ignore);
+            return;
+          }
+          if (config.runtime === "omp" && frame.type === "available_commands_update") {
+            if (!Array.isArray(frame.commands)) {
+              return yield* Effect.fail(
+                new PiFamilyModelDiscoveryError(
+                  "protocol",
+                  "OMP emitted a malformed available command update.",
+                ),
+              );
+            }
+            ompAvailableCommands = frame.commands;
             return;
           }
           if (frame.type !== "response") return;
@@ -462,37 +615,65 @@ export const discoverPiFamilyModels = Effect.fn("discoverPiFamilyModels")(functi
         );
       }
 
-      const stateResponse = yield* request("get_state", { type: "get_state" });
-      const modelsResponse = yield* request("get_available_models", {
-        type: "get_available_models",
-      });
-      const stateData = asRecord(stateResponse.data);
-      const modelsData = asRecord(modelsResponse.data);
-      if (!stateData || !modelsData || !Array.isArray(modelsData.models)) {
-        return yield* Effect.fail(
-          new PiFamilyModelDiscoveryError(
-            "protocol",
-            "Native model discovery returned malformed response data.",
-          ),
-        );
+      let models: ReadonlyArray<ServerProviderModel> = [];
+      if (contents === "models") {
+        const stateResponse = yield* request("get_state", { type: "get_state" });
+        const modelsResponse = yield* request("get_available_models", {
+          type: "get_available_models",
+        });
+        const stateData = asRecord(stateResponse.data);
+        const modelsData = asRecord(modelsResponse.data);
+        if (!stateData || !modelsData || !Array.isArray(modelsData.models)) {
+          return yield* Effect.fail(
+            new PiFamilyModelDiscoveryError(
+              "protocol",
+              "Native model discovery returned malformed response data.",
+            ),
+          );
+        }
+        models = yield* Effect.try({
+          try: () =>
+            mapPiFamilyModels({
+              runtime: config.runtime,
+              rows: modelsData.models,
+              currentModel: stateData.model,
+              currentThinkingLevel: stateData.thinkingLevel,
+            }),
+          catch: (cause) =>
+            cause instanceof PiFamilyModelDiscoveryError
+              ? cause
+              : new PiFamilyModelDiscoveryError(
+                  "protocol",
+                  "Native model discovery returned invalid model data.",
+                ),
+        });
       }
-      const models = yield* Effect.try({
-        try: () =>
-          mapPiFamilyModels({
-            runtime: config.runtime,
-            rows: modelsData.models,
-            currentModel: stateData.model,
-            currentThinkingLevel: stateData.thinkingLevel,
-          }),
+      let commandRows = ompAvailableCommands;
+      if (commandRows === undefined) {
+        const commandRequest = config.runtime === "omp" ? "get_available_commands" : "get_commands";
+        const commandsResponse = yield* request(commandRequest, { type: commandRequest });
+        const commandsData = asRecord(commandsResponse.data);
+        if (!commandsData || !Array.isArray(commandsData.commands)) {
+          return yield* Effect.fail(
+            new PiFamilyModelDiscoveryError(
+              "protocol",
+              "Native command discovery returned malformed response data.",
+            ),
+          );
+        }
+        commandRows = commandsData.commands;
+      }
+      const slashCommands = yield* Effect.try({
+        try: () => mapPiFamilySlashCommands(commandRows),
         catch: (cause) =>
           cause instanceof PiFamilyModelDiscoveryError
             ? cause
             : new PiFamilyModelDiscoveryError(
                 "protocol",
-                "Native model discovery returned invalid model data.",
+                "Native command discovery returned invalid command data.",
               ),
       });
-      return { models } satisfies PiFamilyModelDiscoveryResult;
+      return { models, slashCommands } satisfies PiFamilyModelDiscoveryResult;
     }),
   );
 

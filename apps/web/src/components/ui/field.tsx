@@ -9,6 +9,7 @@ function Field({ className, ...props }: FieldPrimitive.Root.Props) {
     <FieldPrimitive.Root
       className={cn("flex flex-col items-start gap-2", className)}
       data-slot="field"
+      data-t3-part="field"
       {...props}
     />
   );

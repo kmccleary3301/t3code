@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
-import { normalizeDispatchCommand } from "./Normalizer.ts";
+import { cleanupFailedUploadedAttachments, normalizeDispatchCommand } from "./Normalizer.ts";
 import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
@@ -18,6 +18,7 @@ import {
 } from "../auth/http.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import { NativeSessionCoordinator } from "../provider/Services/NativeSessionCoordinator.ts";
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -25,6 +26,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const nativeSessionCoordinator = yield* NativeSessionCoordinator;
 
     return handlers
       .handle(
@@ -65,6 +67,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          yield* nativeSessionCoordinator.syncThread(args.params.threadId).pipe(Effect.ignore);
           const snapshot = yield* projectionSnapshotQuery
             .getThreadDetailSnapshot(
               args.params.threadId,
@@ -96,13 +99,14 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
-          return yield* orchestrationEngine
-            .dispatch(normalizedCommand)
-            .pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("orchestration_dispatch_failed", cause),
-              ),
-            );
+          return yield* orchestrationEngine.dispatch(normalizedCommand).pipe(
+            Effect.tapError(() =>
+              cleanupFailedUploadedAttachments(args.payload, normalizedCommand),
+            ),
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_dispatch_failed", cause),
+            ),
+          );
         }),
       );
   }),

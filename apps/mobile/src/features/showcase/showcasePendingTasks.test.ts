@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 
 import {
   buildShowcasePendingTasks,
+  parseShowcaseEpochMs,
   SHOWCASE_PENDING_TASK_DEFINITIONS,
 } from "./showcasePendingTasks";
 
@@ -69,4 +70,19 @@ it("builds sendable-looking pending tasks against real showcase projects", () =>
 
 it("waits until every referenced project has hydrated", () => {
   assert.equal(buildShowcasePendingTasks(projects.slice(0, 1), Date.now()).length, 1);
+});
+
+it("requires one deterministic epoch for showcase capture builds", () => {
+  const epoch = Date.parse("2026-01-01T00:00:00.000Z");
+  assert.equal(parseShowcaseEpochMs(true, String(epoch)), epoch);
+  assert.equal(parseShowcaseEpochMs(false, undefined), null);
+  assert.equal(parseShowcaseEpochMs(false, "not-an-epoch"), null);
+  assert.throws(
+    () => parseShowcaseEpochMs(true, undefined),
+    /requires EXPO_PUBLIC_SHOWCASE_EPOCH_MS/u,
+  );
+  assert.throws(
+    () => parseShowcaseEpochMs(true, "not-an-epoch"),
+    /must be a non-negative valid epoch integer/u,
+  );
 });

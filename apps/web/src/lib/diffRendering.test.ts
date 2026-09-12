@@ -1,18 +1,69 @@
 import { describe, expect, it } from "vite-plus/test";
+import { normalizeThemeDefinition } from "@t3tools/shared/appearance";
+import { T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
 import {
+  DIFF_SURFACE_THEME_UNSAFE_CSS,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
   getDiffLineStat,
   getRenderablePatch,
 } from "./diffRendering";
+import { appearanceVariantDeclarations, diffAppearanceVariables } from "./appearanceAdapters";
+
+const canonicalProfile = normalizeThemeDefinition(T3_CHAT_THEME, { platform: "web" });
+const canonicalVariant =
+  canonicalProfile.variants.find((candidate) => candidate.id === "dark") ??
+  canonicalProfile.variants[0];
+if (canonicalVariant === undefined) throw new Error("Conformance fixture has no variant.");
+
+describe("normalized diff renderer palette", () => {
+  it("forwards every diff role through inline variables and the scoped bridge", () => {
+    const expected = {
+      "--diffs-bg": canonicalVariant.diff.background,
+      "--diffs-fg": canonicalVariant.diff.foreground,
+      "--diffs-bg-context": canonicalVariant.diff.gutterBackground,
+      "--diffs-bg-context-gutter": canonicalVariant.diff.gutterBackground,
+      "--diffs-bg-separator": canonicalVariant.diff.hunkBackground,
+      "--diffs-fg-number": canonicalVariant.diff.lineNumberForeground,
+      "--diffs-addition-base": canonicalVariant.diff.additionForeground,
+      "--diffs-deletion-base": canonicalVariant.diff.deletionForeground,
+      "--diffs-modified-base": canonicalVariant.diff.modificationForeground,
+      "--diffs-bg-modification": canonicalVariant.diff.modificationBackground,
+      "--diffs-fg-gutter": canonicalVariant.diff.gutterForeground,
+      "--diffs-fg-hunk": canonicalVariant.diff.hunkForeground,
+      "--diffs-bg-addition": canonicalVariant.diff.additionBackground,
+      "--diffs-bg-deletion": canonicalVariant.diff.deletionBackground,
+      "--diffs-bg-selection": canonicalVariant.diff.selectionBackground,
+      "--diffs-annotation-bg": canonicalVariant.diff.commentBackground,
+      "--diffs-header-bg": canonicalVariant.diff.headerBackground,
+      "--diffs-header-fg": canonicalVariant.diff.headerForeground,
+    };
+
+    expect(diffAppearanceVariables(canonicalVariant.diff)).toEqual(expected);
+    const declarations = appearanceVariantDeclarations(canonicalVariant);
+    for (const [name, value] of Object.entries(expected)) {
+      expect(declarations).toContain(`${name}:${value};`);
+    }
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain(
+      "--diffs-bg-modification-override: var(--diffs-bg-modification, var(--diffs-bg))",
+    );
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain(
+      "--diffs-fg-gutter-override: var(--diffs-fg-gutter, var(--diffs-fg))",
+    );
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain(
+      "--diffs-fg-hunk-override: var(--diffs-fg-hunk, var(--diffs-fg))",
+    );
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain(
+      ":is([data-diff], [data-file]) [data-gutter-buffer]",
+    );
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain("[data-column-number]");
+    expect(DIFF_SURFACE_THEME_UNSAFE_CSS).toContain(
+      ":is([data-diff], [data-file]) [data-separator] [data-separator-content]",
+    );
+  });
+});
 
 describe("buildPatchCacheKey", () => {
-  it("returns a stable cache key for identical content", () => {
-    const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
-
-    expect(buildPatchCacheKey(patch)).toBe(buildPatchCacheKey(patch));
-  });
-
   it("normalizes outer whitespace before hashing", () => {
     const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
 

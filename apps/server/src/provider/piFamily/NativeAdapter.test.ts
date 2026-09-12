@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -11,6 +15,7 @@ import {
   ApprovalRequestId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RuntimeTaskId,
   ThreadId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
@@ -77,7 +82,7 @@ const capabilities = (runtime: Runtime, modelSwitch = true) => ({
   tasks: {
     lifecycle: true,
     nested: runtime === "omp",
-    childTranscript: false,
+    childTranscript: runtime === "omp",
     workflows: runtime === "omp",
     background: runtime === "omp",
     targetedCancellation: false,
@@ -139,6 +144,7 @@ const makeNativeScript = (
             },
       ) +
       " } });",
+    '  if (command.type === "get_commands") out({ id: command.id, type: "response", command: "get_commands", success: true, data: { commands: [{ name: "project-check", description: "Check this project" }] } });',
     '  if (command.type === "set_subagent_subscription") out({ id: command.id, type: "response", command: "set_subagent_subscription", success: true });',
     '  if (command.type === "set_thinking_level") { thinkingLevel = command.level; out({ id: command.id, type: "response", command: "set_thinking_level", success: true }); }',
     '  if (command.type === "set_session_name") out({ id: command.id, type: "response", command: "set_session_name", success: true });',
@@ -148,6 +154,7 @@ const makeNativeScript = (
           '  if (command.type === "rewind") out({ id: command.id, type: "response", command: "rewind", success: true, data: { checkpointId: command.checkpointId, rewound: true } });',
           '  if (command.type === "get_branch_messages") out({ id: command.id, type: "response", command: "get_branch_messages", success: true, data: { messages: [{ entryId: "message-1", text: "prompt" }] } });',
           '  if (command.type === "branch") { sessionId = "forked-session"; out({ id: command.id, type: "response", command: "branch", success: true, data: { text: "prompt", cancelled: false } }); }',
+          '  if (command.type === "get_subagent_messages") { const first = command.fromByte === 0; out({ id: command.id, type: "response", command: "get_subagent_messages", success: true, data: { sessionFile: "/tmp/child.jsonl", fromByte: command.fromByte, nextByte: first ? 128 : command.fromByte, reset: false, entries: first ? [{ type: "message", id: "child-user", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "Inspect the module" } }, { type: "message", id: "child-assistant", parentId: "child-user", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "thinking", thinking: "Checking state" }, { type: "toolCall", name: "read", arguments: { path: "src/index.ts" } }, { type: "text", text: "Found it" }] } }] : [], messages: [] } }); }',
         ]
       : [
           '  if (command.type === "capture_checkpoint") out({ id: command.id, type: "response", command: "capture_checkpoint", success: true, data: { runtime: "pi", sessionId, leafEntryId: "leaf-1" } });',
@@ -155,6 +162,8 @@ const makeNativeScript = (
           '  if (command.type === "clone") { sessionId = "forked-session"; out({ id: command.id, type: "response", command: "clone", success: true, data: { cancelled: false } }); }',
         ]),
     '  if (command.type === "extension_ui_response" && command.id === "approval-1" && command.confirmed === true) out({ type: "message_update", delta: { text: "confirmed" } });',
+    '  if (command.type === "extension_ui_response" && command.id === "ui-ask") out({ type: "message_update", delta: { text: "answers:" + JSON.stringify(command.answers) } });',
+    '  if (command.type === "extension_ui_response" && command.id === "ui-compat-check") out({ type: "message_update", delta: { text: "hasAnswers:" + ("answers" in command) } });',
     '  if (command.type === "extension_ui_response" && command.id.startsWith("ui-")) out({ type: "message_update", delta: { text: command.id + ":" + String(command.confirmed ?? command.value) } });',
     '  if (command.type === "prompt") {',
     '    if (command.message === "thinking-option" && thinkingLevel !== "high") {',
@@ -162,10 +171,20 @@ const makeNativeScript = (
     "      return;",
     "    }",
     '    if (command.message === "local-command") {',
+    '      out({ type: "command_output", text: "Current model: openai/gpt-5.5" });',
+    '      out({ type: "config_update", model: { provider: "openai", id: "gpt-5.5" }, thinkingLevel: "high" });',
     '      out({ id: command.id, type: "response", command: "prompt", success: true, data: { agentInvoked: false } });',
     "      return;",
     "    }",
     '    out({ id: command.id, type: "response", command: "prompt", success: true });',
+    '    if (command.message === "background-turn") {',
+    '      for (const text of ["prompt reply", "background reply"]) {',
+    '        out({ type: "agent_start" });',
+    '        out({ type: "message_end", message: { id: text, role: "assistant", content: [{ type: "text", text }], stopReason: "stop" } });',
+    '        out({ type: "agent_end", isTerminal: true });',
+    "      }",
+    "      return;",
+    "    }",
     '    if (command.message === "aborted-message") {',
     '      out({ type: "agent_start" });',
     '      out({ type: "message_end", message: { id: "assistant-aborted", role: "assistant", content: [], stopReason: "aborted" } });',
@@ -202,10 +221,55 @@ const makeNativeScript = (
     ...(runtime === "omp"
       ? ['      out({ type: "agent_start" });']
       : ['      out({ type: "turn_start", id: command.id });']),
+    '      out({ type: "extension_ui_request", id: "ui-status", method: "setStatus", statusKey: "main", statusText: "Working" });',
+    '      out({ type: "extension_ui_request", id: "ui-widget", method: "setWidget", widgetKey: "main", widgetLines: ["2 agents", "sonic · read"], widgetPlacement: "aboveEditor" });',
     '      out({ type: "extension_ui_request", id: "ui-confirm", method: "confirm", title: "Confirm", message: "Continue?" });',
     '      out({ type: "extension_ui_request", id: "ui-select", method: "select", title: "Choose", options: [{ id: "alpha", label: "Alpha" }, { id: "beta", label: "Beta" }] });',
     '      out({ type: "extension_ui_request", id: "ui-input", method: "input", title: "Name", placeholder: "value" });',
     '      out({ type: "extension_ui_request", id: "ui-editor", method: "editor", title: "Edit", prefill: "before" });',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_end", isTerminal: true });']
+      : [
+          '      out({ type: "turn_end", id: command.id });',
+          '      out({ type: "agent_end", willRetry: false });',
+          '      out({ type: "agent_settled" });',
+        ]),
+    "      return;",
+    "    }",
+    '    if (command.message === "ask-dialog-ui") {',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_start" });']
+      : ['      out({ type: "turn_start", id: command.id });']),
+    '      out({ type: "extension_ui_request", id: "ui-ask", method: "askDialog", questions: [{ id: "auth", question: "Which auth?", options: [{ label: "JWT" }, { label: "OAuth" }] }] });',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_end", isTerminal: true });']
+      : [
+          '      out({ type: "turn_end", id: command.id });',
+          '      out({ type: "agent_end", willRetry: false });',
+          '      out({ type: "agent_settled" });',
+        ]),
+    "      return;",
+    "    }",
+    '    if (command.message === "cancel-ui") {',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_start" });']
+      : ['      out({ type: "turn_start", id: command.id });']),
+    '      out({ type: "extension_ui_request", id: "ui-pending-1", method: "askDialog", questions: [{ id: "q1", question: "Pick", options: [{ label: "A" }] }] });',
+    '      out({ type: "extension_ui_request", id: "ui-cancellation", method: "cancel", targetId: "ui-pending-1" });',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_end", isTerminal: true });']
+      : [
+          '      out({ type: "turn_end", id: command.id });',
+          '      out({ type: "agent_end", willRetry: false });',
+          '      out({ type: "agent_settled" });',
+        ]),
+    "      return;",
+    "    }",
+    '    if (command.message === "compat-select") {',
+    ...(runtime === "omp"
+      ? ['      out({ type: "agent_start" });']
+      : ['      out({ type: "turn_start", id: command.id });']),
+    '      out({ type: "extension_ui_request", id: "ui-compat-check", method: "select", title: "Pick one", options: ["Option 1", "Option 2"] });',
     ...(runtime === "omp"
       ? ['      out({ type: "agent_end", isTerminal: true });']
       : [
@@ -230,6 +294,30 @@ const makeNativeScript = (
     '      out({ type: "turn_end" });',
     '      out({ type: "agent_end" });',
     '      out({ type: "agent_settled" });',
+    "      return;",
+    "    }",
+    '    if (command.message === "tool-passthrough") {',
+    '      out({ type: "agent_start" });',
+    '      out({ type: "turn_start" });',
+    '      out({ type: "tool_execution_start", toolName: "read", toolCallId: "read-1", intent: "Reading package manifest", args: { path: "package.json" } });',
+    '      out({ type: "tool_execution_end", toolName: "read", toolCallId: "read-1", result: { content: [{ type: "text", text: "{ \\"name\\": \\"fixture\\" }" }], details: { fileSize: 21 } }, isError: false });',
+    '      out({ type: "tool_execution_start", toolName: "bash", toolCallId: "bash-1", intent: "Checking fixture command", args: { command: ["bash", "-lc", "printf fixture"] } });',
+    '      out({ type: "tool_execution_update", toolName: "bash", toolCallId: "bash-1", args: { command: ["bash", "-lc", "printf fixture"] }, partialResult: { content: [{ type: "text", text: "fixture" }] } });',
+    '      out({ type: "tool_execution_end", toolName: "bash", toolCallId: "bash-1", result: { content: [{ type: "text", text: "fixture failed" }] }, isError: true });',
+    '      out({ type: "tool_execution_start", toolName: "task", toolCallId: "task-1", intent: "Delegating fixture review", args: { tasks: [{ agent: "sonic", task: "Inspect fixture" }] } });',
+    '      out({ type: "subagent_lifecycle", payload: { id: "child-1", status: "started", agent: "sonic", assignment: "Inspect fixture", parentToolCallId: "task-1", detached: true } });',
+    '      out({ type: "subagent_progress", payload: { id: "child-1", status: "running", agent: "sonic", assignment: "Inspect fixture", parentToolCallId: "task-1", detached: true, progress: { id: "child-1", status: "running", recentTools: [{ tool: "read", args: "package.json", endMs: 1 }], recentOutput: ["Checking fixture"], toolCount: 1 } } });',
+    '      out({ type: "subagent_lifecycle", payload: { id: "child-1", status: "completed", agent: "sonic", assignment: "Inspect fixture", parentToolCallId: "task-1", detached: true, result: "Fixture inspected" } });',
+    '      out({ type: "tool_execution_end", toolName: "task", toolCallId: "task-1", result: { content: [{ type: "text", text: "Spawned child-1" }] }, isError: false });',
+    '      out({ type: "message_update", delta: { text: "tool passthrough complete" } });',
+    '      out({ type: "message_end", message: { id: "assistant-tool-passthrough", role: "assistant", content: [{ type: "text", text: "tool passthrough complete" }], stopReason: "stop" } });',
+    ...(runtime === "omp"
+      ? ['      out({ type: "turn_end" });', '      out({ type: "agent_end", isTerminal: true });']
+      : [
+          '      out({ type: "turn_end", id: command.id });',
+          '      out({ type: "agent_end", willRetry: false });',
+          '      out({ type: "agent_settled" });',
+        ]),
     "      return;",
     "    }",
     ...(malformed
@@ -260,8 +348,9 @@ const makeNativeScript = (
           '    out({ type: "turn_start" });',
         ]
       : ['    out({ type: "turn_start", id: command.id });']),
-    '    out({ type: "message_update", delta: { text: "hello from native" } });',
-    '    out({ type: "message_end", message: { id: "assistant-1", role: "assistant", content: [{ type: "text", text: "hello from native" }], stopReason: "stop" } });',
+    '    const message = { role: "assistant", timestamp: Date.now(), content: [{ type: "text", text: "hello from native" }], stopReason: "stop" };',
+    '    out({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello from native" }, message });',
+    '    out({ type: "message_end", message });',
     ...(runtime === "omp"
       ? []
       : [
@@ -297,6 +386,8 @@ const makeTraceNativeScript = (): string =>
     'rl.on("line", line => {',
     "  const command = JSON.parse(line);",
     '  if (command.type === "get_capabilities") out({ id: command.id, type: "response", command: "get_capabilities", success: true, data: capabilities });',
+    '  if (command.type === "get_state") out({ id: command.id, type: "response", command: "get_state", success: true, data: { sessionId: "test-session" } });',
+    '  if (command.type === "get_commands") out({ id: command.id, type: "response", command: "get_commands", success: true, data: { commands: [] } });',
     '  if (command.type === "prompt") {',
     "    process.stderr.write(Buffer.from([128, 0, 65]));",
     '    out({ id: command.id, type: "response", command: "prompt", success: true });',
@@ -333,10 +424,77 @@ const concatTraceBytes = (
   return result;
 };
 
-const nextEvent = (stream: Stream.Stream<ProviderRuntimeEvent>) =>
-  Stream.runHead(stream).pipe(Effect.timeout("2 seconds"));
+const withoutCommandMetadata = Stream.filter<ProviderRuntimeEvent>(
+  (event) => event.type !== "session.configured",
+);
+const nextOperationalEvent = (stream: Stream.Stream<ProviderRuntimeEvent>) =>
+  Stream.runHead(stream.pipe(withoutCommandMetadata)).pipe(Effect.timeout("2 seconds"));
 
 describe("Pi-family native adapter", () => {
+  it.effect("reads durable OMP history without starting a process", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-omp-offline-"))),
+      (temporaryDirectory) =>
+        Effect.gen(function* () {
+          const workspace = NodePath.join(temporaryDirectory, "workspace");
+          const sessionsDirectory = NodePath.join(
+            temporaryDirectory,
+            "agent",
+            "sessions",
+            "project",
+          );
+          yield* Effect.promise(() => NodeFSP.mkdir(sessionsDirectory, { recursive: true }));
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(
+              NodePath.join(sessionsDirectory, "offline.jsonl"),
+              [
+                {
+                  type: "session",
+                  id: "offline-session",
+                  cwd: workspace,
+                  timestamp: "2026-09-02T00:00:00.000Z",
+                },
+                {
+                  type: "message",
+                  id: "offline-user",
+                  parentId: "offline-session",
+                  timestamp: "2026-09-02T00:00:01.000Z",
+                  message: { role: "user", content: "Indexed without launch" },
+                },
+              ]
+                .map((line) => JSON.stringify(line))
+                .join("\n") + "\n",
+            ),
+          );
+          const adapter = yield* makePiFamilyAdapter({
+            provider: ProviderDriverKind.make("omp"),
+            runtime: "omp",
+            binaryPath: "/definitely/missing/omp",
+            cwd: workspace,
+            agentDirectory: NodePath.join(temporaryDirectory, "agent"),
+            requestTimeoutMs: 2_000,
+            startupTimeoutMs: 2_000,
+            maxLineBytes: 1_048_576,
+            maxMessageBytes: 67_108_864,
+            stderrLimitBytes: 16_384,
+            instanceId: ProviderInstanceId.make("omp-offline-instance"),
+          });
+          const readHistory = adapter.readNativeHistoryBySession;
+          assert.isDefined(readHistory);
+          const page = yield* readHistory({
+            sessionId: "offline-session",
+            cwd: workspace,
+          });
+          assert.deepEqual(
+            page.messages.flatMap((message) => (message.role === "tool" ? [] : [message.text])),
+            ["Indexed without launch"],
+          );
+          assert.equal(page.totalMessages, 1);
+        }).pipe(Effect.scoped),
+      (temporaryDirectory) =>
+        Effect.promise(() => NodeFSP.rm(temporaryDirectory, { recursive: true, force: true })),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
   it.effect("records native boundary bytes in channel order and captures process exit", () =>
     Effect.gen(function* () {
       const provider = ProviderDriverKind.make("pi");
@@ -370,10 +528,10 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      const started = yield* nextEvent(adapter.streamEvents);
+      const started = yield* nextOperationalEvent(adapter.streamEvents);
       assert.equal(Option.getOrUndefined(started)?.type, "session.started");
       const turn = yield* adapter.sendTurn({ threadId, input: "trace" });
-      const exited = yield* nextEvent(adapter.streamEvents);
+      const exited = yield* nextOperationalEvent(adapter.streamEvents);
       assert.equal(Option.getOrUndefined(exited)?.type, "session.exited");
       assert.deepEqual(identities, [
         { threadId, provider, providerInstanceId: instanceId, runtime: "pi" },
@@ -457,7 +615,7 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      const started = yield* nextEvent(adapter.streamEvents);
+      const started = yield* nextOperationalEvent(adapter.streamEvents);
       assert.equal(Option.getOrUndefined(started)?.type, "session.started");
 
       yield* adapter.stopSession(threadId);
@@ -500,13 +658,14 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      yield* nextEvent(adapter.streamEvents);
+      yield* nextOperationalEvent(adapter.streamEvents);
 
       const startedAt = yield* Clock.currentTimeMillis;
       yield* adapter.stopSession(threadId);
       assert.isBelow((yield* Clock.currentTimeMillis) - startedAt, 4_500);
       const capture = recorder.snapshot().capture;
-      assert.deepEqual(capture.exits, [{ sequence: 2, code: null, signal: "SIGKILL" }]);
+      assert.lengthOf(capture.exits, 1);
+      assert.include(capture.exits[0], { code: null, signal: "SIGKILL" });
       assert.equal(capture.truncated, false);
       assert.equal(capture.truncationReason, undefined);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -866,15 +1025,34 @@ describe("Pi-family native adapter", () => {
         assert.equal(session.threadId, threadId);
         assert.equal(yield* adapter.hasSession(threadId), true);
         assert.equal(adapter.capabilities.sessionModelSwitch, "in-session");
+        assert.deepEqual(session.resumeCursor, {
+          kind: "native-session",
+          runtime,
+          sessionId: "test-session",
+        });
         if (runtime === "omp") {
-          assert.deepEqual(session.resumeCursor, {
-            kind: "native-session",
-            runtime: "omp",
-            sessionId: "test-session",
+          const readSubagentTranscript = adapter.readSubagentTranscript;
+          assert.isDefined(readSubagentTranscript);
+          if (!readSubagentTranscript) return;
+          const transcript = yield* readSubagentTranscript(threadId, "child-1");
+          assert.equal(transcript.nextCursor, "128");
+          assert.deepEqual(
+            transcript.entries.map((entry) => [entry.kind, entry.text, entry.toolName]),
+            [
+              ["user", "Inspect the module", undefined],
+              ["reasoning", "Checking state", undefined],
+              ["tool", 'Called read\n{\n  "path": "src/index.ts"\n}', "read"],
+              ["assistant", "Found it", undefined],
+            ],
+          );
+          assert.deepEqual(yield* readSubagentTranscript(threadId, "child-1", "128"), {
+            entries: [],
+            nextCursor: "128",
+            reset: false,
           });
         }
 
-        const started = yield* nextEvent(adapter.streamEvents);
+        const started = yield* nextOperationalEvent(adapter.streamEvents);
         assert.equal(Option.isSome(started), true);
         if (Option.isNone(started)) return;
         assert.equal(started.value.type, "session.started");
@@ -882,11 +1060,11 @@ describe("Pi-family native adapter", () => {
         const turn = yield* adapter.sendTurn({ threadId, input: "hello" });
         assert.equal(turn.threadId, threadId);
 
-        const turnStarted = yield* nextEvent(adapter.streamEvents);
-        const content = yield* nextEvent(adapter.streamEvents);
+        const turnStarted = yield* nextOperationalEvent(adapter.streamEvents);
+        const content = yield* nextOperationalEvent(adapter.streamEvents);
 
-        const assistantCompleted = yield* nextEvent(adapter.streamEvents);
-        const turnCompleted = yield* nextEvent(adapter.streamEvents);
+        const assistantCompleted = yield* nextOperationalEvent(adapter.streamEvents);
+        const turnCompleted = yield* nextOperationalEvent(adapter.streamEvents);
         assert.equal(Option.isSome(turnStarted), true);
         assert.equal(Option.isSome(content), true);
         assert.equal(Option.isSome(assistantCompleted), true);
@@ -901,11 +1079,16 @@ describe("Pi-family native adapter", () => {
         assert.equal(turnStarted.value.type, "turn.started");
         assert.equal(content.value.type, "content.delta");
         assert.equal(assistantCompleted.value.type, "item.completed");
+        assert.isDefined(content.value.itemId);
+        assert.equal(content.value.itemId, assistantCompleted.value.itemId);
         if (assistantCompleted.value.type === "item.completed") {
           assert.equal(assistantCompleted.value.payload.itemType, "assistant_message");
           assert.equal(assistantCompleted.value.payload.detail, "hello from native");
         }
         assert.equal(turnCompleted.value.type, "turn.completed");
+        for (const event of [turnStarted, content, assistantCompleted, turnCompleted]) {
+          assert.equal(event.value.turnId, turn.turnId);
+        }
         const captureCheckpoint = adapter.captureNativeCheckpoint;
         const restoreCheckpoint = adapter.restoreNativeCheckpoint;
         assert.isDefined(captureCheckpoint);
@@ -1157,9 +1340,13 @@ describe("Pi-family native adapter", () => {
             providerInstanceId: instanceId,
             runtimeMode: "full-access",
           });
-          yield* nextEvent(adapter.streamEvents);
+          yield* nextOperationalEvent(adapter.streamEvents);
           const turn = yield* adapter.sendTurn({ threadId, input: "anonymous-pi-lifecycle" });
-          const events = yield* adapter.streamEvents.pipe(Stream.take(4), Stream.runCollect);
+          const events = yield* adapter.streamEvents.pipe(
+            withoutCommandMetadata,
+            Stream.take(4),
+            Stream.runCollect,
+          );
           assert.deepEqual(
             Array.from(events, (event) => event.type),
             ["turn.started", "content.delta", "item.completed", "turn.completed"],
@@ -1173,7 +1360,62 @@ describe("Pi-family native adapter", () => {
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
-  it.effect("settles an OMP local command that does not invoke an agent", () =>
+  it.effect("tracks an unsolicited native continuation through terminal quiescence", () =>
+    Effect.gen(function* () {
+      const provider = ProviderDriverKind.make("omp");
+      const threadId = ThreadId.make("omp-background-turn-thread");
+      const instanceId = ProviderInstanceId.make("omp-background-turn-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime: "omp",
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript("omp"), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      yield* nextOperationalEvent(adapter.streamEvents);
+      const turn = yield* adapter.sendTurn({ threadId, input: "background-turn" });
+      const events = yield* adapter.streamEvents.pipe(
+        withoutCommandMetadata,
+        Stream.take(6),
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "turn.started",
+          "item.completed",
+          "turn.completed",
+          "turn.started",
+          "item.completed",
+          "turn.completed",
+        ],
+      );
+      assert.equal(events[0]?.turnId, turn.turnId);
+      assert.isDefined(events[3]?.turnId);
+      assert.notEqual(events[3]?.turnId, turn.turnId);
+      assert.equal(events[4]?.turnId, events[3]?.turnId);
+      assert.equal(events[5]?.turnId, events[3]?.turnId);
+      const captureCheckpoint = adapter.captureNativeCheckpoint;
+      assert.isDefined(captureCheckpoint);
+      if (!captureCheckpoint) return;
+      yield* captureCheckpoint(threadId);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves OMP local command output and model changes without invoking an agent", () =>
     Effect.gen(function* () {
       const runtime = "omp" as const;
       const provider = ProviderDriverKind.make(runtime);
@@ -1198,12 +1440,18 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      yield* nextEvent(adapter.streamEvents);
+      yield* nextOperationalEvent(adapter.streamEvents);
 
       const turn = yield* adapter.sendTurn({ threadId, input: "local-command" });
-      const completed = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      const output = Option.getOrUndefined(yield* nextOperationalEvent(adapter.streamEvents));
+      assert.ok(output?.type === "content.delta");
+      assert.equal(output.payload.streamKind, "assistant_text");
+      assert.equal(output.payload.delta, "Current model: openai/gpt-5.5");
+      assert.equal(output.turnId, turn.turnId);
+      const completed = Option.getOrUndefined(yield* nextOperationalEvent(adapter.streamEvents));
       assert.equal(completed?.type, "turn.completed");
       assert.equal(completed?.turnId, turn.turnId);
+      assert.equal((yield* adapter.listSessions())[0]?.model, "openai/gpt-5.5");
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -1232,7 +1480,7 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      yield* nextEvent(adapter.streamEvents);
+      yield* nextOperationalEvent(adapter.streamEvents);
 
       const compactedEvent = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.type === "thread.state.changed"),
@@ -1274,7 +1522,7 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      yield* nextEvent(adapter.streamEvents);
+      yield* nextOperationalEvent(adapter.streamEvents);
 
       const turn = yield* adapter.sendTurn({ threadId, input: "aborted-message" });
       const events = yield* adapter.streamEvents.pipe(Stream.take(3), Stream.runCollect);
@@ -1290,7 +1538,7 @@ describe("Pi-family native adapter", () => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
-  it.effect("redacts and bounds unknown native event details before persistence", () =>
+  it.effect("drops unknown native events instead of persisting warnings", () =>
     Effect.gen(function* () {
       const runtime = "pi" as const;
       const provider = ProviderDriverKind.make(runtime);
@@ -1315,23 +1563,18 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      yield* nextEvent(adapter.streamEvents);
+      yield* nextOperationalEvent(adapter.streamEvents);
       yield* adapter.sendTurn({ threadId, input: "unknown-events" });
 
-      const redacted = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
-      const bounded = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
-      assert.equal(redacted?.type, "runtime.warning");
-      assert.equal(bounded?.type, "runtime.warning");
-      const redactedDetail =
-        redacted?.type === "runtime.warning" && typeof redacted.payload.detail === "object"
-          ? (redacted.payload.detail as Record<string, unknown>)
-          : undefined;
-      const boundedDetail =
-        bounded?.type === "runtime.warning" && typeof bounded.payload.detail === "object"
-          ? (bounded.payload.detail as Record<string, unknown>)
-          : undefined;
-      assert.deepEqual(redactedDetail, { type: "unknown", redacted: true });
-      assert.deepEqual(boundedDetail, { type: "unknown", redacted: true });
+      const events = yield* adapter.streamEvents.pipe(
+        withoutCommandMetadata,
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        Array.from(events, (event) => event.type),
+        ["turn.completed"],
+      );
       for (const canary of [
         "opaque-id-canary",
         "opaque-env-canary",
@@ -1339,11 +1582,8 @@ describe("Pi-family native adapter", () => {
         "opaque-value-canary",
         "future_native_event",
       ]) {
-        assert.notInclude(encodeUnknownJson(redacted), canary);
-        assert.notInclude(encodeUnknownJson(bounded), canary);
+        assert.notInclude(encodeUnknownJson(events), canary);
       }
-      assert.equal(redacted?.raw, undefined);
-      assert.equal(bounded?.raw, undefined);
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -1374,16 +1614,26 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      yield* nextEvent(adapter.streamEvents);
+      yield* nextOperationalEvent(adapter.streamEvents);
       yield* adapter.sendTurn({ threadId, input: "portable-ui" });
 
-      const turnStarted = yield* nextEvent(adapter.streamEvents);
-      const confirm = yield* nextEvent(adapter.streamEvents);
-      const select = yield* nextEvent(adapter.streamEvents);
-      const input = yield* nextEvent(adapter.streamEvents);
-      const editor = yield* nextEvent(adapter.streamEvents);
-      const turnCompleted = yield* nextEvent(adapter.streamEvents);
+      const turnStarted = yield* nextOperationalEvent(adapter.streamEvents);
+      const status = yield* nextOperationalEvent(adapter.streamEvents);
+      const widget = yield* nextOperationalEvent(adapter.streamEvents);
+      const confirm = yield* nextOperationalEvent(adapter.streamEvents);
+      const select = yield* nextOperationalEvent(adapter.streamEvents);
+      const input = yield* nextOperationalEvent(adapter.streamEvents);
+      const editor = yield* nextOperationalEvent(adapter.streamEvents);
+      const turnCompleted = yield* nextOperationalEvent(adapter.streamEvents);
       assert.equal(Option.getOrUndefined(turnStarted)?.type, "turn.started");
+      assert.deepInclude(Option.getOrUndefined(status), {
+        type: "ui.status.updated",
+        payload: { key: "main", value: "Working" },
+      });
+      assert.deepInclude(Option.getOrUndefined(widget), {
+        type: "ui.widget.updated",
+        payload: { key: "main", content: "2 agents\nsonic · read", placement: "above" },
+      });
       assert.equal(Option.getOrUndefined(confirm)?.type, "request.opened");
       assert.equal(Option.getOrUndefined(select)?.type, "user-input.requested");
       assert.equal(Option.getOrUndefined(input)?.type, "request.opened");
@@ -1391,19 +1641,38 @@ describe("Pi-family native adapter", () => {
       assert.equal(Option.getOrUndefined(turnCompleted)?.type, "turn.completed");
 
       yield* adapter.respondToRequest(threadId, ApprovalRequestId.make("ui-confirm"), "accept");
+      const confirmResolved = Option.getOrUndefined(
+        yield* nextOperationalEvent(adapter.streamEvents),
+      );
+      assert.equal(confirmResolved?.type, "request.resolved");
+
       yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("ui-select"), {
         choice: "beta",
       });
+      const selectResolved = Option.getOrUndefined(
+        yield* nextOperationalEvent(adapter.streamEvents),
+      );
+      assert.equal(selectResolved?.type, "user-input.resolved");
+
       yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("ui-input"), {
         value: "typed",
       });
+      const inputResolved = Option.getOrUndefined(
+        yield* nextOperationalEvent(adapter.streamEvents),
+      );
+      assert.equal(inputResolved?.type, "request.resolved");
+
       yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("ui-editor"), {
         value: "edited",
       });
+      const editorResolved = Option.getOrUndefined(
+        yield* nextOperationalEvent(adapter.streamEvents),
+      );
+      assert.equal(editorResolved?.type, "request.resolved");
 
       const expected = ["ui-confirm:true", "ui-select:beta", "ui-input:typed", "ui-editor:edited"];
       for (const detail of expected) {
-        const response = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+        const response = Option.getOrUndefined(yield* nextOperationalEvent(adapter.streamEvents));
         assert.equal(response?.type, "content.delta");
         if (response?.type === "content.delta") {
           assert.equal(response.payload.delta, detail);
@@ -1411,6 +1680,163 @@ describe("Pi-family native adapter", () => {
       }
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.effect("round-trips askDialog and resolves user-input", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-ask-dialog-thread");
+      const instanceId = ProviderInstanceId.make("omp-ask-dialog-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      const started = yield* nextOperationalEvent(adapter.streamEvents);
+      assert.equal(Option.isSome(started), true);
+
+      yield* adapter.sendTurn({ threadId, input: "ask-dialog-ui" });
+      const turnStarted = yield* nextOperationalEvent(adapter.streamEvents);
+      const askRequest = yield* nextOperationalEvent(adapter.streamEvents);
+      const turnCompleted = yield* nextOperationalEvent(adapter.streamEvents);
+      assert.equal(Option.getOrUndefined(turnStarted)?.type, "turn.started");
+      assert.equal(Option.getOrUndefined(askRequest)?.type, "user-input.requested");
+      assert.equal(Option.getOrUndefined(turnCompleted)?.type, "turn.completed");
+
+      const askPayload = Option.getOrUndefined(askRequest)?.payload as {
+        questions: Array<{ id: string; question: string }>;
+      };
+      assert.equal(askPayload.questions.length, 1);
+      assert.equal(askPayload.questions[0]?.question, "Which auth?");
+
+      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("ui-ask"), {
+        auth: "JWT",
+      });
+      const resolved = yield* nextOperationalEvent(adapter.streamEvents);
+      assert.equal(Option.getOrUndefined(resolved)?.type, "user-input.resolved");
+
+      const response = yield* nextOperationalEvent(adapter.streamEvents);
+      assert.equal(Option.getOrUndefined(response)?.type, "content.delta");
+      if (response && response._tag === "Some" && response.value.type === "content.delta") {
+        assert.equal(response.value.payload.delta, 'answers:{"auth":"JWT"}');
+      }
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("handles cancellation of pending UI request without error", () =>
+    Effect.gen(function* () {
+      const runtime = "omp" as const;
+      const provider = ProviderDriverKind.make(runtime);
+      const threadId = ThreadId.make("omp-cancel-ui-thread");
+      const instanceId = ProviderInstanceId.make("omp-cancel-ui-instance");
+      const adapter = yield* makePiFamilyAdapter({
+        provider,
+        runtime,
+        binaryPath: process.execPath,
+        cwd: process.cwd(),
+        launchArguments: ["-e", makeNativeScript(runtime), "--"],
+        requestTimeoutMs: 2_000,
+        startupTimeoutMs: 2_000,
+        maxLineBytes: 1_048_576,
+        maxMessageBytes: 67_108_864,
+        stderrLimitBytes: 16_384,
+        instanceId,
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider,
+        providerInstanceId: instanceId,
+        runtimeMode: "full-access",
+      });
+      const started = yield* nextOperationalEvent(adapter.streamEvents);
+      assert.equal(Option.isSome(started), true);
+
+      yield* adapter.sendTurn({ threadId, input: "cancel-ui" });
+      const turnStarted = yield* nextOperationalEvent(adapter.streamEvents);
+      const askRequest = yield* nextOperationalEvent(adapter.streamEvents);
+      const resolved = yield* nextOperationalEvent(adapter.streamEvents);
+      const turnCompleted = yield* nextOperationalEvent(adapter.streamEvents);
+
+      assert.equal(Option.getOrUndefined(turnStarted)?.type, "turn.started");
+      assert.equal(Option.getOrUndefined(askRequest)?.type, "user-input.requested");
+      assert.equal(Option.getOrUndefined(resolved)?.type, "user-input.resolved");
+      assert.equal(Option.getOrUndefined(turnCompleted)?.type, "turn.completed");
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "omits answers on the wire for standard select to preserve compatibility with older runtimes",
+    () =>
+      Effect.gen(function* () {
+        const runtime = "omp" as const;
+        const provider = ProviderDriverKind.make(runtime);
+        const threadId = ThreadId.make("omp-compat-select-thread");
+        const instanceId = ProviderInstanceId.make("omp-compat-select-instance");
+        const adapter = yield* makePiFamilyAdapter({
+          provider,
+          runtime,
+          binaryPath: process.execPath,
+          cwd: process.cwd(),
+          launchArguments: ["-e", makeNativeScript(runtime), "--"],
+          requestTimeoutMs: 2_000,
+          startupTimeoutMs: 2_000,
+          maxLineBytes: 1_048_576,
+          maxMessageBytes: 67_108_864,
+          stderrLimitBytes: 16_384,
+          instanceId,
+        });
+
+        yield* adapter.startSession({
+          threadId,
+          provider,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access",
+        });
+        const started = yield* nextOperationalEvent(adapter.streamEvents);
+        assert.equal(Option.isSome(started), true);
+
+        yield* adapter.sendTurn({ threadId, input: "compat-select" });
+        const turnStarted = yield* nextOperationalEvent(adapter.streamEvents);
+        const selectRequest = yield* nextOperationalEvent(adapter.streamEvents);
+        const turnCompleted = yield* nextOperationalEvent(adapter.streamEvents);
+        assert.equal(Option.getOrUndefined(turnStarted)?.type, "turn.started");
+        assert.equal(Option.getOrUndefined(selectRequest)?.type, "user-input.requested");
+        assert.equal(Option.getOrUndefined(turnCompleted)?.type, "turn.completed");
+
+        yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("ui-compat-check"), {
+          selection: "Option 1",
+        });
+        const resolved = yield* nextOperationalEvent(adapter.streamEvents);
+        assert.equal(Option.getOrUndefined(resolved)?.type, "user-input.resolved");
+
+        const response = yield* nextOperationalEvent(adapter.streamEvents);
+        assert.equal(Option.getOrUndefined(response)?.type, "content.delta");
+        if (response && response._tag === "Some" && response.value.type === "content.delta") {
+          assert.equal(response.value.payload.delta, "hasAnswers:false");
+        }
+
+        yield* adapter.stopSession(threadId);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("projects unsupported native UI as an explicit terminal fallback action", () =>
@@ -1439,12 +1865,14 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      yield* nextEvent(adapter.streamEvents);
+      yield* nextOperationalEvent(adapter.streamEvents);
       yield* adapter.sendTurn({ threadId, input: "terminal-fallback" });
 
-      const turnStarted = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
-      const warning = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
-      const turnCompleted = Option.getOrUndefined(yield* nextEvent(adapter.streamEvents));
+      const turnStarted = Option.getOrUndefined(yield* nextOperationalEvent(adapter.streamEvents));
+      const warning = Option.getOrUndefined(yield* nextOperationalEvent(adapter.streamEvents));
+      const turnCompleted = Option.getOrUndefined(
+        yield* nextOperationalEvent(adapter.streamEvents),
+      );
       assert.equal(turnStarted?.type, "turn.started");
       assert.equal(warning?.type, "runtime.warning");
       assert.equal(turnCompleted?.type, "turn.completed");
@@ -1490,15 +1918,15 @@ describe("Pi-family native adapter", () => {
       };
 
       yield* adapter.startSession(start);
-      yield* nextEvent(adapter.streamEvents);
+      yield* nextOperationalEvent(adapter.streamEvents);
       yield* adapter.sendTurn({ threadId, input: "arm-hang" });
-      for (let index = 0; index < 4; index += 1) yield* nextEvent(adapter.streamEvents);
+      for (let index = 0; index < 4; index += 1) yield* nextOperationalEvent(adapter.streamEvents);
       const stopFiber = yield* Effect.forkScoped(adapter.stopSession(threadId));
       yield* Effect.sleep("50 millis");
       yield* adapter.startSession(start);
       yield* Fiber.join(stopFiber);
       assert.equal(yield* adapter.hasSession(threadId), true);
-      const restarted = yield* nextEvent(adapter.streamEvents);
+      const restarted = yield* nextOperationalEvent(adapter.streamEvents);
       assert.equal(Option.getOrUndefined(restarted)?.type, "session.started");
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -1564,7 +1992,7 @@ describe("Pi-family native adapter", () => {
         runtimeMode: "full-access",
       });
       assert.equal(session.model, modelSelection.model);
-      yield* nextEvent(adapter.streamEvents);
+      yield* nextOperationalEvent(adapter.streamEvents);
 
       const turn = yield* adapter.sendTurn({
         threadId,
@@ -1574,7 +2002,7 @@ describe("Pi-family native adapter", () => {
       assert.equal(turn.threadId, threadId);
       const events = [];
       for (let index = 0; index < 4; index += 1) {
-        const event = yield* nextEvent(adapter.streamEvents);
+        const event = yield* nextOperationalEvent(adapter.streamEvents);
         if (Option.isSome(event)) events.push(event.value);
       }
       assert.equal(events.at(-1)?.type, "turn.completed");
@@ -1620,6 +2048,174 @@ describe("Pi-family native adapter", () => {
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+  it.effect("preserves OMP tool previews and subagent linkage in new and resumed sessions", () =>
+    Effect.gen(function* () {
+      for (const mode of ["new", "resumed"] as const) {
+        const provider = ProviderDriverKind.make("omp");
+        const threadId = ThreadId.make(`omp-tool-passthrough-${mode}-thread`);
+        const instanceId = ProviderInstanceId.make(`omp-tool-passthrough-${mode}-instance`);
+        const adapter = yield* makePiFamilyAdapter({
+          provider,
+          runtime: "omp",
+          binaryPath: process.execPath,
+          cwd: process.cwd(),
+          launchArguments: ["-e", makeNativeScript("omp"), "--"],
+          requestTimeoutMs: 2_000,
+          startupTimeoutMs: 2_000,
+          maxLineBytes: 1_048_576,
+          maxMessageBytes: 67_108_864,
+          stderrLimitBytes: 16_384,
+          instanceId,
+        });
+
+        yield* adapter.startSession({
+          threadId,
+          provider,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access",
+          ...(mode === "resumed"
+            ? {
+                resumeCursor: {
+                  kind: "native-session" as const,
+                  runtime: "omp" as const,
+                  sessionId: "resumed-session",
+                },
+              }
+            : {}),
+        });
+        yield* nextOperationalEvent(adapter.streamEvents);
+
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "turn.completed"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* adapter.sendTurn({ threadId, input: "tool-passthrough" });
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+
+        const readStarted = events.find(
+          (event) => event.type === "item.started" && event.itemId === "read-1",
+        );
+        const readCompleted = events.find(
+          (event) => event.type === "item.completed" && event.itemId === "read-1",
+        );
+        const bashStarted = events.find(
+          (event) => event.type === "item.started" && event.itemId === "bash-1",
+        );
+        const bashCompleted = events.find(
+          (event) => event.type === "item.completed" && event.itemId === "bash-1",
+        );
+        const taskStarted = events.find(
+          (event) => event.type === "item.started" && event.itemId === "task-1",
+        );
+        const childStarted = events.find((event) => event.type === "task.started");
+        const childProgress = events.find((event) => event.type === "task.progress");
+        const childCompleted = events.find((event) => event.type === "task.completed");
+
+        assert.equal(readStarted?.type, "item.started");
+        assert.equal(readCompleted?.type, "item.completed");
+        assert.equal(bashStarted?.type, "item.started");
+        assert.equal(bashCompleted?.type, "item.completed");
+        assert.equal(taskStarted?.type, "item.started");
+        assert.equal(childStarted?.type, "task.started");
+        assert.equal(childProgress?.type, "task.progress");
+        assert.equal(childCompleted?.type, "task.completed");
+        if (
+          readStarted?.type !== "item.started" ||
+          readCompleted?.type !== "item.completed" ||
+          bashStarted?.type !== "item.started" ||
+          bashCompleted?.type !== "item.completed" ||
+          taskStarted?.type !== "item.started" ||
+          childStarted?.type !== "task.started" ||
+          childProgress?.type !== "task.progress" ||
+          childCompleted?.type !== "task.completed"
+        ) {
+          return;
+        }
+
+        assert.deepInclude(readStarted.payload, {
+          itemType: "dynamic_tool_call",
+          status: "inProgress",
+          title: "Read File",
+          detail: "Reading package manifest",
+        });
+        assert.deepInclude(readStarted.payload.data, {
+          toolCallId: "read-1",
+          kind: "read",
+          item: {
+            type: "dynamic_tool_call",
+            name: "read",
+            toolName: "read",
+            input: { path: "package.json" },
+          },
+        });
+        assert.deepInclude(readCompleted.payload, {
+          itemType: "dynamic_tool_call",
+          status: "completed",
+          title: "Read File",
+          detail: "Reading package manifest",
+        });
+        assert.deepInclude(readCompleted.payload.data, {
+          toolCallId: "read-1",
+          kind: "read",
+          rawOutput: { content: '{ "name": "fixture" }' },
+        });
+        assert.deepInclude(bashStarted.payload, {
+          itemType: "command_execution",
+          status: "inProgress",
+          title: "Terminal",
+          detail: "Checking fixture command",
+        });
+        assert.deepInclude(bashStarted.payload.data, {
+          toolCallId: "bash-1",
+          kind: "execute",
+          item: {
+            type: "command_execution",
+            name: "bash",
+            toolName: "bash",
+            input: { command: ["bash", "-lc", "printf fixture"] },
+          },
+        });
+        assert.deepInclude(bashCompleted.payload, {
+          itemType: "command_execution",
+          status: "failed",
+          title: "Terminal",
+          detail: "Checking fixture command",
+        });
+        assert.deepInclude(bashCompleted.payload.data, {
+          toolCallId: "bash-1",
+          kind: "execute",
+          rawOutput: { content: "fixture failed" },
+        });
+        assert.deepInclude(taskStarted.payload, {
+          itemType: "collab_agent_tool_call",
+          title: "Task",
+          detail: "Delegating fixture review",
+        });
+        assert.deepInclude(taskStarted.payload.data, { toolCallId: "task-1" });
+        assert.deepInclude(childStarted.payload, {
+          taskId: RuntimeTaskId.make("child-1"),
+          role: "sonic",
+          toolUseId: "task-1",
+          isBackgrounded: true,
+        });
+        assert.deepInclude(childProgress.payload, {
+          taskId: RuntimeTaskId.make("child-1"),
+          role: "sonic",
+          toolUseId: "task-1",
+          lastToolName: "read",
+        });
+        assert.deepInclude(childCompleted.payload, {
+          taskId: RuntimeTaskId.make("child-1"),
+          role: "sonic",
+          toolUseId: "task-1",
+        });
+        yield* adapter.stopSession(threadId);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("emits per-line decode errors and continues with later valid events", () =>
     Effect.gen(function* () {
       const runtime = "omp" as const;
@@ -1646,13 +2242,13 @@ describe("Pi-family native adapter", () => {
         providerInstanceId: instanceId,
         runtimeMode: "full-access",
       });
-      const started = yield* nextEvent(adapter.streamEvents);
+      const started = yield* nextOperationalEvent(adapter.streamEvents);
       assert.equal(Option.isSome(started), true);
       yield* adapter.sendTurn({ threadId, input: "malformed" });
 
-      const firstError = yield* nextEvent(adapter.streamEvents);
-      const secondError = yield* nextEvent(adapter.streamEvents);
-      const uiRequest = yield* nextEvent(adapter.streamEvents);
+      const firstError = yield* nextOperationalEvent(adapter.streamEvents);
+      const secondError = yield* nextOperationalEvent(adapter.streamEvents);
+      const uiRequest = yield* nextOperationalEvent(adapter.streamEvents);
       assert.equal(Option.isSome(firstError), true);
       assert.equal(Option.isSome(secondError), true);
       assert.equal(Option.isSome(uiRequest), true);
@@ -1663,35 +2259,23 @@ describe("Pi-family native adapter", () => {
       assert.equal(uiRequest.value.type, "request.opened");
       yield* adapter.respondToRequest(threadId, ApprovalRequestId.make("approval-1"), "accept");
 
-      const toolStarted = yield* nextEvent(adapter.streamEvents);
-      const toolCompleted = yield* nextEvent(adapter.streamEvents);
-      const content = yield* nextEvent(adapter.streamEvents);
-      const turnCompleted = yield* nextEvent(adapter.streamEvents);
-      const confirmed = yield* nextEvent(adapter.streamEvents);
-      assert.equal(Option.isSome(toolStarted), true);
-      assert.equal(Option.isSome(toolCompleted), true);
-      assert.equal(Option.isSome(content), true);
-      assert.equal(Option.isSome(turnCompleted), true);
-      assert.equal(Option.isSome(confirmed), true);
-      if (
-        Option.isNone(toolStarted) ||
-        Option.isNone(toolCompleted) ||
-        Option.isNone(content) ||
-        Option.isNone(turnCompleted) ||
-        Option.isNone(confirmed)
-      )
-        return;
-      assert.equal(toolStarted.value.type, "item.started");
-      assert.equal("itemType" in toolStarted.value.payload, true);
-      if (!("itemType" in toolStarted.value.payload)) return;
-      assert.equal(toolStarted.value.payload.itemType, "dynamic_tool_call");
-      assert.equal(toolCompleted.value.type, "item.completed");
-      assert.equal(content.value.type, "content.delta");
-      assert.equal(turnCompleted.value.type, "turn.completed");
-      assert.equal(confirmed.value.type, "content.delta");
-      assert.equal("delta" in confirmed.value.payload, true);
-      if (!("delta" in confirmed.value.payload)) return;
-      assert.equal(confirmed.value.payload.delta, "confirmed");
+      const remainingEvents: ProviderRuntimeEvent[] = [];
+      for (let i = 0; i < 6; i++) {
+        const ev = yield* nextOperationalEvent(adapter.streamEvents);
+        assert.equal(Option.isSome(ev), true);
+        if (Option.isSome(ev)) remainingEvents.push(ev.value);
+      }
+      const types = remainingEvents.map((e) => e.type);
+      assert.equal(types.includes("request.resolved"), true);
+      assert.equal(types.includes("item.started"), true);
+      assert.equal(types.includes("item.completed"), true);
+      assert.equal(types.includes("turn.completed"), true);
+      const deltas = remainingEvents
+        .filter(
+          (e): e is ProviderRuntimeEvent & { type: "content.delta" } => e.type === "content.delta",
+        )
+        .map((e) => ("delta" in e.payload ? e.payload.delta : undefined));
+      assert.deepEqual(deltas, ["after malformed", "confirmed"]);
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

@@ -1,6 +1,6 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { RouterProvider } from "@tanstack/react-router";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { PreviewAutomationHosts } from "./components/preview/PreviewAutomationHosts";
@@ -22,5 +22,18 @@ describe("AppRoot", () => {
     expect(isValidElement(children[1]) && children[1].type).toBe(PreviewAutomationHosts);
     expect(isValidElement(children[2]) && children[2].type).toBe(ElectronBrowserHost);
     expect(isValidElement(children[3]) && children[3].type).toBe(QuitHoldOverlay);
+  });
+  it("mounts browser appearance recovery before the router and auth gate", () => {
+    vi.stubGlobal("window", {
+      location: {
+        search: "?t3-appearance=safe",
+        href: "https://example.test/?t3-appearance=safe",
+      },
+    });
+    const root = AppRoot({ router: {} as AppRouter }) as ReactElement<{
+      readonly action: string;
+    }>;
+    expect(root.props.action).toBe("safe");
+    vi.unstubAllGlobals();
   });
 });

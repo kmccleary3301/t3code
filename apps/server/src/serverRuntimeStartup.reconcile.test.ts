@@ -52,11 +52,13 @@ const makeProviderService = (liveThreadIds: ReadonlyArray<ThreadId> = []) =>
     respondToUserInput: () => Effect.die("unused"),
     stopSession: () => Effect.die("unused"),
     listSessions: () => Effect.succeed(liveThreadIds.map((threadId) => ({ threadId }) as never)),
+    discoverNativeCommands: () => Effect.die("unused"),
     getCapabilities: () => Effect.die("unused"),
     getInstanceInfo: () => Effect.die("unused"),
     rollbackConversation: () => Effect.die("unused"),
     captureNativeCheckpoint: () => Effect.succeed(undefined),
     restoreNativeCheckpoint: () => Effect.void,
+    uploadFeedback: () => Effect.die("unused"),
     streamEvents: Stream.empty,
   }) satisfies ProviderService.ProviderService["Service"];
 

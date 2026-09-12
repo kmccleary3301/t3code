@@ -152,7 +152,7 @@ export function CloudEnvironmentConnectRows({
       : (Option.getOrNull(environmentsState.error)?.message ?? null);
     if (discoveryProblem !== null && !environmentsState.refreshing) {
       return (
-        <div className={ITEM_ROW_CLASSNAME}>
+        <div className={ITEM_ROW_CLASSNAME} data-t3-surface="offline">
           <p className="text-sm font-medium text-destructive">
             Could not load T3 Connect environments
           </p>

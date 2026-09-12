@@ -14,6 +14,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodeReadlinePromises from "node:readline/promises";
 
+import { resolveProductIdentity } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
@@ -27,6 +28,7 @@ import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { resolveRuntimeProductProfile } from "../cloud/pinnedRuntime.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -169,7 +171,7 @@ export const triageCommand = Command.make("triage", {
   model: modelFlag,
 }).pipe(
   Command.withDescription(
-    "Investigate a T3 Code problem on this machine with claude or codex, and help file a good issue.",
+    "Investigate a KM Code problem on this machine with claude or codex, and help file a good issue.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -194,15 +196,14 @@ export const triageCommand = Command.make("triage", {
       yield* fs.makeDirectory(scratchDir, { recursive: true });
 
       const version = packageJson.version;
+      const productIdentity = resolveProductIdentity(resolveRuntimeProductProfile());
       const contextFilePath = path.join(scratchDir, "context.md");
       yield* fs.writeFileString(
         contextFilePath,
         buildTriageContext({
           generatedAt: DateTime.formatIso(now),
           version,
-          releaseTag: version.includes("-nightly.")
-            ? `v${version} (nightly build; if this tag does not exist, clone main)`
-            : `v${version}`,
+          releaseTag: `${productIdentity.releaseTagPrefix}${version}`,
           os: `${yield* HostProcessPlatform} ${yield* HostProcessArchitecture} (${NodeOS.release()})`,
           nodeVersion: process.version,
           launchedAs: yield* resolveCliCommand("triage"),

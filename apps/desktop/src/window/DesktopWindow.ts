@@ -8,17 +8,31 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
-import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import type { AppearancePersistedState } from "@t3tools/client-runtime/appearance";
+import { resolveAppearanceState } from "@t3tools/client-runtime/appearance";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  parseProductProfile,
+  resolveProductIdentity,
+} from "@t3tools/contracts";
+import {
+  HostProcessArguments,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import { DesktopAppearanceStorage } from "../appearance/DesktopAppearanceStorage.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
+  APPEARANCE_STARTUP_FAILED_CHANNEL,
+  APPEARANCE_STARTUP_READY_CHANNEL,
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
@@ -30,9 +44,10 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import { makeQuitHoldHandler } from "./QuitHold.ts";
 
 const TITLEBAR_HEIGHT = 40;
+const DESKTOP_PRODUCT_NAME = resolveProductIdentity(
+  parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+).baseName;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
-const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
-const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 // Renderer crash (usually V8 OOM on long sessions) recovery: reload after a
@@ -41,6 +56,23 @@ const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
+const APPEARANCE_STARTUP_TIMEOUT_MS = 30_000;
+const APPEARANCE_RECOVERY_DOCUMENT_TIMEOUT_MS = 2_000;
+const APPEARANCE_RECOVERY_DOCUMENT_URL = `data:text/html;charset=utf-8,${encodeURIComponent(
+  `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>${DESKTOP_PRODUCT_NAME} recovery</title><style>html{color-scheme:light dark;background:Canvas;color:CanvasText;font:16px system-ui}body{min-height:100vh;margin:0;display:grid;place-items:center}main{max-width:32rem;padding:2rem}</style></head><body><main role="alert"><h1>${DESKTOP_PRODUCT_NAME} could not start</h1><p>Close and reopen the app to try again. Use appearance safe mode if the problem continues.</p></main></body></html>`,
+)}`;
+const SAFE_APPEARANCE_STATE: AppearancePersistedState = {
+  revision: 0,
+  packages: {},
+  order: [],
+  preference: { mode: "system" },
+  snippets: [],
+  accessibility: {},
+  safeMode: true,
+  environmentPackages: [],
+  diagnostics: [],
+  migration: { completed: true },
+};
 const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
   -2, // ERR_FAILED
   -7, // ERR_TIMED_OUT
@@ -125,10 +157,6 @@ function getIconOption(
   });
 }
 
-function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
-  return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
-}
-
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
 function windowFitsWithinDisplay(
@@ -171,13 +199,48 @@ export function resolveInitialMainWindowBounds(
 // A self-contained "Connecting to WSL" splash, shown immediately in wsl-only
 // mode while the WSL backend (which serves the renderer) cold-boots. Inlined as
 // a data URL so it needs no bundled asset and no backend — pure CSS, no JS.
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
-  const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
-  const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
-  const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
+function buildConnectingSplashDataUrl(
+  shouldUseDarkColors: boolean,
+  background: string,
+  symbolColor: string,
+): string {
+  const label = symbolColor;
+  const accent = symbolColor;
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+export function isAppearanceSafeModeForced(input: {
+  readonly argv: ReadonlyArray<string>;
+  readonly env: Readonly<Record<string, string | undefined>>;
+}): boolean {
+  return input.argv.includes("--safe-appearance") || input.env.T3CODE_APPEARANCE_SAFE_MODE === "1";
+}
+export function isAppearanceResetForced(input: { readonly argv: ReadonlyArray<string> }): boolean {
+  return input.argv.includes("--reset-appearance");
+}
+
+export function withAppearanceSafeMode(applicationUrl: string, forced: boolean): string {
+  if (!forced) return applicationUrl;
+  const url = new URL(applicationUrl);
+  url.searchParams.set("t3-appearance", "safe");
+  return url.href;
+}
+export async function shouldUseAppearanceSafeModeBeforeWindow(
+  input: {
+    readonly argv: ReadonlyArray<string>;
+    readonly env: Readonly<Record<string, string | undefined>>;
+  },
+  readPersistedSafeMode: () => Promise<boolean>,
+): Promise<boolean> {
+  if (isAppearanceSafeModeForced(input)) return true;
+  try {
+    return await readPersistedSafeMode();
+  } catch {
+    // An unreadable recovery state is safer to render without custom appearance code.
+    return true;
+  }
 }
 
 export function isSameOriginRendererNavigation(input: {
@@ -208,7 +271,7 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
 }
 
 function getWindowTitleBarOptions(
-  shouldUseDarkColors: boolean,
+  nativeAppearance: ElectronTheme.ElectronNativeAppearance,
   platform: NodeJS.Platform,
 ): WindowTitleBarOptions {
   if (platform === "darwin") {
@@ -223,14 +286,14 @@ function getWindowTitleBarOptions(
     titleBarOverlay: {
       color: TITLEBAR_COLOR,
       height: TITLEBAR_HEIGHT,
-      symbolColor: shouldUseDarkColors ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
+      symbolColor: nativeAppearance.symbolColor,
     },
   };
 }
 
 function syncWindowAppearance(
   window: Electron.BrowserWindow,
-  shouldUseDarkColors: boolean,
+  nativeAppearance: ElectronTheme.ElectronNativeAppearance,
   platform: NodeJS.Platform,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
@@ -238,8 +301,8 @@ function syncWindowAppearance(
       return;
     }
 
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
-    const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
+    window.setBackgroundColor(nativeAppearance.backgroundColor);
+    const { titleBarOverlay } = getWindowTitleBarOptions(nativeAppearance, platform);
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
     }
@@ -265,6 +328,11 @@ function bindFirstRevealTrigger(
 
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const hostPlatform = yield* HostProcessPlatform;
+  const recoveryInput = {
+    argv: yield* HostProcessArguments,
+    env: yield* HostProcessEnvironment,
+  };
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const electronShell = yield* ElectronShell.ElectronShell;
@@ -283,9 +351,64 @@ export const make = Effect.gen(function* () {
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  // `--reset-appearance` is a process-wide recovery action. Keep its result
+  // across window creations: rerunning it would replace the quarantine with an
+  // empty reset snapshot and make the original last-good profile unrecoverable.
+  let appearanceResetAttempted = false;
+  let appearanceResetResult: Promise<boolean> | undefined;
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const appearanceStorage = new DesktopAppearanceStorage(
+    environment.stateDir,
+    environment.appVersion,
+    hostPlatform,
+  );
+  let appearanceState: AppearancePersistedState = SAFE_APPEARANCE_STATE;
+
+  const resolveNativeAppearanceForState = (
+    state: AppearancePersistedState,
+    setNativeSource: boolean,
+  ) =>
+    Effect.gen(function* () {
+      if (setNativeSource) {
+        yield* electronTheme.setSource(state.preference.mode).pipe(
+          Effect.catch((error) =>
+            logWindowWarning("failed to apply native appearance source", {
+              message: error.message,
+            }),
+          ),
+        );
+      }
+      const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+      const systemAppearance = shouldUseDarkColors ? "dark" : "light";
+      return ElectronTheme.resolveNativeAppearance(
+        resolveAppearanceState(state, null, () => systemAppearance),
+        systemAppearance,
+      );
+    });
+
+  const syncAppearanceState = (state: AppearancePersistedState, setNativeSource: boolean) =>
+    Effect.gen(function* () {
+      appearanceState = state;
+      const nativeAppearance = yield* resolveNativeAppearanceForState(state, setNativeSource);
+      yield* electronWindow.syncAllAppearance((window) =>
+        syncWindowAppearance(window, nativeAppearance, environment.platform),
+      );
+      const splash = yield* Ref.get(splashWindowRef);
+      if (Option.isSome(splash) && !splash.value.isDestroyed()) {
+        splash.value.setBackgroundColor(nativeAppearance.backgroundColor);
+      }
+    });
+
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      appearanceStorage.watch((state) => {
+        void runPromise(syncAppearanceState(state, true)).catch(() => undefined);
+      }),
+    ),
+    (stop) => Effect.sync(stop),
+  );
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
 
   const dismissConnectingSplash = Effect.gen(function* () {
@@ -313,16 +436,54 @@ export const make = Effect.gen(function* () {
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+  const startupReveal = new WeakMap<Electron.BrowserWindow, () => void>();
+  const revealMainWindow = (window: Electron.BrowserWindow): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      const reveal = startupReveal.get(window);
+      return reveal === undefined ? electronWindow.reveal(window) : Effect.sync(reveal);
+    });
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
     Electron.BrowserWindow,
     DesktopWindowError
   > {
     yield* previewManager.getBrowserSession();
-    const applicationUrl = getDesktopUrl(environment.isDevelopment, environment.productProfile);
+    const resetRequested = isAppearanceResetForced(recoveryInput);
+    const resetSucceeded = yield* Effect.promise(() => {
+      if (!resetRequested) return Promise.resolve(true);
+      if (!appearanceResetAttempted) {
+        appearanceResetAttempted = true;
+        appearanceResetResult = (async () => {
+          try {
+            await appearanceStorage.reset();
+            return true;
+          } catch {
+            return false;
+          }
+        })();
+      }
+      // The first creator owns the reset; concurrent or later creators await
+      // the same result and never mutate quarantine a second time.
+      return appearanceResetResult ?? Promise.resolve(false);
+    });
+    const forcedSafeMode = isAppearanceSafeModeForced(recoveryInput);
+    const bootAppearanceState =
+      !resetSucceeded || forcedSafeMode
+        ? SAFE_APPEARANCE_STATE
+        : yield* Effect.tryPromise({
+            try: () => appearanceStorage.load(),
+            catch: () => SAFE_APPEARANCE_STATE,
+          }).pipe(Effect.catch((state) => Effect.succeed(state)));
+    const appearanceSafeMode =
+      resetRequested || forcedSafeMode || !resetSucceeded || bootAppearanceState.safeMode;
+    appearanceState = bootAppearanceState;
+    const applicationUrl = withAppearanceSafeMode(
+      getDesktopUrl(environment.isDevelopment, environment.productProfile),
+      appearanceSafeMode,
+    );
+    const nativeAppearance = yield* resolveNativeAppearanceForState(bootAppearanceState, true);
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
-    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
     const persistedBounds = persistedSettings.mainWindowBounds;
     const displayBoundsResult = yield* Effect.sync(() => {
@@ -353,10 +514,10 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: nativeAppearance.backgroundColor,
       ...iconOption,
       title: environment.displayName,
-      ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
+      ...getWindowTitleBarOptions(nativeAppearance, environment.platform),
       webPreferences: {
         preload: environment.preloadPath,
         // The window boots hidden (show: false until ready-to-show), and
@@ -531,8 +692,10 @@ export const make = Effect.gen(function* () {
       }
       return { action: "deny" };
     });
+    let allowAppearanceRecoveryDocumentNavigation = false;
     window.webContents.on("will-navigate", (event, url) => {
       if (
+        (allowAppearanceRecoveryDocumentNavigation && url === APPEARANCE_RECOVERY_DOCUMENT_URL) ||
         isSameOriginRendererNavigation({
           applicationUrl,
           navigationUrl: url,
@@ -608,6 +771,8 @@ export const make = Effect.gen(function* () {
     let developmentLoadRetryIndex = 0;
     let developmentLoadRetryFiber: Fiber.Fiber<void, never> | undefined;
     let rendererRecoveryTimestamps: number[] = [];
+    let appearanceStartupTimeoutFiber: Fiber.Fiber<void, never> | undefined;
+    let rendererStartupFailure: (() => void) | undefined;
     const clearDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber === undefined) {
         return;
@@ -615,6 +780,12 @@ export const make = Effect.gen(function* () {
       const retryFiber = developmentLoadRetryFiber;
       developmentLoadRetryFiber = undefined;
       runFork(Fiber.interrupt(retryFiber));
+    };
+    const clearAppearanceStartupTimeout = () => {
+      if (appearanceStartupTimeoutFiber === undefined) return;
+      const timeoutFiber = appearanceStartupTimeoutFiber;
+      appearanceStartupTimeoutFiber = undefined;
+      runFork(Fiber.interrupt(timeoutFiber));
     };
     const loadApplication = () => {
       if (window.isDestroyed()) {
@@ -649,6 +820,10 @@ export const make = Effect.gen(function* () {
     };
 
     window.webContents.on("did-finish-load", () => {
+      if (window.webContents.getURL() === APPEARANCE_RECOVERY_DOCUMENT_URL) {
+        allowAppearanceRecoveryDocumentNavigation = false;
+        return;
+      }
       if (
         environment.isDevelopment &&
         !isSameOriginRendererNavigation({
@@ -686,6 +861,7 @@ export const make = Effect.gen(function* () {
             ...(retryInMs === undefined ? {} : { retryInMs }),
           }),
         );
+        if (retryInMs === undefined) rendererStartupFailure?.();
       },
     );
     window.webContents.on("render-process-gone", (_event, details) => {
@@ -715,22 +891,33 @@ export const make = Effect.gen(function* () {
             recovering: shouldRecover,
           });
           if (!shouldRecover) {
+            rendererStartupFailure?.();
             return;
           }
           rendererRecoveryTimestamps.push(now);
           yield* Effect.sleep(RENDERER_RECOVERY_RELOAD_DELAY_MS);
           if (!window.isDestroyed()) {
+            if (!initialRevealStarted) {
+              appearanceStartupReady = false;
+              rendererStartupRecoveryStarted = false;
+              armAppearanceStartupTimeout();
+            }
             loadApplication();
           }
         }),
       );
     });
 
-    const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
-    if (environment.platform === "linux") {
-      revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
-    }
-    bindFirstRevealTrigger(revealSubscribers, () => {
+    // The renderer owns the appearance transaction. Keep the native window
+    // hidden until both Chromium has a first frame and the renderer has
+    // atomically applied the complete profile (or builtin recovery).
+    let nativeReady = false;
+    let appearanceStartupReady = false;
+    let initialRevealStarted = false;
+    const revealIfReady = () => {
+      if (!nativeReady || !appearanceStartupReady || initialRevealStarted) return;
+      initialRevealStarted = true;
+      startupReveal.delete(window);
       // Boot is done; hand the window back to normal hidden-window throttling
       // (see the backgroundThrottling comment on the create options above).
       if (!window.isDestroyed()) {
@@ -742,7 +929,69 @@ export const make = Effect.gen(function* () {
         window.maximize();
       }
       void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
+    };
+    const markNativeReady = () => {
+      nativeReady = true;
+      revealIfReady();
+    };
+    const markAppearanceStartupReady = () => {
+      if (appearanceStartupReady) return;
+      appearanceStartupReady = true;
+      clearAppearanceStartupTimeout();
+      revealIfReady();
+    };
+    let rendererStartupRecoveryStarted = false;
+    rendererStartupFailure = () => {
+      if (rendererStartupRecoveryStarted) return;
+      rendererStartupRecoveryStarted = true;
+      clearDevelopmentLoadRetry();
+      allowAppearanceRecoveryDocumentNavigation = true;
+      // Navigate away from the failed renderer before revealing. This cancels
+      // any late script work from the old document and provides an actionable,
+      // style-independent recovery surface even when the app URL never loaded.
+      runFork(
+        Effect.tryPromise({
+          try: () => window.loadURL(APPEARANCE_RECOVERY_DOCUMENT_URL),
+          catch: () => undefined,
+        }).pipe(
+          Effect.timeout(APPEARANCE_RECOVERY_DOCUMENT_TIMEOUT_MS),
+          Effect.ignore,
+          Effect.ensuring(
+            Effect.sync(() => {
+              markNativeReady();
+              markAppearanceStartupReady();
+            }),
+          ),
+        ),
+      );
+    };
+    startupReveal.set(window, revealIfReady);
+    const armAppearanceStartupTimeout = () => {
+      clearAppearanceStartupTimeout();
+      appearanceStartupTimeoutFiber = runFork(
+        Effect.sleep(APPEARANCE_STARTUP_TIMEOUT_MS).pipe(
+          Effect.andThen(
+            logWindowWarning("appearance startup timed out; revealing builtin recovery", {
+              timeoutMs: APPEARANCE_STARTUP_TIMEOUT_MS,
+            }),
+          ),
+          Effect.andThen(Effect.sync(() => rendererStartupFailure?.())),
+        ),
+      );
+    };
+    armAppearanceStartupTimeout();
+    window.webContents.on("ipc-message", (_event, channel) => {
+      if (channel === APPEARANCE_STARTUP_FAILED_CHANNEL) {
+        rendererStartupFailure?.();
+      } else if (channel === APPEARANCE_STARTUP_READY_CHANNEL && !rendererStartupRecoveryStarted) {
+        markAppearanceStartupReady();
+      }
     });
+    const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
+    if (environment.platform === "linux") {
+      revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
+    }
+    bindFirstRevealTrigger(revealSubscribers, markNativeReady);
 
     loadApplication();
     if (environment.isDevelopment) {
@@ -751,6 +1000,8 @@ export const make = Effect.gen(function* () {
 
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
+      clearAppearanceStartupTimeout();
+      startupReveal.delete(window);
       clearBoundsPersist();
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
@@ -775,7 +1026,7 @@ export const make = Effect.gen(function* () {
 
   const revealOrCreateMain = Effect.gen(function* () {
     const window = yield* ensureMain;
-    yield* electronWindow.reveal(window);
+    yield* revealMainWindow(window);
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
@@ -794,7 +1045,14 @@ export const make = Effect.gen(function* () {
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(existingWindow)) return;
 
-    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const splashAppearanceState = isAppearanceSafeModeForced(recoveryInput)
+      ? SAFE_APPEARANCE_STATE
+      : yield* Effect.tryPromise({
+          try: () => appearanceStorage.load(),
+          catch: () => SAFE_APPEARANCE_STATE,
+        }).pipe(Effect.catch((state) => Effect.succeed(state)));
+    appearanceState = splashAppearanceState;
+    const nativeAppearance = yield* resolveNativeAppearanceForState(splashAppearanceState, true);
     const splash = yield* electronWindow.create({
       width: 360,
       height: 220,
@@ -806,7 +1064,7 @@ export const make = Effect.gen(function* () {
       center: true,
       show: false,
       skipTaskbar: false,
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      backgroundColor: nativeAppearance.backgroundColor,
       title: environment.displayName,
       webPreferences: {
         contextIsolation: true,
@@ -823,7 +1081,13 @@ export const make = Effect.gen(function* () {
         splash.show();
       }
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
+    void splash.loadURL(
+      buildConnectingSplashDataUrl(
+        nativeAppearance.appearance === "dark",
+        nativeAppearance.backgroundColor,
+        nativeAppearance.symbolColor,
+      ),
+    );
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     // The splash is best-effort UX — never let it fail startup.
@@ -840,7 +1104,7 @@ export const make = Effect.gen(function* () {
     activate: Effect.gen(function* () {
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
-        yield* electronWindow.reveal(existingWindow.value);
+        yield* revealMainWindow(existingWindow.value);
         return;
       }
       // No real main window yet. While the backend is still cold-booting,
@@ -882,7 +1146,7 @@ export const make = Effect.gen(function* () {
       const send = () => {
         if (targetWindow.isDestroyed()) return;
         targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
-        void runPromise(electronWindow.reveal(targetWindow));
+        void runPromise(revealMainWindow(targetWindow));
       };
 
       if (targetWindow.webContents.isLoadingMainFrame()) {
@@ -908,12 +1172,9 @@ export const make = Effect.gen(function* () {
       // own zoom, so put each guest back where the preview left it.
       yield* previewManager.reapplyZoom();
     }),
-    syncAppearance: Effect.gen(function* () {
-      const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-      yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
-      );
-    }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
+    syncAppearance: syncAppearanceState(appearanceState, false).pipe(
+      Effect.withSpan("desktop.window.syncAppearance"),
+    ),
   });
 });
 

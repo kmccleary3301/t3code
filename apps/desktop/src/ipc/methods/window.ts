@@ -12,6 +12,7 @@ import {
   type DesktopEnvironmentBootstrap,
   type PickedThemeFile,
 } from "@t3tools/contracts";
+import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@t3tools/shared/filePreview";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as NodeOS from "node:os";
 import * as FileSystem from "effect/FileSystem";
@@ -234,6 +235,28 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const pickProjectFavicon = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PICK_PROJECT_FAVICON_CHANNEL,
+  payload: Schema.UndefinedOr(Schema.String),
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.pickProjectFavicon")(function* (initialPath) {
+    const dialog = yield* ElectronDialog.ElectronDialog;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const paths = yield* dialog.pickFiles({
+      owner: yield* electronWindow.focusedMainOrFirst,
+      defaultPath: Option.fromNullishOr(initialPath),
+      multiple: false,
+      filters: [
+        {
+          name: "Images",
+          extensions: WORKSPACE_IMAGE_PREVIEW_EXTENSIONS.map((extension) => extension.slice(1)),
+        },
+      ],
+    });
+    return paths[0] ?? null;
+  }),
+});
+
 export const setTheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_THEME_CHANNEL,
   payload: DesktopThemeSchema,
@@ -299,9 +322,8 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   }),
 });
 
-/** Theme files are a few KB; anything larger returns empty text and lets the
- *  renderer reject it by size without the contents ever crossing the bridge. */
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
+const PICKED_APPEARANCE_PACKAGE_MAX_BYTES = 30 * 1024 * 1024;
 
 export const pickThemeFiles = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PICK_THEME_FILES_CHANNEL,
@@ -323,6 +345,7 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
       owner: yield* electronWindow.focusedMainOrFirst,
       defaultPath: defaultPath ? Option.some(extensionsDir) : Option.none(),
       filters: [{ name: "JSON", extensions: ["json"] }],
+      multiple: true,
     });
     if (paths.length === 0) {
       return null;
@@ -332,7 +355,10 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
       return Effect.gen(function* () {
         const info = yield* fileSystem.stat(filePath);
         const size = Number(info.size);
-        if (size > PICKED_THEME_FILE_MAX_BYTES) {
+        const limit = name.toLowerCase().endsWith(".t3appearance.json")
+          ? PICKED_APPEARANCE_PACKAGE_MAX_BYTES
+          : PICKED_THEME_FILE_MAX_BYTES;
+        if (size > limit) {
           return { name, size, text: "" } satisfies PickedThemeFile;
         }
         const text = yield* fileSystem.readFileString(filePath);

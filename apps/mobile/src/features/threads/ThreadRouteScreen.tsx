@@ -332,6 +332,15 @@ function ThreadRouteContent(
     }
     onReconnectEnvironment(environmentId);
   }, [environmentId, onReconnectEnvironment]);
+  const handleOpenAgents = useCallback(() => {
+    if (selectedThread === null) {
+      return;
+    }
+    navigation.navigate("ThreadAgents", {
+      environmentId: String(selectedThread.environmentId),
+      threadId: String(selectedThread.id),
+    });
+  }, [navigation, selectedThread]);
 
   /* ─── Git action progress (for overlay banner) ──────────────────── */
   const gitActionProgressTarget = useMemo(
@@ -637,6 +646,26 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const agentsHeaderItem = useMemo(
+    () =>
+      withNativeGlassHeaderItem({
+        accessibilityLabel: "Open Agents",
+        icon: { name: "person.crop.circle", type: "sfSymbol" as const },
+        identifier: "thread-right-agents",
+        label: "Agents",
+        onPress: handleOpenAgents,
+        type: "button" as const,
+      }),
+    [handleOpenAgents],
+  );
+  const threadCenterHeaderItemsWithAgents = useMemo(
+    () => [...threadCenterHeaderItems, agentsHeaderItem],
+    [agentsHeaderItem, threadCenterHeaderItems],
+  );
+  const compactRightHeaderItemsWithAgents = useMemo(
+    () => [...compactRightHeaderItems, agentsHeaderItem],
+    [agentsHeaderItem, compactRightHeaderItems],
+  );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -704,6 +733,11 @@ function ThreadRouteContent(
       });
     }
     actions.push({
+      accessibilityLabel: "Open Agents",
+      icon: "person.crop.circle",
+      onPress: handleOpenAgents,
+    });
+    actions.push({
       accessibilityLabel: "Open git controls",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: handleOpenGitInspector,
@@ -718,6 +752,7 @@ function ThreadRouteContent(
     return actions;
   }, [
     fileInspector.supported,
+    handleOpenAgents,
     handleOpenFilesInspector,
     handleOpenTerminal,
     handleOpenGitInspector,
@@ -793,7 +828,8 @@ function ThreadRouteContent(
           usesAutomaticContentInsets={usesNativeHeaderGlass}
           onOpenConnectionEditor={handleOpenConnectionEditor}
           onChangeDraftMessage={composer.onChangeDraftMessage}
-          onPickDraftImages={composer.onPickDraftImages}
+          onPickDraftMedia={composer.onPickDraftMedia}
+          onPickDraftFiles={composer.onPickDraftFiles}
           onNativePasteImages={composer.onNativePasteImages}
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
@@ -845,7 +881,10 @@ function ThreadRouteContent(
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+              ? () =>
+                  layout.usesSplitView
+                    ? threadCenterHeaderItemsWithAgents
+                    : compactRightHeaderItemsWithAgents
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
         }}

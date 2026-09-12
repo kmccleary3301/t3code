@@ -1,6 +1,7 @@
 import {
   ChatAttachment,
   CheckpointRef,
+  EventId,
   IsoDateTime,
   MessageId,
   NativeCheckpointDescriptor,
@@ -25,6 +26,7 @@ import {
   type OrchestrationThreadShell,
   ModelSelection,
   ProjectId,
+  ThreadLinkedPullRequest,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
@@ -64,6 +66,7 @@ import {
   type ProjectionFullThreadDiffContext,
   type ProjectionSnapshotCounts,
   type ProjectionThreadCheckpointContext,
+  type ProjectionThreadDetailQuery,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
 
@@ -90,6 +93,7 @@ const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -142,6 +146,10 @@ const ProjectIdLookupInput = Schema.Struct({
 });
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
+});
+const ThreadActivityKindsLookupInput = Schema.Struct({
+  threadId: ThreadId,
+  activityKinds: Schema.Array(Schema.String),
 });
 // Windowed reads order turns by the stable keyset (anchor, turn key), where
 // anchor is requested_at and turn key is
@@ -345,6 +353,20 @@ function mapProposedPlanRow(
     updatedAt: row.updatedAt,
   };
 }
+function mapActivityRow(
+  row: Schema.Schema.Type<typeof ProjectionThreadActivityDbRowSchema>,
+): OrchestrationThreadActivity {
+  const activity = {
+    id: row.activityId,
+    tone: row.tone,
+    kind: row.kind,
+    summary: row.summary,
+    payload: row.payload,
+    turnId: row.turnId,
+    createdAt: row.createdAt,
+  };
+  return row.sequence === null ? activity : { ...activity, sequence: row.sequence };
+}
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown): ProjectionRepositoryError =>
@@ -426,12 +448,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          linked_pull_request_json AS "linkedPullRequest",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
+          unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
           pinned_at AS "pinnedAt",
@@ -462,12 +486,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          linked_pull_request_json AS "linkedPullRequest",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
+          unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
           pinned_at AS "pinnedAt",
@@ -500,12 +526,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          linked_pull_request_json AS "linkedPullRequest",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
+          unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
           pinned_at AS "pinnedAt",
@@ -943,12 +971,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          linked_pull_request_json AS "linkedPullRequest",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           archived_at AS "archivedAt",
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
+          unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
           pinned_at AS "pinnedAt",
@@ -1037,6 +1067,69 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             created_at
           FROM projection_thread_activities
           WHERE thread_id = ${threadId}
+          ORDER BY
+            sequence DESC,
+            created_at DESC,
+            activity_id DESC
+          LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
+        ) AS recent_activities
+        ORDER BY
+          sequence ASC,
+          created_at ASC,
+          activity_id ASC
+      `,
+  });
+  const getActivityDetailRowByIds = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: ThreadId, activityId: EventId }),
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, activityId }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND activity_id = ${activityId}
+        LIMIT 1
+      `,
+  });
+
+  const listThreadActivityRowsByThreadAndKinds = SqlSchema.findAll({
+    Request: ThreadActivityKindsLookupInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, activityKinds }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM (
+          SELECT
+            activity_id,
+            thread_id,
+            turn_id,
+            tone,
+            kind,
+            summary,
+            payload_json,
+            sequence,
+            created_at
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND ${sql.in("kind", activityKinds)}
           ORDER BY
             sequence DESC,
             created_at DESC,
@@ -1321,6 +1414,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             )
             AND json_extract(activity.payload_json, '$.requestId') IS NOT NULL
         ),
+        command_catalogs AS (
+          SELECT
+            activity_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY json_extract(payload_json, '$.providerInstanceId')
+              ORDER BY sequence DESC, created_at DESC, activity_id DESC
+            ) AS catalog_order
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND kind = 'provider.commands.updated'
+        ),
         pinned_activity_ids AS (
           SELECT activity_id
           FROM pending_approval_activities
@@ -1330,6 +1434,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           FROM user_input_lifecycle
           WHERE request_order = 1
             AND kind = 'user-input.requested'
+          UNION ALL
+          SELECT activity_id
+          FROM command_catalogs
+          WHERE catalog_order = 1
         )
         SELECT
           activity.activity_id AS "activityId",
@@ -1701,12 +1809,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 interactionMode: row.interactionMode,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
+                ...(row.linkedPullRequest === null
+                  ? {}
+                  : { linkedPullRequest: row.linkedPullRequest }),
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
                 archivedAt: row.archivedAt,
                 settledOverride: row.settledOverride,
                 settledAt: row.settledAt,
+                unsettledAt: row.unsettledAt,
                 snoozedUntil: row.snoozedUntil,
                 snoozedAt: row.snoozedAt,
                 pinnedAt: row.pinnedAt,
@@ -1908,12 +2020,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  ...(row.linkedPullRequest === null
+                    ? {}
+                    : { linkedPullRequest: row.linkedPullRequest }),
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
                   settledOverride: row.settledOverride,
                   settledAt: row.settledAt,
+                  unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
                   pinnedAt: row.pinnedAt,
@@ -2044,12 +2160,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       interactionMode: row.interactionMode,
                       branch: row.branch,
                       worktreePath: row.worktreePath,
+                      ...(row.linkedPullRequest === null
+                        ? {}
+                        : { linkedPullRequest: row.linkedPullRequest }),
                       latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                       createdAt: row.createdAt,
                       updatedAt: row.updatedAt,
                       archivedAt: row.archivedAt,
                       settledOverride: row.settledOverride,
                       settledAt: row.settledAt,
+                      unsettledAt: row.unsettledAt,
                       snoozedUntil: row.snoozedUntil,
                       snoozedAt: row.snoozedAt,
                       pinnedAt: row.pinnedAt,
@@ -2189,12 +2309,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  ...(row.linkedPullRequest === null
+                    ? {}
+                    : { linkedPullRequest: row.linkedPullRequest }),
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
                   settledOverride: row.settledOverride,
                   settledAt: row.settledAt,
+                  unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
                   pinnedAt: row.pinnedAt,
@@ -2469,12 +2593,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        ...(threadRow.value.linkedPullRequest === null
+          ? {}
+          : { linkedPullRequest: threadRow.value.linkedPullRequest }),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
         settledOverride: threadRow.value.settledOverride,
         settledAt: threadRow.value.settledAt,
+        unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
         pinnedAt: threadRow.value.pinnedAt,
@@ -2502,8 +2630,43 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     readonly beforeTurnKey: string;
   }
 
-  const getThreadDetailByIdBounded = (threadId: ThreadId, bounds: ThreadDetailBounds | undefined) =>
+  const getThreadDetailByIdBounded = (
+    threadId: ThreadId,
+    bounds: ThreadDetailBounds | undefined,
+    query: ProjectionThreadDetailQuery | undefined = undefined,
+  ) =>
     Effect.gen(function* () {
+      const activityRowsEffect = (
+        query?.activityKinds === undefined
+          ? bounds === undefined
+            ? listThreadActivityRowsByThread({ threadId })
+            : listThreadActivityRowsByThreadWindow({ threadId, ...bounds })
+          : query.activityKinds.length === 0
+            ? Effect.succeed([])
+            : listThreadActivityRowsByThreadAndKinds({
+                threadId,
+                activityKinds: query.activityKinds,
+              })
+      ).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getThreadDetailById:listActivities:query",
+            "ProjectionSnapshotQuery.getThreadDetailById:listActivities:decodeRows",
+          ),
+        ),
+      );
+      const pinnedActivityRowsEffect =
+        query?.activityKinds === undefined
+          ? listPinnedThreadActivityRowsByThread({ threadId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadDetailById:listPinnedActivities:query",
+                  "ProjectionSnapshotQuery.getThreadDetailById:listPinnedActivities:decodeRows",
+                ),
+              ),
+            )
+          : Effect.succeed([]);
+
       const [
         threadRow,
         messageRows,
@@ -2541,25 +2704,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
-        (bounds === undefined
-          ? listThreadActivityRowsByThread({ threadId })
-          : listThreadActivityRowsByThreadWindow({ threadId, ...bounds })
-        ).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadDetailById:listActivities:query",
-              "ProjectionSnapshotQuery.getThreadDetailById:listActivities:decodeRows",
-            ),
-          ),
-        ),
-        listPinnedThreadActivityRowsByThread({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadDetailById:listPinnedActivities:query",
-              "ProjectionSnapshotQuery.getThreadDetailById:listPinnedActivities:decodeRows",
-            ),
-          ),
-        ),
+        activityRowsEffect,
+        pinnedActivityRowsEffect,
         listCheckpointRowsByThread({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -2610,12 +2756,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        ...(threadRow.value.linkedPullRequest === null
+          ? {}
+          : { linkedPullRequest: threadRow.value.linkedPullRequest }),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
         settledOverride: threadRow.value.settledOverride,
         settledAt: threadRow.value.settledAt,
+        unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
         pinnedAt: threadRow.value.pinnedAt,
@@ -2675,8 +2825,23 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       );
     });
 
-  const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
-    getThreadDetailByIdBounded(threadId, undefined);
+  const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (
+    threadId,
+    query,
+  ) => getThreadDetailByIdBounded(threadId, undefined, query);
+  const getActivityDetail: ProjectionSnapshotQueryShape["getActivityDetail"] = (
+    threadId,
+    activityId,
+  ) =>
+    getActivityDetailRowByIds({ threadId, activityId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getActivityDetail:query",
+          "ProjectionSnapshotQuery.getActivityDetail:decodeRow",
+        ),
+      ),
+      Effect.map((row) => Option.map(row, mapActivityRow)),
+    );
 
   // Bounds pathological fan-out: one user turn that spawned hundreds of
   // subagent turns still pages in bounded chunks, at the cost of splitting the
@@ -2827,6 +2992,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getArchivedShellSnapshot,
     searchThreads,
     getSnapshotSequence,
+    getThreadDetailById,
+    getActivityDetail,
     getCounts,
     getActiveProjectByWorkspaceRoot,
     getProjectShellById,
@@ -2834,7 +3001,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,
-    getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
 });

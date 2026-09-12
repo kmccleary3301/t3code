@@ -82,36 +82,104 @@ describe("theme failure handling", () => {
     expect(readThemePreference()).toBe("t3-chat");
   });
 
-  it("falls back during initial theme application and logs only safe attributes", async () => {
-    const cause = new Error("private browsing storage failure");
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("does not apply a legacy theme during module evaluation before runtime recovery", async () => {
+    const getItem = vi.fn(() => "unsafe-custom");
+    const toggle = vi.fn();
     vi.stubGlobal("window", {
-      localStorage: createStorage({
-        getItem: () => {
-          throw cause;
-        },
-      }),
+      localStorage: createStorage({ getItem }),
       matchMedia: () => ({ matches: false }),
     });
     vi.stubGlobal("document", {
       documentElement: {
-        classList: { toggle: vi.fn() },
+        dataset: {},
+        classList: { toggle },
       },
     });
 
     await expect(import("./useTheme")).resolves.toBeDefined();
+    expect(getItem).not.toHaveBeenCalled();
+    expect(toggle).not.toHaveBeenCalled();
+  });
 
-    expect(errorLog).toHaveBeenCalledWith(
-      "Failed to read theme preference for t3code:theme.",
-      expect.objectContaining({
-        operation: "read",
-        storageKey: "t3code:theme",
-        errorTag: "ThemeStorageError",
+  it("leaves the startup appearance runtime authoritative on hook mount", async () => {
+    const useEffect = vi.fn();
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useEffect,
+      useSyncExternalStore: (
+        _subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => getSnapshot(),
+    }));
+    vi.stubGlobal("window", {
+      addEventListener: () => undefined,
+      localStorage: createStorage(),
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
       }),
-    );
-    const attributes = errorLog.mock.calls[0]?.[1];
-    expect(attributes).not.toHaveProperty("cause");
-    expect(JSON.stringify(attributes)).not.toContain(cause.message);
+      removeEventListener: () => undefined,
+    });
+
+    const { useTheme } = await import("./useTheme");
+    useTheme();
+
+    expect(useEffect).not.toHaveBeenCalled();
+  });
+
+  it("changes appearance mode without replacing the runtime package selection", async () => {
+    const applyAppearanceTheme = vi.fn(async () => undefined);
+    const setAppearanceModePreference = vi.fn(async () => undefined);
+    vi.doMock("../appearanceRuntime", () => ({
+      applyAppearanceTheme,
+      setAppearanceModePreference,
+    }));
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useSyncExternalStore: (
+        _subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => getSnapshot(),
+    }));
+    const storage = createStorage();
+    const themeColor = { setAttribute: vi.fn() };
+    vi.stubGlobal("window", {
+      addEventListener: () => undefined,
+      localStorage: storage,
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+      removeEventListener: () => undefined,
+    });
+    vi.stubGlobal("document", {
+      body: { style: {} },
+      documentElement: {
+        dataset: {},
+        classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn() },
+        offsetHeight: 0,
+        style: {},
+      },
+      querySelector: () => null,
+      querySelectorAll: () => [themeColor],
+    });
+    vi.stubGlobal("getComputedStyle", () => ({
+      backgroundColor: "#ffffff",
+      getPropertyValue: () => "",
+    }));
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    const { useTheme } = await import("./useTheme");
+    const theme = useTheme();
+
+    expect(theme.setAppearanceMode("dark")).toBe(true);
+    expect(setAppearanceModePreference).toHaveBeenCalledWith("dark");
+    expect(applyAppearanceTheme).not.toHaveBeenCalled();
   });
 
   it("retries a failed storage read only after a relevant storage event", async () => {

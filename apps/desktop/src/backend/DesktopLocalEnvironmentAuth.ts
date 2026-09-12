@@ -1,5 +1,9 @@
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
-import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import {
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+  parseProductProfile,
+  resolveProductIdentity,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -45,6 +49,9 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
+  const productName = resolveProductIdentity(
+    parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+  ).baseName;
   const tokenRef = yield* Ref.make(Option.none<string>());
   const mutex = yield* Semaphore.make(1);
 
@@ -71,7 +78,7 @@ export const make = Effect.gen(function* () {
           httpBaseUrl: config.httpBaseUrl.href,
           credential,
           clientMetadata: {
-            label: "T3 Code Desktop",
+            label: `${productName} Desktop`,
             deviceType: "desktop",
           },
         }).pipe(

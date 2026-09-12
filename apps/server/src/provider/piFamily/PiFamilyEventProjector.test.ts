@@ -1,8 +1,33 @@
 import { assert, describe, it } from "vite-plus/test";
 
-import { PiFamilyEventProjector, nativeEventId } from "./PiFamilyEventProjector.ts";
+import { PiFamilyEventProjector } from "./PiFamilyEventProjector.ts";
+import { nativeEventId } from "./NativeEventIdentity.ts";
 
 describe("Pi/OMP native event projection", () => {
+  it("streams SDK deltas without replaying snapshots or tool arguments", () => {
+    const projector = new PiFamilyEventProjector("omp");
+    const message = { role: "assistant", content: [{ type: "text", text: "Hello **world**" }] };
+    const events = [
+      { type: "text_delta", delta: "Hello " },
+      { type: "text_delta", delta: "**world**" },
+      { type: "text_end", content: "Hello **world**" },
+      { type: "toolcall_delta", delta: '{"path":"file.txt"}' },
+      { type: "thinking_delta", delta: "A separate thought." },
+    ].flatMap((assistantMessageEvent) =>
+      projector.project({ type: "message_update", assistantMessageEvent, message }),
+    );
+    assert.deepEqual(
+      events.flatMap((event) =>
+        event.kind === "message.delta" ? [[event.channel, event.text]] : [],
+      ),
+      [
+        ["assistant", "Hello "],
+        ["assistant", "**world**"],
+        ["reasoning", "A separate thought."],
+      ],
+    );
+  });
+
   it("settles Pi only after agent_settled and keeps IDs restart-stable", () => {
     const pi = new PiFamilyEventProjector("pi");
     pi.project({
@@ -169,6 +194,91 @@ describe("Pi/OMP native event projection", () => {
         },
       ],
     );
+  });
+
+  it("preserves keyed OMP widget content and clear operations", () => {
+    const projector = new PiFamilyEventProjector("omp");
+    const update = {
+      type: "extension_ui_request",
+      id: "widget-1",
+      method: "setWidget",
+      widgetKey: "subagents",
+      widgetLines: ["\u001b[32m2 running\u001b[0m", "sonic · read"],
+      widgetPlacement: "aboveEditor",
+    };
+    assert.deepEqual(projector.project(update), [
+      {
+        kind: "ui.request",
+        request: {
+          kind: "widget",
+          requestId: "widget-1",
+          key: "subagents",
+          placement: "above",
+          content: "2 running\nsonic · read",
+        },
+        raw: update,
+      },
+    ]);
+    const clear = {
+      type: "extension_ui_request",
+      id: "widget-2",
+      method: "setWidget",
+      widgetKey: "subagents",
+    };
+    assert.deepEqual(projector.project(clear)[0], {
+      kind: "ui.request",
+      request: {
+        kind: "widget",
+        requestId: "widget-2",
+        key: "subagents",
+        placement: "below",
+      },
+      raw: clear,
+    });
+  });
+
+  it("projects successful OMP todo snapshots as canonical plans", () => {
+    const projector = new PiFamilyEventProjector("omp");
+    const event = {
+      type: "tool_execution_end",
+      toolCallId: "todo-1",
+      toolName: "todo",
+      isError: false,
+      result: {
+        details: {
+          phases: [
+            {
+              name: "Build",
+              tasks: [
+                { content: "Inspect seams", status: "completed" },
+                { content: "Wire UI", status: "in_progress" },
+              ],
+            },
+            {
+              name: "Verify",
+              tasks: [
+                { content: "Run tests", status: "blocked", blocker: "implementation" },
+                { content: "Old task", status: "abandoned" },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const projected = projector.project(event);
+    assert.deepEqual(
+      projected.map((item) => item.kind),
+      ["tool.completed", "plan.updated"],
+    );
+    assert.deepEqual(projected[1], {
+      kind: "plan.updated",
+      plan: [
+        { step: "Build · Inspect seams", status: "completed" },
+        { step: "Build · Wire UI", status: "inProgress" },
+        { step: "Verify · Run tests — blocked: implementation", status: "pending" },
+      ],
+      raw: event,
+    });
   });
 
   it("projects OMP automatic compaction and retry lifecycle without settling a turn", () => {
@@ -451,5 +561,97 @@ describe("Pi/OMP native event projection", () => {
     const snapshots = projector.snapshotTasks();
     assert.equal(snapshots.find((task) => task.id === "parent")?.status, "completed");
     assert.equal(snapshots.find((task) => task.id === "child")?.parentTaskId, "parent");
+  });
+  it("evicts terminal task indexes without retaining stale tool-call parents", () => {
+    const projector = new PiFamilyEventProjector("omp", { maxTaskSnapshots: 2 });
+    projector.project({
+      type: "subagent_lifecycle",
+      id: "evicted-parent",
+      toolCallId: "stale-tool",
+      status: "completed",
+    });
+    projector.project({
+      type: "subagent_lifecycle",
+      id: "retained-parent",
+      status: "completed",
+    });
+    projector.project({
+      type: "subagent_lifecycle",
+      id: "newest-parent",
+      status: "completed",
+    });
+    assert.equal(projector.diagnostics().taskSnapshots, 2);
+
+    projector.project({
+      type: "subagent_lifecycle",
+      id: "child",
+      parentToolCallId: "stale-tool",
+      status: "running",
+    });
+    assert.equal(
+      projector.snapshotTasks().find((task) => task.id === "child")?.parentTaskId,
+      undefined,
+    );
+  });
+
+  it("keeps active children across snapshot overflow and settles reparented parents", () => {
+    const projector = new PiFamilyEventProjector("omp", { maxTaskSnapshots: 1 });
+    projector.project({
+      type: "subagent_lifecycle",
+      id: "parent",
+      toolCallId: "old-tool",
+      status: "running",
+    });
+    projector.project({
+      type: "subagent_lifecycle",
+      id: "new-parent",
+      toolCallId: "new-tool",
+      status: "running",
+    });
+    projector.project({
+      type: "subagent_lifecycle",
+      id: "child",
+      parentTaskId: "parent",
+      parentToolCallId: "old-tool",
+      status: "running",
+    });
+
+    const held = projector.project({
+      type: "subagent_lifecycle",
+      id: "parent",
+      status: "completed",
+    });
+    assert.equal(held[0]?.kind, "task.progress");
+    if (held[0]?.kind === "task.progress") {
+      assert.equal(held[0].task.status, "waiting");
+    }
+    const reparented = projector.project({
+      type: "subagent_lifecycle",
+      id: "child",
+      parentTaskId: "new-parent",
+      parentToolCallId: "new-tool",
+      status: "running",
+    });
+    assert.deepEqual(
+      reparented.map((event) => event.kind),
+      ["task.progress", "task.completed"],
+    );
+    const settledParent = reparented[1];
+    assert.equal(settledParent?.kind, "task.completed");
+    if (settledParent?.kind === "task.completed") {
+      assert.equal(settledParent.task.status, "completed");
+    }
+
+    const settled = projector.project({
+      type: "subagent_lifecycle",
+      id: "child",
+      parentTaskId: "new-parent",
+      parentToolCallId: "new-tool",
+      status: "completed",
+    });
+    assert.deepEqual(
+      settled.map((event) => event.kind),
+      ["task.completed"],
+    );
   });
 });

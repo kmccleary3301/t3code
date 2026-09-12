@@ -1,5 +1,10 @@
 import type { ExpoConfig } from "expo/config";
 
+import {
+  parseProductProfile,
+  resolveProductDisplayName,
+  resolveProductIdentity,
+} from "../../packages/contracts/src/productIdentity.ts";
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
@@ -9,12 +14,21 @@ const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
+const productProfile = parseProductProfile(process.env.T3_PRODUCT_PROFILE);
+const productIdentity = resolveProductIdentity(productProfile);
+const isPiOmpProfile = productProfile === "pi-omp";
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+const runtimeVersionPolicy =
+  process.env.MOBILE_VERSION_POLICY ??
+  (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
+// Universal exports already contain their own rounded-square silhouette. Using one as an adaptive
+// foreground makes Android draw an icon shape inside the launcher's mask.
+const androidAdaptiveForeground = fromRepoRoot(BRAND_ASSET_PATHS.androidAdaptiveForegroundPng);
 
 if (
   isIosPersonalTeamBuild &&
@@ -30,38 +44,38 @@ const DEVELOPMENT_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIconComposerProject),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
-  androidAdaptiveForeground: fromRepoRoot(BRAND_ASSET_PATHS.developmentUniversalIconPng),
-  androidAdaptiveBackgroundColor: "#00639B",
-  androidMonochromeIcon: "./assets/android-icon-mark.png",
-  androidNotificationIcon: "./assets/android-notification-icon.png",
-  androidNotificationColor: "#00639B",
+  androidAdaptiveForeground,
+  androidAdaptiveBackgroundColor: "#171411",
+  androidMonochromeIcon: fromRepoRoot(BRAND_ASSET_PATHS.androidMonochromePng),
+  androidNotificationIcon: fromRepoRoot(BRAND_ASSET_PATHS.androidNotificationPng),
+  androidNotificationColor: "#E6B486",
 } as const;
 
 const PREVIEW_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIconComposerProject),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
-  androidAdaptiveForeground: fromRepoRoot(BRAND_ASSET_PATHS.nightlyLinuxIconPng),
-  androidAdaptiveBackgroundColor: "#111533",
-  androidMonochromeIcon: "./assets/android-icon-mark.png",
-  androidNotificationIcon: "./assets/android-notification-icon.png",
-  androidNotificationColor: "#7565C7",
+  androidAdaptiveForeground,
+  androidAdaptiveBackgroundColor: "#171411",
+  androidMonochromeIcon: fromRepoRoot(BRAND_ASSET_PATHS.androidMonochromePng),
+  androidNotificationIcon: fromRepoRoot(BRAND_ASSET_PATHS.androidNotificationPng),
+  androidNotificationColor: "#E6B486",
 } as const;
 
 const RELEASE_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
-  androidAdaptiveForeground: "./assets/android-icon-mark.png",
-  androidAdaptiveBackgroundColor: "#000000",
-  androidMonochromeIcon: "./assets/android-icon-mark.png",
-  androidNotificationIcon: "./assets/android-notification-icon.png",
-  androidNotificationColor: "#FFFFFF",
+  androidAdaptiveForeground,
+  androidAdaptiveBackgroundColor: "#171411",
+  androidMonochromeIcon: fromRepoRoot(BRAND_ASSET_PATHS.androidMonochromePng),
+  androidNotificationIcon: fromRepoRoot(BRAND_ASSET_PATHS.androidNotificationPng),
+  androidNotificationColor: "#E6B486",
 } as const;
 
 const VARIANT_CONFIG = {
   development: {
-    appName: "T3 Code Dev",
+    appName: resolveProductDisplayName(productProfile, "Dev"),
     scheme: "t3code-dev",
     iosBundleIdentifier: "com.t3tools.t3code.dev",
     androidPackage: "com.t3tools.t3code.dev",
@@ -69,7 +83,7 @@ const VARIANT_CONFIG = {
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
-    appName: "T3 Code Preview",
+    appName: resolveProductDisplayName(productProfile, "Preview"),
     scheme: "t3code-preview",
     iosBundleIdentifier: "com.t3tools.t3code.preview",
     androidPackage: "com.t3tools.t3code.preview",
@@ -77,7 +91,7 @@ const VARIANT_CONFIG = {
     assets: PREVIEW_ASSETS,
   },
   production: {
-    appName: "T3 Code",
+    appName: resolveProductDisplayName(productProfile, "Local"),
     scheme: "t3code",
     iosBundleIdentifier: "com.t3tools.t3code",
     androidPackage: "com.t3tools.t3code",
@@ -97,7 +111,15 @@ function resolveAppVariant(value: string | undefined): AppVariant {
   }
 }
 
-const variant = VARIANT_CONFIG[APP_VARIANT];
+const baseVariant = VARIANT_CONFIG[APP_VARIANT];
+const variant = isPiOmpProfile
+  ? {
+      ...baseVariant,
+      scheme: APP_VARIANT === "production" ? "t3code-pi-omp" : `t3code-pi-omp-${APP_VARIANT}`,
+      iosBundleIdentifier: `${baseVariant.iosBundleIdentifier}.piomp`,
+      androidPackage: `${baseVariant.androidPackage}.piomp`,
+    }
+  : baseVariant;
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -121,7 +143,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
       {
         name: "AgentActivity",
         displayName: "Agent Activity",
-        description: "Shows the current state of active T3 Code agents.",
+        description: `Shows the current state of active ${productIdentity.baseName} agents.`,
         supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
       },
     ],
@@ -142,12 +164,14 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         supportsText: true,
         supportsWebUrlWithMaxCount: 1,
         supportsImageWithMaxCount: 8,
+        supportsMovieWithMaxCount: 8,
+        supportsFileWithMaxCount: 8,
       },
     },
     android: {
       enabled: true,
-      singleShareMimeTypes: ["text/plain", "image/*"],
-      multipleShareMimeTypes: ["image/*"],
+      singleShareMimeTypes: ["*/*"],
+      multipleShareMimeTypes: ["*/*"],
     },
   },
 ];
@@ -158,25 +182,23 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
 
 const config: ExpoConfig = {
   name: variant.appName,
-  slug: "t3-code",
+  slug: isPiOmpProfile ? "km-code-pi-omp" : "km-code",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
   version: "1.0.4",
   runtimeVersion: {
-    // Fingerprint (not appVersion) so an OTA only reaches binaries whose native
-    // project — native deps, config plugins, AND patches/ — matches the update.
-    // With appVersion, every 0.1.0 build shares a runtime version, so a JS update
-    // could land on a binary missing the native changes it needs and crash.
-    policy: process.env.MOBILE_VERSION_POLICY ?? "fingerprint",
+    // Development manifests resolve on every launch, so avoid fingerprint's
+    // expensive native-project calculation there. Preview and production stay
+    // fingerprinted so OTAs only reach binaries with matching native projects.
+    policy: runtimeVersionPolicy,
   },
   orientation: "portrait",
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
   updates: {
-    enabled: true,
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
+    // This fork has no public OTA channel. Keeping updates disabled prevents
+    // an upstream Expo bundle from silently replacing KM Code locally.
+    enabled: false,
   },
   ios: {
     icon: variant.assets.iosIcon,
@@ -185,10 +207,6 @@ const config: ExpoConfig = {
     // showcase capture build requires full screen (see infoPlist below).
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
-    // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
-    // does not fall back to a personal team (which cannot sign app groups,
-    // Sign in with Apple, or push notification entitlements).
-    appleTeamId: "ARK85ZXQ4Z",
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
@@ -197,8 +215,8 @@ const config: ExpoConfig = {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
-      NSLocalNetworkUsageDescription:
-        "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
+      NSLocalNetworkUsageDescription: `Allow ${productIdentity.baseName} to connect to ${productIdentity.baseName} servers on your local network or tailnet.`,
+      NSPhotoLibraryAddUsageDescription: `Allow ${productIdentity.baseName} to save images to your photo library.`,
       ITSAppUsesNonExemptEncryption: false,
       // The App Store screenshot harness rotates the iPad interface from
       // inside the app (CI denies osascript the Accessibility access that
@@ -290,9 +308,18 @@ const config: ExpoConfig = {
       },
     ],
     [
+      "expo-audio",
+      {
+        microphonePermission: `Allow ${productIdentity.baseName} to use your microphone for voice input.`,
+        recordAudioAndroid: false,
+        enableBackgroundPlayback: false,
+        enableBackgroundRecording: false,
+      },
+    ],
+    [
       "expo-camera",
       {
-        cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
+        cameraPermission: `Allow ${productIdentity.baseName} to access your camera so you can scan pairing QR codes.`,
         microphonePermission: false,
         barcodeScannerEnabled: true,
         recordAudioAndroid: false,
@@ -304,11 +331,11 @@ const config: ExpoConfig = {
       {
         image: variant.assets.splashIcon,
         resizeMode: "contain",
-        backgroundColor: "#ffffff",
+        backgroundColor: "#171411",
         imageWidth: 220,
         dark: {
           image: variant.assets.splashIcon,
-          backgroundColor: "#0a0a0a",
+          backgroundColor: "#171411",
         },
       },
     ],
@@ -343,6 +370,7 @@ const config: ExpoConfig = {
   ],
   extra: {
     appVariant: APP_VARIANT,
+    productProfile: productProfile,
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
@@ -365,11 +393,7 @@ const config: ExpoConfig = {
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    },
   },
-  owner: "pingdotgg",
 };
 
 export default config;

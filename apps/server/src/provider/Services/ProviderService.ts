@@ -14,6 +14,7 @@
 import type {
   ProviderInterruptTurnInput,
   ProviderInstanceId,
+  ProviderNativeCommandsInput,
   ProviderNativeSessionListInput,
   ProviderNativeSessionSummary,
   ProviderRespondToRequestInput,
@@ -21,10 +22,14 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderSubagentTranscriptReadResult,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
   ThreadId,
   ProviderTurnStartResult,
+  ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -102,11 +107,25 @@ export interface ProviderServiceShape {
   readonly listNativeSessions?: (
     input: ProviderNativeSessionListInput,
   ) => Effect.Effect<ReadonlyArray<ProviderNativeSessionSummary>, ProviderServiceError>;
+  readonly discoverNativeCommands: (
+    input: ProviderNativeCommandsInput,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSlashCommand>, ProviderServiceError>;
 
   readonly readNativeHistory?: (input: {
     readonly threadId: ThreadId;
     readonly cursor?: string;
   }) => Effect.Effect<ProviderNativeHistoryPage, ProviderServiceError>;
+  readonly readNativeHistoryBySession?: (input: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly sessionId: string;
+    readonly cwd: string;
+    readonly cursor?: string;
+  }) => Effect.Effect<ProviderNativeHistoryPage, ProviderServiceError>;
+  readonly readSubagentTranscript?: (input: {
+    readonly threadId: ThreadId;
+    readonly subagentId: string;
+    readonly cursor?: string;
+  }) => Effect.Effect<ProviderSubagentTranscriptReadResult, ProviderServiceError>;
   readonly renameNativeSession?: (input: {
     readonly threadId: ThreadId;
     readonly name: string;
@@ -140,6 +159,13 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly checkpoint: unknown;
   }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Upload a thread and return the provider's shareable feedback identifier.
+   */
+  readonly uploadFeedback: (
+    input: ProviderUploadFeedbackInput,
+  ) => Effect.Effect<ProviderUploadFeedbackResult, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

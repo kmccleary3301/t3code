@@ -6,11 +6,11 @@ import {
 import { type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
 import {
   Plus,
+  Square,
   SquareSplitHorizontal,
   SquareSplitVertical,
   TerminalSquare,
   Trash2,
-  XIcon,
 } from "lucide-react";
 import {
   type ContextMenuItem,
@@ -18,6 +18,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { DEFAULT_APPEARANCE_ANSI } from "@t3tools/shared/appearance";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
@@ -33,6 +34,7 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
+import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
@@ -40,9 +42,13 @@ import {
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
 } from "~/terminal/ghostty/surface";
-import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
+import {
+  type GhosttyAnsiPalette,
+  type GhosttyColor,
+  type GhosttyTheme,
+} from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { isTerminalLinkActivation, resolvePathLinkTarget } from "../terminal-links";
+import { isTerminalLinkActivation, isTerminalUrl, resolvePathLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -146,10 +152,35 @@ function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback:
   return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
 }
 
-/** The surface treats an omitted family or size as "use the built-in default". */
-function terminalFontOptions(family: string, size: number): { family?: string; size: number } {
+/** The surface treats omitted fields as "use the normalized terminal defaults". */
+function terminalFontOptions(
+  family: string,
+  size: number,
+  mountElement?: HTMLElement | null,
+): {
+  family?: string;
+  size: number;
+  weight?: number;
+  lineHeight?: number;
+  ligatures?: boolean;
+} {
   const trimmed = family.trim();
-  return trimmed.length > 0 ? { family: trimmed, size } : { size };
+  const computed =
+    mountElement === undefined || mountElement === null ? null : getComputedStyle(mountElement);
+  const weight = Number.parseInt(computed?.getPropertyValue("--font-weight-terminal") ?? "", 10);
+  const lineHeight = Number.parseFloat(computed?.getPropertyValue("--line-height-terminal") ?? "");
+  const ligatures = computed?.getPropertyValue("--font-variant-ligatures-terminal").trim();
+  return {
+    ...(trimmed.length > 0 ? { family: trimmed } : {}),
+    size,
+    ...(Number.isFinite(weight) ? { weight } : {}),
+    ...(Number.isFinite(lineHeight) ? { lineHeight } : {}),
+    ...(ligatures === "none"
+      ? { ligatures: false }
+      : ligatures === "normal"
+        ? { ligatures: true }
+        : {}),
+  };
 }
 
 export function terminalThemeFromApp(mountElement?: HTMLElement | null): GhosttyTheme {
@@ -183,6 +214,92 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     "--terminal-selection-background",
     isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
   );
+  const ansi: GhosttyAnsiPalette = {
+    black: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-black", DEFAULT_APPEARANCE_ANSI.black),
+      { r: 0, g: 0, b: 0 },
+    ),
+    red: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-red", DEFAULT_APPEARANCE_ANSI.red),
+      { r: 205, g: 49, b: 49 },
+    ),
+    green: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-green", DEFAULT_APPEARANCE_ANSI.green),
+      { r: 13, g: 188, b: 121 },
+    ),
+    yellow: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-yellow", DEFAULT_APPEARANCE_ANSI.yellow),
+      { r: 229, g: 229, b: 16 },
+    ),
+    blue: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-blue", DEFAULT_APPEARANCE_ANSI.blue),
+      { r: 36, g: 114, b: 200 },
+    ),
+    magenta: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-magenta", DEFAULT_APPEARANCE_ANSI.magenta),
+      { r: 188, g: 63, b: 188 },
+    ),
+    cyan: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-cyan", DEFAULT_APPEARANCE_ANSI.cyan),
+      { r: 17, g: 168, b: 205 },
+    ),
+    white: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-white", DEFAULT_APPEARANCE_ANSI.white),
+      { r: 229, g: 229, b: 229 },
+    ),
+    brightBlack: parseTerminalColor(
+      readThemeColor(
+        themeStyles,
+        "--terminal-ansi-brightBlack",
+        DEFAULT_APPEARANCE_ANSI.brightBlack,
+      ),
+      { r: 102, g: 102, b: 102 },
+    ),
+    brightRed: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-brightRed", DEFAULT_APPEARANCE_ANSI.brightRed),
+      { r: 241, g: 76, b: 76 },
+    ),
+    brightGreen: parseTerminalColor(
+      readThemeColor(
+        themeStyles,
+        "--terminal-ansi-brightGreen",
+        DEFAULT_APPEARANCE_ANSI.brightGreen,
+      ),
+      { r: 35, g: 209, b: 139 },
+    ),
+    brightYellow: parseTerminalColor(
+      readThemeColor(
+        themeStyles,
+        "--terminal-ansi-brightYellow",
+        DEFAULT_APPEARANCE_ANSI.brightYellow,
+      ),
+      { r: 245, g: 245, b: 67 },
+    ),
+    brightBlue: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-brightBlue", DEFAULT_APPEARANCE_ANSI.brightBlue),
+      { r: 59, g: 142, b: 234 },
+    ),
+    brightMagenta: parseTerminalColor(
+      readThemeColor(
+        themeStyles,
+        "--terminal-ansi-brightMagenta",
+        DEFAULT_APPEARANCE_ANSI.brightMagenta,
+      ),
+      { r: 214, g: 112, b: 214 },
+    ),
+    brightCyan: parseTerminalColor(
+      readThemeColor(themeStyles, "--terminal-ansi-brightCyan", DEFAULT_APPEARANCE_ANSI.brightCyan),
+      { r: 41, g: 184, b: 219 },
+    ),
+    brightWhite: parseTerminalColor(
+      readThemeColor(
+        themeStyles,
+        "--terminal-ansi-brightWhite",
+        DEFAULT_APPEARANCE_ANSI.brightWhite,
+      ),
+      { r: 255, g: 255, b: 255 },
+    ),
+  };
   return {
     background: parseTerminalColor(
       terminalBackground,
@@ -197,6 +314,7 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
       isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
     ),
     selectionBackground: terminalSelection,
+    ansi,
   };
 }
 
@@ -468,7 +586,9 @@ export function TerminalViewport({
     const current = terminalFontRef.current;
     if (current.family === terminalFontFamily && current.size === terminalFontSize) return;
     terminalFontRef.current = { family: terminalFontFamily, size: terminalFontSize };
-    void terminalRef.current?.setFont(terminalFontOptions(terminalFontFamily, terminalFontSize));
+    void terminalRef.current?.setFont(
+      terminalFontOptions(terminalFontFamily, terminalFontSize, containerRef.current),
+    );
   }, [terminalFontFamily, terminalFontSize]);
 
   useEffect(() => {
@@ -485,7 +605,7 @@ export function TerminalViewport({
       const setupFont = terminalFontRef.current;
       const terminalOptions: GhosttyTerminalSurfaceOptions = {
         theme: terminalThemeFromApp(mount),
-        font: terminalFontOptions(setupFont.family, setupFont.size),
+        font: terminalFontOptions(setupFont.family, setupFont.size, mount),
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
@@ -513,7 +633,7 @@ export function TerminalViewport({
       // was dropped. Re-apply whatever is current once the terminal exists.
       const currentFont = terminalFontRef.current;
       if (currentFont.family !== setupFont.family || currentFont.size !== setupFont.size) {
-        void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size));
+        void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size, mount));
       }
       const latestSession = latestSessionRef.current;
       previousSessionRef.current = latestSession;
@@ -749,7 +869,7 @@ export function TerminalViewport({
         if (!isTerminalLinkActivation(event)) return;
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
-        if (/^https?:\/\//u.test(text)) {
+        if (isTerminalUrl(text)) {
           if (!localApi) {
             writeSystemMessage(latestTerminal, "Opening links is unavailable in this browser.");
             return;
@@ -978,6 +1098,7 @@ export function TerminalViewport({
   return (
     <div
       ref={containerRef}
+      data-t3-part="terminal"
       className="relative h-full w-full overflow-hidden bg-[var(--terminal-background)]"
     />
   );
@@ -1390,6 +1511,7 @@ export default function ThreadTerminalDrawer({
     return (
       <aside
         data-terminal-owner={isPanel ? "right-panel" : "drawer"}
+        data-t3-surface="terminal"
         className={cn(
           "thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background",
           isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
@@ -1399,6 +1521,7 @@ export default function ThreadTerminalDrawer({
         {!isPanel ? (
           <div
             className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+            data-t3-part="terminal-resize"
             onPointerDown={handleResizePointerDown}
             onPointerMove={handleResizePointerMove}
             onPointerUp={handleResizePointerEnd}
@@ -1420,6 +1543,7 @@ export default function ThreadTerminalDrawer({
   return (
     <aside
       data-terminal-owner={isPanel ? "right-panel" : "drawer"}
+      data-t3-surface="terminal"
       className={cn(
         "thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background",
         isPanel ? "h-full flex-1" : "shrink-0 border-t border-border/80",
@@ -1429,6 +1553,7 @@ export default function ThreadTerminalDrawer({
       {!isPanel ? (
         <div
           className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+          data-t3-part="terminal-resize"
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
           onPointerUp={handleResizePointerEnd}
@@ -1488,6 +1613,7 @@ export default function ThreadTerminalDrawer({
             "flex h-full min-h-0 bg-[var(--terminal-background)]",
             hasTerminalSidebar && "gap-1.5",
           )}
+          data-t3-surface="terminal-status"
         >
           <div className="min-w-0 flex-1">
             {isSplitView ? (
@@ -1579,7 +1705,10 @@ export default function ThreadTerminalDrawer({
           </div>
 
           {hasTerminalSidebar && (
-            <aside className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
+            <aside
+              className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10"
+              data-t3-surface="terminal-tabs"
+            >
               <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
                 <div className="inline-flex h-full items-stretch">
                   <TerminalActionButton
@@ -1620,87 +1749,81 @@ export default function ThreadTerminalDrawer({
                   </TerminalActionButton>
                 </div>
               </div>
-
-              <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
-                {resolvedTerminalGroups.map((terminalGroup, groupIndex) => {
+              <div
+                className="min-h-0 flex-1 overflow-y-auto px-1 py-1"
+                data-t3-surface="terminal-context"
+              >
+                {resolvedTerminalGroups.map((terminalGroup) => {
                   const isGroupActive =
                     terminalGroup.terminalIds.includes(resolvedActiveTerminalId);
                   const groupActiveTerminalId = isGroupActive
                     ? resolvedActiveTerminalId
                     : (terminalGroup.terminalIds[0] ?? resolvedActiveTerminalId);
+                  const terminalCount = terminalGroup.terminalIds.length;
+                  const isSplitGroup = terminalCount > 1;
+                  const groupLabel = !isSplitGroup
+                    ? "Single"
+                    : terminalGroup.splitDirection === "vertical"
+                      ? "Stacked"
+                      : "Side by side";
+                  const GroupIcon = !isSplitGroup
+                    ? Square
+                    : terminalGroup.splitDirection === "vertical"
+                      ? SquareSplitVertical
+                      : SquareSplitHorizontal;
 
                   return (
                     <div key={terminalGroup.id} className="pb-0.5">
                       {showGroupHeaders && (
                         <button
                           type="button"
-                          className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
+                          className={`flex h-[22px] w-full cursor-pointer items-center gap-1 rounded px-1.5 text-[11px] ${
                             isGroupActive
-                              ? "bg-accent/70 text-foreground"
-                              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                              ? "bg-accent/50 text-foreground"
+                              : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
                           }`}
                           onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
                         >
-                          Group {groupIndex + 1}
+                          <GroupIcon className="size-3 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate text-left">{groupLabel}</span>
+                          <span className="text-muted-foreground/70 text-[10px] tabular-nums">
+                            {terminalCount}
+                          </span>
                         </button>
                       )}
 
-                      <div
-                        className={showGroupHeaders ? "ml-1 border-l border-border/60 pl-1.5" : ""}
-                      >
+                      <div className="flex flex-col gap-0.5">
                         {terminalGroup.terminalIds.map((terminalId) => {
                           const isActive = terminalId === resolvedActiveTerminalId;
-                          const closeTerminalLabel = `Close ${
-                            terminalLabelById.get(terminalId) ?? "terminal"
-                          }${isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
+                          const terminalLabel = terminalLabelById.get(terminalId) ?? "Terminal";
+                          const closeTerminalLabel = `Close ${terminalLabel}${
+                            isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""
+                          }`;
                           return (
                             <div
                               key={terminalId}
-                              className={`group flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${
+                              className={cn(
+                                "group/tab flex h-6 w-full items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
                                 isActive
                                   ? "bg-accent text-foreground"
-                                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                              }`}
-                            >
-                              {showGroupHeaders && (
-                                <span className="text-[10px] text-muted-foreground/80">└</span>
+                                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                               )}
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                                onClick={() => onActiveTerminalChange(terminalId)}
+                              data-t3-part="tab"
+                            >
+                              <PanelTabCloseButton
+                                label={closeTerminalLabel}
+                                onClick={() => confirmCloseTerminal(terminalId)}
+                                tooltip={closeTerminalLabel}
                               >
                                 <TerminalSquare className="size-3 shrink-0" />
-                                <span className="truncate">
-                                  {terminalLabelById.get(terminalId) ?? "Terminal"}
-                                </span>
+                              </PanelTabCloseButton>
+                              <button
+                                type="button"
+                                className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
+                                onClick={() => onActiveTerminalChange(terminalId)}
+                              >
+                                <span className="truncate">{terminalLabel}</span>
                               </button>
-                              {normalizedTerminalIds.length > 1 && (
-                                <Popover>
-                                  <PopoverTrigger
-                                    openOnHover
-                                    render={
-                                      <button
-                                        type="button"
-                                        className="inline-flex size-3.5 items-center justify-center rounded text-xs font-medium leading-none text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                                        onClick={() => confirmCloseTerminal(terminalId)}
-                                        aria-label={closeTerminalLabel}
-                                      />
-                                    }
-                                  >
-                                    <XIcon className="size-2.5" />
-                                  </PopoverTrigger>
-                                  <PopoverPopup
-                                    tooltipStyle
-                                    side="bottom"
-                                    sideOffset={6}
-                                    align="center"
-                                    className="pointer-events-none select-none"
-                                  >
-                                    {closeTerminalLabel}
-                                  </PopoverPopup>
-                                </Popover>
-                              )}
                             </div>
                           );
                         })}

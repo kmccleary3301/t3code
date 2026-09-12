@@ -399,6 +399,17 @@ function applyStatus(agent: MutableAgent, status: RuntimeSubagentStatus, at: str
     // don't slide.
     return;
   }
+  if (
+    wasTerminal &&
+    (status === "running" || status === "pending") &&
+    agent.completedAt !== null &&
+    at <= agent.completedAt
+  ) {
+    // SQLite falls back to activity id when native lifecycle rows share a
+    // millisecond. A same-time progress row sorted after completion is stale,
+    // not a new activation.
+    return;
+  }
   if ((wasTerminal || agent.status === "idle") && (status === "running" || status === "pending")) {
     // Reactivation: same identity, new run. Clear the previous run's terminal
     // detail so a live card never shows the prior run's output.
@@ -908,6 +919,83 @@ export function isTimelineBypassActivity(activity: OrchestrationThreadActivity):
     return false;
   }
   return (activity.payload as Record<string, unknown>).timelineBypass === true;
+}
+
+export interface NativeUiStatus {
+  readonly key: string;
+  readonly value: string;
+}
+
+export interface NativeUiWidget {
+  readonly key: string;
+  readonly content: string;
+  readonly placement: "above" | "below";
+}
+
+export interface NativeUiState {
+  readonly statuses: ReadonlyArray<NativeUiStatus>;
+  readonly widgets: ReadonlyArray<NativeUiWidget>;
+}
+
+type NativeUiUpdate =
+  | { readonly kind: "status"; readonly key: string; readonly value?: string }
+  | {
+      readonly kind: "widget";
+      readonly key: string;
+      readonly content?: string;
+      readonly placement: "above" | "below";
+    };
+
+function nativeUiUpdate(activity: OrchestrationThreadActivity): NativeUiUpdate | undefined {
+  if (activity.kind !== "ui.status.updated" && activity.kind !== "ui.widget.updated") {
+    return undefined;
+  }
+  if (typeof activity.payload !== "object" || activity.payload === null) return undefined;
+  const payload = activity.payload as Record<string, unknown>;
+  const key = asString(payload.key)?.trim();
+  if (!key) return undefined;
+  if (activity.kind === "ui.status.updated") {
+    const value = asString(payload.value)?.trim();
+    return { kind: "status", key, ...(value ? { value } : {}) };
+  }
+  const content = asString(payload.content)?.trim();
+  return {
+    kind: "widget",
+    key,
+    placement: payload.placement === "below" ? "below" : "above",
+    ...(content ? { content } : {}),
+  };
+}
+
+/** Latest keyed native UI state. Missing values clear their key. */
+export function foldNativeUiActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): NativeUiState {
+  const statuses = new Map<string, NativeUiStatus>();
+  const widgets = new Map<string, NativeUiWidget>();
+  for (const activity of activities) {
+    if (activity.kind === "session.exited") {
+      statuses.clear();
+      widgets.clear();
+      continue;
+    }
+    const update = nativeUiUpdate(activity);
+    if (update === undefined) continue;
+    if (update.kind === "status") {
+      if (update.value === undefined) statuses.delete(update.key);
+      else statuses.set(update.key, { key: update.key, value: update.value });
+      continue;
+    }
+    if (update.content === undefined) widgets.delete(update.key);
+    else {
+      widgets.set(update.key, {
+        key: update.key,
+        content: update.content,
+        placement: update.placement,
+      });
+    }
+  }
+  return { statuses: [...statuses.values()], widgets: [...widgets.values()] };
 }
 
 /**

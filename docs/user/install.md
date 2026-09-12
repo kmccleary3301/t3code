@@ -1,14 +1,15 @@
-# Install T3 Code
+# Install KM Code
 
-T3 Code is a web and desktop GUI for running coding agents on your machine.
+KM Code is a fork of T3 Code with desktop, web, and native mobile clients.
+The rebrand is currently available in local builds. Earlier fork releases retain T3 Code branding.
 
 ## Requirements
 
-Node.js `^22.16 || ^23.11 || >=24.10` on the machine that runs the T3 Code server.
+The compatible server requires Node.js `^22.16 || ^23.11 || >=24.10`; source builds use the repository's pinned toolchain.
 
 At least one provider CLI, installed and authenticated. See [Providers](#providers) below.
 
-## Run Without Installing
+## Run the Upstream Server Without Installing
 
 ```bash
 npx t3@latest
@@ -16,6 +17,8 @@ npx t3@latest
 
 This starts the T3 Code server on your machine and opens the local web app. Use
 `npx t3@latest --help` for the full CLI reference.
+
+This npm command installs upstream T3 Code, not unpublished KM Code changes.
 
 ## CLI Installer
 
@@ -25,14 +28,14 @@ owned prefix. The installer itself is shell; `curl | sh` executes that downloade
 own checksum can be checked, so use the pinned download-first procedure below when installer
 provenance matters.
 
-For a convenience install from the current `latest` release:
+For an upstream T3 Code installation from its current `latest` release:
 
 ```sh
 curl -fsSL https://github.com/pingdotgg/t3code/releases/latest/download/install.sh |
   sh -s -- --profile upstream
 ```
 
-For the private Pi + OMP product, use the owner-controlled
+For earlier Pi + OMP fork releases, use the owner-controlled
 [`kmccleary3301/t3code`](https://github.com/kmccleary3301/t3code) release channel:
 
 ```sh
@@ -77,9 +80,26 @@ It does not install Node.js or the native provider runtimes.
 
 ## Desktop App
 
-Download the latest release from
-[GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
-registry.
+Build KM Code from this fork, or use its
+[GitHub Releases](https://github.com/kmccleary3301/t3code/releases).
+Earlier releases predate the KM Code rebrand.
+
+For a local macOS Apple Silicon archive after installing dependencies:
+
+```bash
+T3_PRODUCT_PROFILE=pi-omp pnpm run dist:desktop:artifact --platform mac --target zip --arch arm64
+```
+
+The bundle version defaults to the workspace version. `--build-version`
+(env: `T3CODE_DESKTOP_VERSION`) tags it instead. Tag a local build above the newest
+published fork release so the updater does not offer an older, pre-rebrand build.
+The bundle and the updater then use that tag, while Settings → About keeps reporting
+the web build version.
+
+Local macOS builds are ad-hoc signed so their application bundles have valid signatures.
+They are not Developer ID signed or notarized. Trusted distribution still requires
+fork-owned signing credentials and `--signed`.
+An update may require macOS Keychain approval before saved credentials can be read.
 
 The private Pi + OMP
 [`fork-v0.0.47`](https://github.com/kmccleary3301/t3code/releases/tag/fork-v0.0.47)
@@ -92,6 +112,8 @@ configured, so the installers are unsigned and the
 [`macOS arm64 DMG`](https://github.com/kmccleary3301/t3code/releases/download/fork-v0.0.47/T3-Code-Pi-OMP-0.0.47-arm64.dmg)
 is not notarized. Treat `fork-v0.0.47` as an unsigned personal build; `fork-v0.0.39` had a
 desktop asset-selection defect.
+
+The following package-manager commands install **upstream T3 Code**, not KM Code.
 
 Windows:
 
@@ -119,9 +141,19 @@ Nightly:
 yay -S t3code-nightly-bin
 ```
 
+### Windows Subsystem for Linux
+
+When the desktop app runs a WSL backend, it installs the matching server runtime into
+`~/.t3/wsl-runtime` inside the selected distro. The first launch after installing or updating T3
+Code may take a little longer while that release's runtime is extracted. Later launches reuse the
+Linux-local copy so startup does not depend on reading application files through `/mnt/c`. After a
+successful launch, T3 Code keeps the current runtime and one previous runtime for rollback and
+removes older caches automatically. If a cached runtime stops working, T3 Code launches from the
+application files under `/mnt/c` instead and reinstalls the runtime on the next launch.
+
 ## Providers
 
-T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
+KM Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
 | Provider   | CLI                                                     | Default binary | Authentication           |
@@ -136,7 +168,7 @@ to use, then authenticate it.
 
 Pi and OMP are separate provider kinds with separate settings and processes. Configuring Pi never
 launches OMP, and configuring OMP never launches Pi. Their native runtimes own model, account,
-tool, task, and checkpoint behavior; T3 Code negotiates the advertised RPC capabilities and
+tool, task, and checkpoint behavior; KM Code negotiates the advertised RPC capabilities and
 projects the resulting events.
 
 ### Pi and OMP support
@@ -179,6 +211,10 @@ them on in **Settings** → the provider's card when you want to use them.
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
+
+Grok models that support adjustable reasoning show a **Reasoning** control beside the model picker.
+The available levels and default come from the installed Grok Build CLI, so they can vary by model
+and CLI version.
 
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.

@@ -125,6 +125,7 @@ export function SidebarProviderUpdatePill() {
 
   return (
     <div
+      data-t3-surface="update"
       className={`group/provider-update relative flex h-7 w-full items-center overflow-hidden rounded-lg text-xs font-medium transform-gpu transition-all duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
         PROVIDER_UPDATE_PILL_STYLES[displayedView.tone]
       } ${

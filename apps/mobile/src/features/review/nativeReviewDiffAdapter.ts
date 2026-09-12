@@ -8,13 +8,13 @@ import { pipe } from "effect/Function";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
 import { resolveMobileCodeSurface } from "../../lib/appearancePreferences";
 import { MOBILE_CODE_SURFACE } from "../../lib/typography";
+import { type MobileThemeId, type MobileThemeVariables } from "../../lib/mobileTheme";
 import {
-  DEFAULT_MOBILE_THEME_ID,
-  getMobileThemeVariables,
-  type MobileThemeId,
-} from "../../lib/mobileTheme";
-import { getMobileTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
-import { computeWordAltDiffRanges } from "./reviewWordDiffs";
+  getMobileTerminalTheme,
+  getProfileTerminalTheme,
+  type TerminalAppearanceScheme,
+} from "../terminal/terminalTheme";
+import type { NormalizedAppearanceProfile } from "@t3tools/shared/appearance";
 import {
   getReviewFilePreviewState,
   type ReviewParsedDiff,
@@ -22,6 +22,7 @@ import {
   type ReviewRenderableLineRow,
 } from "./reviewModel";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
+import { computeWordAltDiffRanges } from "./reviewWordDiffs";
 
 const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
@@ -134,13 +135,16 @@ function buildReviewCommentsCacheKey(comments: ReadonlyArray<ReviewInlineComment
     )
     .join("\u001e");
 }
-
 export function createNativeReviewDiffTheme(
   scheme: TerminalAppearanceScheme,
-  themeId: MobileThemeId = DEFAULT_MOBILE_THEME_ID,
+  themeId: MobileThemeId,
+  appTheme: MobileThemeVariables,
+  profile?: NormalizedAppearanceProfile,
 ): NativeReviewDiffTheme {
-  const terminalTheme = getMobileTerminalTheme(themeId, scheme);
-  const appTheme = getMobileThemeVariables(themeId, scheme);
+  const terminalTheme =
+    profile === undefined
+      ? getMobileTerminalTheme(themeId, scheme)
+      : getProfileTerminalTheme(profile, scheme);
   const [, terminalRed] = terminalTheme.palette;
   // Swift expects #RRGGBB/#RRGGBBAA while Android expects #RRGGBB/#AARRGGBB.
   // Flatten translucent app tokens onto the code surface so both native

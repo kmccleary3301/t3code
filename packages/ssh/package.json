@@ -22,6 +22,10 @@
     "./tunnel": {
       "types": "./src/tunnel.ts",
       "import": "./src/tunnel.ts"
+    },
+    "./remote-scripts": {
+      "types": "./src/remote-scripts.ts",
+      "import": "./src/remote-scripts.ts"
     }
   },
   "scripts": {
@@ -29,6 +33,7 @@
     "test": "vp test run"
   },
   "dependencies": {
+    "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:"

@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import type { ProviderNativeSessionError } from "@t3tools/contracts";
+import type { ProviderNativeCommandError, ProviderNativeSessionError } from "@t3tools/contracts";
 
 import type { CheckpointServiceError } from "../checkpointing/Errors.ts";
 
@@ -203,5 +203,6 @@ export type ProviderServiceError =
   | ProviderSessionNotFoundError
   | ProviderSessionDirectoryPersistenceError
   | ProviderNativeSessionError
+  | ProviderNativeCommandError
   | ProviderAdapterError
   | CheckpointServiceError;

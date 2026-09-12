@@ -51,6 +51,7 @@ function MenuPopup({
         anchor={anchor}
         className="z-[130]"
         data-slot="menu-positioner"
+        data-t3-surface="menu"
         side={side}
         sideOffset={sideOffset}
       >
@@ -61,7 +62,7 @@ function MenuPopup({
             className,
           )}
           data-slot="menu-popup"
-          {...props}
+          data-t3-part="menu"
         >
           <div className="max-h-(--available-height) w-full overflow-y-auto p-1">{children}</div>
         </MenuPrimitive.Popup>

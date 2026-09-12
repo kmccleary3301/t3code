@@ -117,7 +117,7 @@ function ChatRouteGlobalShortcuts() {
             stackedThreadToast({
               type: "info",
               title: "Preview is desktop-only",
-              description: "Open T3 Code in the desktop app to use the in-app preview.",
+              description: "Open KM Code in the desktop app to use the in-app preview.",
             }),
           );
           return;
@@ -176,10 +176,10 @@ function ChatRouteGlobalShortcuts() {
 
 function ChatRouteLayout() {
   return (
-    <>
+    <div className="flex min-h-0 min-w-0 flex-1" data-t3-surface="route-chat">
       <ChatRouteGlobalShortcuts />
       <Outlet />
-    </>
+    </div>
   );
 }
 

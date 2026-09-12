@@ -1,6 +1,8 @@
 # Remote Access
 
-Use this when you want to connect to a T3 Code server from another device such as a phone, tablet, or separate desktop app.
+Connect to a KM Code environment, or a compatible upstream T3 Code server, from a phone,
+tablet, or another desktop. CLI examples retain the compatible `t3` command name;
+`npx t3` resolves the upstream package rather than unpublished fork builds.
 
 ## Quick Pairing for a Running Server
 
@@ -134,7 +136,27 @@ Use this when you want the desktop app to start or reuse T3 Code on another mach
 
 After setup, the renderer connects to a local forwarded HTTP/WebSocket endpoint. The remote host still owns the actual T3 server, projects, files, git state, terminals, and provider sessions.
 
-SSH launch is a desktop feature because it needs local process and SSH access. Once the environment is paired and saved, it uses the same environment list and connection model as direct LAN, Tailscale, HTTPS, or future tunnel-backed environments.
+Saved SSH environments use the same environment list and connection model as direct LAN,
+Tailscale, and HTTPS connections.
+
+### Mobile-Managed SSH
+
+In the mobile app, open **Settings → Environments → Add environment**, then choose
+**Connect over SSH instead**. Enter an alias, host, port, and username. Inspect the host key and
+compare its SHA-256 fingerprint with a trusted source before entering it to confirm.
+Supply either a password or a private key, with its passphrase if needed, then connect.
+
+SSH credentials are stored in the device's secure storage. The app opens a local tunnel;
+the remote machine continues to own the server, projects, files, and provider sessions.
+The host needs a POSIX `sh`, compatible Node.js, and an installed compatible `t3` server.
+Mobile SSH does not download server packages automatically.
+
+### Native Sessions on Mobile
+
+The Home header opens the native session list. A native thread's **Agents** button shows
+child-agent status, roles, model details, and available usage. Select an agent to read its
+transcript and switch between children. Native extension status messages and text widgets
+appear in the same panel. Tool images open in a full-screen native preview.
 
 #### SSH Launch Troubleshooting
 
@@ -173,6 +195,8 @@ When the T3 Code web or desktop app and a remote server use different versions, 
 the conversation and in **Settings** → **Connections**. Follow the action shown there: T3 Code may
 be able to update and reconnect the server for you, or it may ask you to update the desktop app or
 run a copied command on the server machine.
+
+If T3 Connect cannot connect, check the date and time on both devices, then try again.
 
 Finish active work before updating because the server restarts briefly. For step-by-step guidance,
 see [Keeping T3 Code in Sync](./updating.md).

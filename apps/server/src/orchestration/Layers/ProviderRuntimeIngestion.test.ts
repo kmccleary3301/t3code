@@ -47,7 +47,10 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
-import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import {
+  ProviderRuntimeIngestionLive,
+  runtimeEventToActivities,
+} from "./ProviderRuntimeIngestion.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -110,6 +113,7 @@ function createProviderServiceHarness() {
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
+    discoverNativeCommands: () => unsupported(),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     getInstanceInfo: (instanceId) => {
       const driverKind = ProviderDriverKind.make(String(instanceId));
@@ -127,6 +131,7 @@ function createProviderServiceHarness() {
     rollbackConversation: () => unsupported(),
     captureNativeCheckpoint: () => Effect.succeed(undefined),
     restoreNativeCheckpoint: () => Effect.void,
+    uploadFeedback: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },
@@ -327,6 +332,89 @@ describe("ProviderRuntimeIngestion", () => {
       drain,
     };
   }
+  it("projects reordered native command catalogs without merging the prior order", () => {
+    const firstCatalog = [
+      { name: "first", description: "First" },
+      { name: "second", description: "Second" },
+    ];
+    const reorderedCatalog = [
+      { name: "second", description: "Second" },
+      { name: "first", description: "First" },
+    ];
+    const makeConfiguredEvent = (
+      eventId: string,
+      slashCommands: ReadonlyArray<{ name: string; description: string }>,
+    ): ProviderRuntimeEvent => ({
+      type: "session.configured",
+      eventId: asEventId(eventId),
+      provider: ProviderDriverKind.make("omp"),
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: { config: { slashCommands } },
+    });
+
+    const firstProjection = runtimeEventToActivities(
+      makeConfiguredEvent("catalog-first", firstCatalog),
+    );
+    const reorderedProjection = runtimeEventToActivities(
+      makeConfiguredEvent("catalog-reordered", reorderedCatalog),
+    );
+
+    expect(firstProjection[0]?.payload).toMatchObject({ slashCommands: firstCatalog });
+    expect(reorderedProjection[0]?.payload).toMatchObject({ slashCommands: reorderedCatalog });
+  });
+
+  it("keeps native model and title changes without accepting another instance's metadata", async () => {
+    const harness = await createHarness();
+    await harness.dispatch({
+      type: "thread.meta.update",
+      commandId: CommandId.make("select-native-instance"),
+      threadId: asThreadId("thread-1"),
+      modelSelection: { instanceId: ProviderInstanceId.make("omp"), model: "fidelity/first" },
+    });
+    harness.emit({
+      type: "session.configured",
+      eventId: asEventId("native-config-update"),
+      provider: ProviderDriverKind.make("omp"),
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: {
+        config: { model: "fidelity/second", thinkingLevel: "high", title: "Native renamed" },
+      },
+    });
+    const updated = await waitForThread(
+      harness.readModel,
+      (thread) => thread.modelSelection.model === "fidelity/second",
+    );
+    expect(updated.title).toBe("Native renamed");
+    expect(updated.modelSelection).toEqual({
+      instanceId: "omp",
+      model: "fidelity/second",
+      options: [{ id: "thinkingLevel", value: "high" }],
+    });
+
+    await harness.dispatch({
+      type: "thread.meta.update",
+      commandId: CommandId.make("select-other-native-instance"),
+      threadId: asThreadId("thread-1"),
+      modelSelection: { instanceId: ProviderInstanceId.make("pi"), model: "fidelity/pi" },
+    });
+    harness.emit({
+      type: "session.configured",
+      eventId: asEventId("stale-native-config"),
+      provider: ProviderDriverKind.make("omp"),
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: { config: { model: "fidelity/stale", title: "Stale title" } },
+    });
+    await harness.drain();
+    const current = (await harness.readModel()).threads.find((thread) => thread.id === "thread-1");
+    expect(current?.modelSelection).toEqual({ instanceId: "pi", model: "fidelity/pi" });
+    expect(current?.title).toBe("Native renamed");
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();
@@ -1073,6 +1161,134 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(message?.text).toBe("hello world");
     expect(message?.streaming).toBe(false);
+  });
+  it("keeps distinct assistant items separate across tool activity in one turn", async () => {
+    const harness = await createHarness();
+    const startedAt = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-distinct-assistant-items");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-distinct-assistant-items"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-assistant-before-tool"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("assistant-before-tool"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "before tool",
+      },
+    });
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-tool-between-assistant-items-started"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("tool-between-assistant-items"),
+      payload: {
+        itemType: "command_execution",
+        status: "inProgress",
+        title: "Run check",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-tool-between-assistant-items-completed"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("tool-between-assistant-items"),
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Run check",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-assistant-after-tool"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("assistant-after-tool"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "final Markdown",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-assistant-after-tool-completed"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("assistant-after-tool"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "final Markdown",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-distinct-assistant-items"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.session?.activeTurnId === null &&
+        entry.messages.filter(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "assistant" && message.turnId === turnId,
+        ).length === 2,
+    );
+    const assistantMessages = thread.messages.filter(
+      (message: ProviderRuntimeTestMessage) =>
+        message.role === "assistant" && message.turnId === turnId,
+    );
+    expect(assistantMessages).toHaveLength(2);
+    expect(assistantMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "assistant:assistant-before-tool",
+          text: "before tool",
+          streaming: false,
+        }),
+        expect.objectContaining({
+          id: "assistant:assistant-after-tool",
+          text: "final Markdown",
+          streaming: false,
+        }),
+      ]),
+    );
   });
 
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
@@ -2964,6 +3180,20 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     harness.emit({
+      type: "ui.widget.updated",
+      eventId: asEventId("evt-native-widget"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-p1"),
+      payload: {
+        key: "subagents",
+        content: "2 running",
+        placement: "above",
+      },
+    });
+
+    harness.emit({
       type: "turn.diff.updated",
       eventId: asEventId("evt-turn-diff-updated"),
       provider: ProviderDriverKind.make("codex"),
@@ -2989,6 +3219,9 @@ describe("ProviderRuntimeIngestion", () => {
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "runtime.warning",
         ) &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "ui.widget.updated",
+        ) &&
         entry.checkpoints.some(
           (checkpoint: ProviderRuntimeTestCheckpoint) => checkpoint.turnId === "turn-p1",
         ),
@@ -3005,6 +3238,14 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(planActivity?.kind).toBe("turn.plan.updated");
     expect(Array.isArray(planPayload?.plan)).toBe(true);
+    expect(
+      thread.activities.find(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-native-widget",
+      ),
+    ).toMatchObject({
+      kind: "ui.widget.updated",
+      payload: { key: "subagents", content: "2 running", placement: "above" },
+    });
 
     const toolUpdate = thread.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-item-updated",

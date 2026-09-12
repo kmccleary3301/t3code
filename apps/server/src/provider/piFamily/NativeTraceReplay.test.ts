@@ -9,7 +9,8 @@ import {
   type PiFamilyRuntimeKind,
   parseJsonObject,
 } from "./index.ts";
-import { nativeEventId, PiFamilyEventProjector } from "./PiFamilyEventProjector.ts";
+import { nativeEventId } from "./NativeEventIdentity.ts";
+import { PiFamilyEventProjector } from "./PiFamilyEventProjector.ts";
 import { scanNativeTraceLeaks, sha256NativeTraceValue } from "./NativeTrace.ts";
 import {
   nativeTraceProvenance,

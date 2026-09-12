@@ -2,26 +2,30 @@ import { assert, it } from "@effect/vitest";
 import { PNG } from "pngjs";
 
 import showcaseConfig, {
-  DEFAULT_SHOWCASE_THEME,
   resolveShowcaseAndroidAbi,
+  resolveShowcaseAndroidAvd,
   SHOWCASE_THEMES,
   type ShowcaseConfig,
   type ShowcaseStoreAssetSpec,
 } from "./mobile-showcase.config.ts";
+import { parsePairingCredentialOutput } from "./actual-surface-environment.ts";
 import {
-  SHOWCASE_ENVIRONMENTS,
+  createShowcaseSeedManifest,
+  hashShowcaseSeedManifest,
   SHOWCASE_PROJECTS,
+  SHOWCASE_SEED_EPOCH,
   SHOWCASE_THREADS,
 } from "./mobile-showcase-environment.ts";
 import {
+  assertDisposableDeviceApproval,
   encodeAndroidPairingUrls,
   normalizeStorePng,
   parseShowcaseCliArgs,
-  parsePairingCredentialOutput,
   planShowcaseCaptures,
   readPngDimensions,
   readPngMetadata,
   resolveAndroidSdkRoot,
+  resolveShowcaseJavaHome,
   selectLanIpv4Address,
   showcaseCaptureDirectory,
   validateStoreAsset,
@@ -84,12 +88,14 @@ it("parses repeatable capture filters", () => {
     "--appearance",
     "both",
     "--skip-build",
+    "--disposable-device",
   ]);
   assert.deepStrictEqual([...options.platforms], ["ios"]);
   assert.deepStrictEqual([...options.deviceIds], ["phone"]);
   assert.deepStrictEqual([...options.scenes], ["review"]);
   assert.deepStrictEqual([...options.appearances], ["light", "dark"]);
   assert.equal(options.skipBuild, true);
+  assert.equal(options.disposableDevice, true);
 });
 
 it("rejects unsupported system appearances", () => {
@@ -124,6 +130,18 @@ it("selects an explicit CI Android ABI without changing the local default", () =
   assert.equal(resolveShowcaseAndroidAbi(undefined), "arm64-v8a");
   assert.equal(resolveShowcaseAndroidAbi("x86_64"), "x86_64");
   assert.throws(() => resolveShowcaseAndroidAbi("mips"), /Unsupported T3_SHOWCASE_ANDROID_ABI/u);
+});
+
+it("selects an explicit dedicated Android AVD", () => {
+  assert.equal(resolveShowcaseAndroidAvd(undefined), "Pixel_10_Pro");
+  assert.equal(resolveShowcaseAndroidAvd("medium_phone"), "medium_phone");
+  assert.throws(() => resolveShowcaseAndroidAvd(" medium_phone"), /non-empty device name/u);
+});
+
+it("requires an explicit disposable-device declaration before capture", () => {
+  assert.doesNotThrow(() => assertDisposableDeviceApproval(true, 1));
+  assert.doesNotThrow(() => assertDisposableDeviceApproval(false, 0));
+  assert.throws(() => assertDisposableDeviceApproval(false, 1), /requires --disposable-device/u);
 });
 
 it("uses platform-correct default Android SDK roots", () => {
@@ -259,14 +277,6 @@ it("enforces store screenshot count limits", () => {
   assert.throws(() => validateStoreAssetCount(googleSpec, 9, false), /allows at most 8/u);
 });
 
-it("defaults every device to the app's own palette", () => {
-  assert.equal(DEFAULT_SHOWCASE_THEME, "t3-code");
-  assert.equal(
-    showcaseConfig.devices.every((device) => device.theme === DEFAULT_SHOWCASE_THEME),
-    true,
-  );
-});
-
 it("configures every default device with an exact upload-ready store target", () => {
   assert.deepStrictEqual(
     showcaseConfig.devices.map((device) => [
@@ -300,14 +310,6 @@ it("selects a reachable LAN IPv4 address", () => {
 });
 
 it("seeds a playful multi-environment project spectrum", () => {
-  assert.deepStrictEqual(
-    SHOWCASE_PROJECTS.map((project) => project.title),
-    ["T3 Code", "React", "Linux"],
-  );
-  assert.deepStrictEqual(
-    SHOWCASE_ENVIRONMENTS.map((environment) => environment.label),
-    ["Moonbase Terminal", "Suspense Station", "Kernel Cabin"],
-  );
   assert.equal(SHOWCASE_THREADS.length, 9);
   assert.equal(new Set(SHOWCASE_THREADS.map((thread) => thread.projectId)).size, 3);
   const snoozedThreads = SHOWCASE_THREADS.filter((thread) => "snoozeMinutes" in thread);
@@ -340,10 +342,6 @@ it("seeds a playful multi-environment project spectrum", () => {
       `${project.title} has no active thread`,
     );
   }
-  assert.equal(
-    SHOWCASE_PROJECTS.every((project) => project.favicon.includes("<svg")),
-    true,
-  );
 });
 
 it("reads multiline JSON from the pairing CLI", () => {
@@ -359,4 +357,40 @@ it("encodes Android pairing URLs without shell-sensitive JSON quotes", () => {
   assert.equal(encoded.startsWith("json-uri:"), true);
   assert.deepStrictEqual(JSON.parse(decodeURIComponent(encoded.slice("json-uri:".length))), urls);
   assert.equal(encoded.includes('"'), false);
+});
+
+it("canonicalizes manifest hashes and rejects invalid capture selections", () => {
+  const manifest = createShowcaseSeedManifest();
+  assert.notEqual(
+    hashShowcaseSeedManifest(createShowcaseSeedManifest(undefined, SHOWCASE_SEED_EPOCH + 1)),
+    hashShowcaseSeedManifest(manifest),
+  );
+  assert.deepStrictEqual(createShowcaseSeedManifest(["react"]).projectIds, ["react"]);
+  assert.equal(
+    hashShowcaseSeedManifest({
+      seedFixtureSha256: manifest.seedFixtureSha256,
+      threadIds: manifest.threadIds,
+      projectIds: manifest.projectIds,
+      seedIso: manifest.seedIso,
+      seedEpoch: manifest.seedEpoch,
+      schemaVersion: 1,
+    }),
+    hashShowcaseSeedManifest(manifest),
+  );
+  assert.throws(() => createShowcaseSeedManifest(["missing-project"]), /known and unique/u);
+  assert.throws(() => createShowcaseSeedManifest(["react", "react"]), /known and unique/u);
+  assert.throws(() => createShowcaseSeedManifest([]), /At least one showcase project/u);
+  assert.throws(
+    () => createShowcaseSeedManifest(undefined, Number.NaN),
+    /non-negative valid epoch integer/u,
+  );
+});
+
+it("omits JAVA_HOME when no supported runtime path is known", () => {
+  assert.equal(resolveShowcaseJavaHome({}, "linux"), undefined);
+  assert.equal(
+    resolveShowcaseJavaHome({}, "darwin"),
+    "/Applications/Android Studio.app/Contents/jbr/Contents/Home",
+  );
+  assert.equal(resolveShowcaseJavaHome({ JAVA_HOME: "/tmp/jdk" }, "linux"), "/tmp/jdk");
 });

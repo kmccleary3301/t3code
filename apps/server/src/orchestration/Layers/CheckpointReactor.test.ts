@@ -130,6 +130,7 @@ function createProviderServiceHarness(
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions,
+    discoverNativeCommands: () => unsupported(),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     getInstanceInfo: (instanceId) =>
       Effect.succeed({
@@ -145,6 +146,7 @@ function createProviderServiceHarness(
     rollbackConversation,
     captureNativeCheckpoint,
     restoreNativeCheckpoint,
+    uploadFeedback: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },

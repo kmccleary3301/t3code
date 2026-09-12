@@ -1,14 +1,27 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - This host-side fixture creates an isolated local T3 environment.
+import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeUtil from "node:util";
+import { createActualSurfaceChildEnv } from "./actual-surface-environment.ts";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
 export const SHOWCASE_PROJECT_ID = "t3code";
 export const SHOWCASE_THREAD_ID = "remote-command-center";
+export const SHOWCASE_SEED_EPOCH = Date.parse("2026-01-01T00:00:00.000Z");
+export const SHOWCASE_SEED_ISO = new Date(SHOWCASE_SEED_EPOCH).toISOString();
+
+export interface ShowcaseSeedManifest {
+  readonly schemaVersion: 1;
+  readonly seedEpoch: number;
+  readonly seedIso: string;
+  readonly projectIds: ReadonlyArray<string>;
+  readonly threadIds: ReadonlyArray<string>;
+  readonly seedFixtureSha256: string;
+}
 export const SHOWCASE_TERMINAL_ID = "term-1";
 
 export const SHOWCASE_SCENES = ["threads", "thread", "terminal", "review", "environments"] as const;
@@ -93,9 +106,9 @@ export function RemoteHandoffCard(props: { machine: string; latencyMs: number })
 `;
 
 const PROJECT_FAVICONS = {
-  t3code: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="10" fill="#000"/>
-  <path d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z" fill="#fff"/>
+  t3code: `<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="128" height="128" rx="28" fill="#171411"/>
+  <path d="M25.6903 77.2293 25.1478 65.6948 45.8689 43.8641H57.0186L38.3478 63.9418L32.7490 69.8753ZM16.7500 87.1359V43.8641H26.6900V87.1359ZM46.3793 87.1359 30.9594 68.3075 37.5453 61.1653 58.0706 87.1359ZM62.4944 87.1359V43.8641H70.7568L89.1846 74.4270H84.8189L102.9013 43.8641H111.1637L111.2500 87.1359H101.8759L101.7896 58.2977H103.5557L89.0737 82.5327H84.5844L69.7944 58.2977H71.8685V87.1359Z" fill="#C9834A"/>
 </svg>`,
   react: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="15" fill="#20232a"/>
@@ -115,9 +128,9 @@ const PROJECT_FAVICONS = {
 export const SHOWCASE_PROJECTS = [
   {
     id: "t3code",
-    title: "T3 Code",
+    title: "KM Code",
     directory: "t3code",
-    repositoryUrl: "https://github.com/pingdotgg/t3code.git",
+    repositoryUrl: "https://github.com/kmccleary3301/t3code.git",
     favicon: PROJECT_FAVICONS.t3code,
   },
   {
@@ -162,9 +175,9 @@ export const SHOWCASE_THREADS = [
     branch: "feat/remote-command-center",
     minutesAgo: 3,
     request:
-      "Give T3 Code a remote-first command center. Make three machines feel one tap away, keep agent work in sync, and make every handoff feel instant.",
+      "Give KM Code a remote-first command center. Make three machines feel one tap away, keep agent work in sync, and make every handoff feel instant.",
     response:
-      "T3 Code now treats every machine like it is right here in the room. ✦\n\n- Moonbase, Suspense Station, and Kernel Cabin stay live together\n- Terminal state follows you without losing a single line\n- Agent work remains perfectly in sync across devices\n- Handoffs land before your train of thought can wander\n\nI also ran the changed workspace: **612 tests passed**.",
+      "KM Code now treats every machine like it is right here in the room. ✦\n\n- Moonbase, Suspense Station, and Kernel Cabin stay live together\n- Terminal state follows you without losing a single line\n- Agent work remains perfectly in sync across devices\n- Handoffs land before your train of thought can wander\n\nI also ran the changed workspace: **612 tests passed**.",
   },
   {
     id: "pocket-command-center",
@@ -267,14 +280,18 @@ function minutesBefore(now: number, minutes: number): string {
 }
 
 async function runGit(workspaceRoot: string, args: ReadonlyArray<string>): Promise<void> {
+  const gitHome = NodePath.join(workspaceRoot, ".showcase-git-home");
+  await NodeFSP.mkdir(gitHome, { recursive: true, mode: 0o700 });
   await execFile("git", [...args], {
     cwd: workspaceRoot,
     env: {
-      ...process.env,
+      ...createActualSurfaceChildEnv(process.env, { HOME: gitHome }),
       GIT_AUTHOR_NAME: "Alex Rivera",
       GIT_AUTHOR_EMAIL: "alex@lumen.test",
       GIT_COMMITTER_NAME: "Alex Rivera",
       GIT_COMMITTER_EMAIL: "alex@lumen.test",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_TERMINAL_PROMPT: "0",
     },
   });
 }
@@ -305,7 +322,7 @@ async function seedT3CodeWorkspace(workspaceRoot: string): Promise<void> {
   );
   await initializeRepository({
     workspaceRoot,
-    repositoryUrl: "https://github.com/pingdotgg/t3code.git",
+    repositoryUrl: "https://github.com/kmccleary3301/t3code.git",
     commitMessage: "Show connected environments",
   });
   await runGit(workspaceRoot, ["checkout", "-b", "feat/remote-command-center"]);
@@ -329,7 +346,7 @@ async function seedCompanionWorkspace(input: {
   await NodeFSP.writeFile(NodePath.join(input.workspaceRoot, "favicon.svg"), input.favicon);
   await NodeFSP.writeFile(
     NodePath.join(input.workspaceRoot, "README.md"),
-    `# ${input.title}\n\nSeeded by the T3 Code mobile screenshot harness.\n`,
+    `# ${input.title}\n\nSeeded by the KM Code mobile screenshot harness.\n`,
   );
   await initializeRepository({
     workspaceRoot: input.workspaceRoot,
@@ -626,17 +643,74 @@ function seedDatabase(
   }
 }
 
+function seedFixtureHash(): string {
+  return NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify({
+        projects: SHOWCASE_PROJECTS,
+        environments: SHOWCASE_ENVIRONMENTS,
+        threads: SHOWCASE_THREADS,
+        terminal: SHOWCASE_TERMINAL_BUFFER,
+        scripts: PROJECT_SCRIPTS,
+        model: MODEL_SELECTION,
+      }),
+    )
+    .digest("hex");
+}
+
+export const SHOWCASE_SEED_FIXTURE_SHA256 = seedFixtureHash();
+
+export function createShowcaseSeedManifest(
+  projectIds: ReadonlyArray<string> = SHOWCASE_PROJECTS.map((project) => project.id),
+  now = SHOWCASE_SEED_EPOCH,
+): ShowcaseSeedManifest {
+  if (!Number.isSafeInteger(now) || now < 0 || Number.isNaN(new Date(now).getTime())) {
+    throw new Error("Showcase seed epoch must be a non-negative valid epoch integer.");
+  }
+  const selectedProjectIds = new Set(projectIds);
+  const projects = SHOWCASE_PROJECTS.filter((project) => selectedProjectIds.has(project.id));
+  if (
+    selectedProjectIds.size !== projectIds.length ||
+    projects.length !== selectedProjectIds.size
+  ) {
+    throw new Error("Showcase project IDs must be known and unique.");
+  }
+  if (projects.length === 0) throw new Error("At least one showcase project must be selected.");
+  const threads = SHOWCASE_THREADS.filter((thread) => selectedProjectIds.has(thread.projectId));
+  return {
+    schemaVersion: 1,
+    seedEpoch: now,
+    seedIso: new Date(now).toISOString(),
+    projectIds: projects.map((project) => project.id),
+    threadIds: threads.map((thread) => thread.id),
+    seedFixtureSha256: SHOWCASE_SEED_FIXTURE_SHA256,
+  };
+}
+
+export function hashShowcaseSeedManifest(manifest: ShowcaseSeedManifest): string {
+  const canonicalManifest: ShowcaseSeedManifest = {
+    schemaVersion: manifest.schemaVersion,
+    seedEpoch: manifest.seedEpoch,
+    seedIso: manifest.seedIso,
+    projectIds: [...manifest.projectIds],
+    threadIds: [...manifest.threadIds],
+    seedFixtureSha256: manifest.seedFixtureSha256,
+  };
+  return NodeCrypto.createHash("sha256").update(JSON.stringify(canonicalManifest)).digest("hex");
+}
 export async function seedShowcaseEnvironment(input: {
   readonly baseDir: string;
   readonly projectIds?: ReadonlyArray<string>;
   readonly now?: number;
-}): Promise<{ readonly dbPath: string; readonly workspaceRoot: string }> {
-  const now = input.now ?? Date.now();
-  const selectedProjectIds = new Set(
-    input.projectIds ?? SHOWCASE_PROJECTS.map((project) => project.id),
-  );
+}): Promise<{
+  readonly dbPath: string;
+  readonly workspaceRoot: string;
+  readonly seedManifest: ShowcaseSeedManifest;
+  readonly seedManifestHash: string;
+}> {
+  const seedManifest = createShowcaseSeedManifest(input.projectIds, input.now);
+  const selectedProjectIds = new Set(seedManifest.projectIds);
   const projects = SHOWCASE_PROJECTS.filter((project) => selectedProjectIds.has(project.id));
-  if (projects.length === 0) throw new Error("At least one showcase project must be selected.");
   const threads = SHOWCASE_THREADS.filter((thread) => selectedProjectIds.has(thread.projectId));
   const workspaceBase = NodePath.join(input.baseDir, "workspace");
   const workspaceRoots = new Map(
@@ -670,7 +744,7 @@ export async function seedShowcaseEnvironment(input: {
   // The environment server begins listening before it finishes migrating the
   // database, so wait for the schema before deleting from and reseeding it.
   await waitForSeedableSchema(dbPath);
-  seedDatabase(dbPath, workspaceRoots, projects, threads, now);
+  seedDatabase(dbPath, workspaceRoots, projects, threads, seedManifest.seedEpoch);
 
   const terminalDirectory = NodePath.join(input.baseDir, "userdata", "logs", "terminals");
   if (selectedProjectIds.has(SHOWCASE_PROJECT_ID)) {
@@ -681,5 +755,6 @@ export async function seedShowcaseEnvironment(input: {
       SHOWCASE_TERMINAL_BUFFER,
     );
   }
-  return { dbPath, workspaceRoot };
+  const seedManifestHash = hashShowcaseSeedManifest(seedManifest);
+  return { dbPath, workspaceRoot, seedManifest, seedManifestHash };
 }

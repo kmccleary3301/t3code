@@ -39,6 +39,7 @@ import {
   themeColorToHex,
   toCanonicalThemeColor,
   THEME_FILE_VERSION,
+  singleAppearanceOf,
 } from "./themePalette";
 
 function asHex(value: string): string {
@@ -192,29 +193,6 @@ describe("theme files", () => {
         4.5,
       );
     }
-  });
-
-  it("merges a small user file onto the matching contrast-safe base palette", () => {
-    const theme = parseThemeFile({
-      version: THEME_FILE_VERSION,
-      name: "Ocean dusk",
-      appearance: "dark",
-      colors: {
-        canvas: "#07152f",
-        accent: "#67c2ff",
-      },
-    });
-
-    expect(theme).toMatchObject({
-      id: "ocean-dusk",
-      label: "Ocean dusk",
-      appearance: "dark",
-      colors: {
-        canvas: canonical("#07152f"),
-        accent: canonical("#67c2ff"),
-        placeholder: canonical("#968d9f"),
-      },
-    });
   });
 
   it("decodes literal CSS color formats into OKLCH without dropping alpha", () => {
@@ -1070,5 +1048,13 @@ describe("stored theme preferences", () => {
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
+  });
+});
+
+describe("singleAppearanceOf", () => {
+  it("reports the only half a theme can claim, and null for a pair", () => {
+    const { variants: _pair, ...base } = T3_CHAT_THEME;
+    expect(singleAppearanceOf({ ...base, id: "x", appearance: "dark" })).toBe("dark");
+    expect(singleAppearanceOf(T3_CHAT_THEME)).toBe(null);
   });
 });

@@ -6,6 +6,11 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  NormalizedAppearanceProfileSchema,
+  STRICT_APPEARANCE_PARSE_OPTIONS,
+  type NormalizedAppearanceProfile,
+} from "@t3tools/shared/appearance";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 
 import * as MobileDatabase from "./mobile-database";
@@ -14,6 +19,17 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
+const decodeNormalizedAppearanceProfile = Schema.decodeUnknownSync(
+  NormalizedAppearanceProfileSchema,
+);
+
+function decodeAppearanceProfile(value: unknown): NormalizedAppearanceProfile | null {
+  try {
+    return decodeNormalizedAppearanceProfile(value, STRICT_APPEARANCE_PARSE_OPTIONS);
+  } catch {
+    return null;
+  }
+}
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
@@ -21,6 +37,8 @@ export interface Preferences {
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
   readonly themeMode?: MobileThemeMode;
+  readonly appearanceProfile?: NormalizedAppearanceProfile;
+  readonly quarantinedAppearanceProfile?: NormalizedAppearanceProfile;
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
@@ -42,6 +60,10 @@ export interface Preferences {
   readonly legacyThreadListEnabled?: boolean;
   /** Device-local counterpart of desktop's `planModeEnabled` legacy flag. */
   readonly planModeEnabled?: boolean;
+  /** Undefined preserves the default expanded Settled shelf. */
+  readonly threadListV2SettledShelfExpanded?: boolean;
+  /** Undefined preserves the default collapsed Snoozed shelf. */
+  readonly threadListV2SnoozedShelfExpanded?: boolean;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -88,6 +110,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
     themeMode?: MobileThemeMode;
+    appearanceProfile?: NormalizedAppearanceProfile;
+    quarantinedAppearanceProfile?: NormalizedAppearanceProfile;
     baseFontSize?: number;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
@@ -100,6 +124,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     autoSettleOnMerge?: boolean;
     legacyThreadListEnabled?: boolean;
     planModeEnabled?: boolean;
+    threadListV2SettledShelfExpanded?: boolean;
+    threadListV2SnoozedShelfExpanded?: boolean;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -130,6 +156,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   ) {
     preferences.themeMode = parsed.themeMode;
   }
+  const profile = decodeAppearanceProfile(parsed.appearanceProfile);
+  if (profile !== null) preferences.appearanceProfile = profile;
+  const quarantinedProfile = decodeAppearanceProfile(parsed.quarantinedAppearanceProfile);
+  if (quarantinedProfile !== null) preferences.quarantinedAppearanceProfile = quarantinedProfile;
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {
     preferences.terminalFontSize = parsed.terminalFontSize;
@@ -169,6 +199,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.planModeEnabled === "boolean") {
     preferences.planModeEnabled = parsed.planModeEnabled;
+  }
+  if (typeof parsed.threadListV2SettledShelfExpanded === "boolean") {
+    preferences.threadListV2SettledShelfExpanded = parsed.threadListV2SettledShelfExpanded;
+  }
+  if (typeof parsed.threadListV2SnoozedShelfExpanded === "boolean") {
+    preferences.threadListV2SnoozedShelfExpanded = parsed.threadListV2SnoozedShelfExpanded;
   }
   return preferences;
 }

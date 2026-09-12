@@ -1,0 +1,30 @@
+diff --git a/dist/components/ImageItem/ImageItem.android.js b/dist/components/ImageItem/ImageItem.android.js
+index 5fcaa9f9a7d893817fee89b85186ee3936118e69..1e7b7f53c6da91ec83a9fc7419e5d38250e0b5d0 100644
+--- a/dist/components/ImageItem/ImageItem.android.js
++++ b/dist/components/ImageItem/ImageItem.android.js
+@@ -7,7 +7,6 @@
+  */
+ import React, { useCallback, useRef, useState } from "react";
+ import { Animated, ScrollView, Dimensions, StyleSheet, } from "react-native";
+-import useImageDimensions from "../../hooks/useImageDimensions";
+ import usePanResponder from "../../hooks/usePanResponder";
+ import { getImageStyles, getImageTransform } from "../../utils";
+ import { ImageLoading } from "./ImageLoading";
+@@ -18,11 +17,15 @@ const SCREEN_WIDTH = SCREEN.width;
+ const SCREEN_HEIGHT = SCREEN.height;
+ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPress, swipeToCloseEnabled = true, doubleTapToZoomEnabled = true, }) => {
+     const imageContainer = useRef(null);
+-    const imageDimensions = useImageDimensions(imageSrc);
++    const [imageDimensions, setImageDimensions] = useState(null);
+     const [translate, scale] = getImageTransform(imageDimensions, SCREEN);
+     const scrollValueY = new Animated.Value(0);
+     const [isLoaded, setLoadEnd] = useState(false);
+-    const onLoaded = useCallback(() => setLoadEnd(true), []);
++    // Read intrinsic dimensions from the displayed image; Android getSize rejects data URIs.
++    const onLoaded = useCallback(({ nativeEvent: { source } }) => {
++        setImageDimensions({ width: source.width, height: source.height });
++        setLoadEnd(true);
++    }, []);
+     const onZoomPerformed = useCallback((isZoomed) => {
+         var _a;
+         onZoom(isZoomed);

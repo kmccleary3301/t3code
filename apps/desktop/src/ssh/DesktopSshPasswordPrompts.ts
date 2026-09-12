@@ -1,4 +1,8 @@
-import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
+import {
+  parseProductProfile,
+  resolveProductIdentity,
+  type DesktopSshPasswordPromptRequest,
+} from "@t3tools/contracts";
 import { DesktopSshPasswordPromptResolutionInputSchema } from "@t3tools/contracts";
 import type { SshPasswordRequest } from "@t3tools/ssh/auth";
 import * as Context from "effect/Context";
@@ -15,6 +19,9 @@ import * as Schema from "effect/Schema";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { SSH_PASSWORD_PROMPT_CHANNEL } from "../ipc/channels.ts";
 
+const DESKTOP_PRODUCT_NAME = resolveProductIdentity(
+  parseProductProfile(process.env.T3_PRODUCT_PROFILE),
+).baseName;
 const DEFAULT_SSH_PASSWORD_PROMPT_TIMEOUT_MS = 3 * 60 * 1000;
 
 type DesktopSshPasswordPromptResolutionInput =
@@ -63,7 +70,7 @@ export class DesktopSshPromptWindowUnavailableError extends Schema.TaggedErrorCl
 ) {
   override get message(): string {
     const request = this.requestId === null ? "before a request id was assigned" : this.requestId;
-    return `T3 Code window is unavailable during ${this.stage} for SSH authentication to ${this.destination} (request: ${request}).`;
+    return `${DESKTOP_PRODUCT_NAME} window is unavailable during ${this.stage} for SSH authentication to ${this.destination} (request: ${request}).`;
   }
 }
 

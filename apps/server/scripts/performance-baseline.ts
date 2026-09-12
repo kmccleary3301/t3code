@@ -12,9 +12,9 @@ import {
   OmpChunkAssembler,
   PiFamilyEventProjector,
   StrictJsonlDecoder,
-  nativeEventId,
   parseJsonObject,
 } from "../src/provider/piFamily/index.ts";
+import { nativeEventId } from "../src/provider/piFamily/NativeEventIdentity.ts";
 import {
   ompNativeChunkedTraceJsonl,
   piNativeTrace,

@@ -2,12 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   areFontAdvancesMonospace,
+  AppearanceFontLoadCache,
+  getAppearanceFontLoadDiagnostics,
+  loadAppearanceFonts,
+  setAppearanceFontLoadDiagnostics,
+  subscribeAppearanceFontLoadDiagnostics,
   clampCodeFontSize,
   clampInterfaceFontSize,
   clampPromptFontSize,
-  DEFAULT_CODE_FONT_STACK,
-  DEFAULT_SANS_FONT_STACK,
-  appearanceFontStack,
   cssFontFamilies,
   resolveDefaultFamilyLabel,
   resolveTerminalFontPreference,
@@ -40,9 +42,11 @@ describe("cssFontFamilies", () => {
     expect(cssFontFamilies('"Comic Mono"')).toBe('"Comic Mono"');
   });
 
-  it("normalizes comma-separated lists and strips embedded quotes", () => {
+  it("normalizes comma-separated lists and escapes CSS string metacharacters", () => {
     expect(cssFontFamilies(" Fira Code , Menlo ")).toBe('"Fira Code", Menlo');
-    expect(cssFontFamilies('Bad"Name')).toBe('"BadName"');
+    expect(cssFontFamilies('Bad"Name')).toBe('"Bad\\"Name"');
+    expect(cssFontFamilies("Broken\\")).toBe('"Broken\\\\"');
+    expect(cssFontFamilies("Line\nBreak")).toBe('"Line Break"');
   });
 
   it("quotes names that are not single CSS idents", () => {
@@ -55,18 +59,6 @@ describe("resolveDefaultFamilyLabel", () => {
   it("skips generic keywords and returns null for a stack of only generics", () => {
     expect(resolveDefaultFamilyLabel("system-ui, sans-serif")).toBeNull();
     expect(resolveDefaultFamilyLabel("ui-monospace, monospace")).toBeNull();
-  });
-});
-
-describe("appearanceFontStack", () => {
-  it("prepends the custom family to the default stack", () => {
-    expect(appearanceFontStack("Fira Code", DEFAULT_CODE_FONT_STACK)).toBe(
-      `"Fira Code", ${DEFAULT_CODE_FONT_STACK}`,
-    );
-  });
-
-  it("falls back to the default stack when unset", () => {
-    expect(appearanceFontStack("", DEFAULT_SANS_FONT_STACK)).toBe(DEFAULT_SANS_FONT_STACK);
   });
 });
 
@@ -121,5 +113,93 @@ describe("font size clamping", () => {
     expect(clampCodeFontSize(13.4)).toBe(13);
     expect(clampInterfaceFontSize(Number.NaN)).toBe(16);
     expect(clampPromptFontSize(Number.POSITIVE_INFINITY)).toBe(14);
+  });
+});
+
+describe("loadAppearanceFonts", () => {
+  it("reports failure and timeout without blocking fallback content", async () => {
+    const failed = await loadAppearanceFonts([{ family: "Broken Face" }], {
+      fontSet: { load: async () => Promise.reject(new Error("invalid font")) },
+    });
+    expect(failed.loaded).toEqual([]);
+    expect(failed.diagnostics[0]?.code).toBe("font-load-failed");
+
+    const timedOut = await loadAppearanceFonts([{ family: "Slow Face" }], {
+      fontSet: { load: async () => new Promise<never>(() => undefined) },
+      timeoutMs: 1,
+    });
+    expect(timedOut.loaded).toEqual([]);
+    expect(timedOut.diagnostics[0]?.code).toBe("font-load-timeout");
+  });
+
+  it("deduplicates and clears bounded cache entries", async () => {
+    let loads = 0;
+    const fontSet = {
+      load: async () => {
+        loads += 1;
+        return [];
+      },
+    };
+    const cache = new AppearanceFontLoadCache();
+    await cache.load([{ family: "Inter" }], { fontSet });
+    await cache.load([{ family: "Inter" }], { fontSet });
+    expect(loads).toBe(1);
+    cache.clear();
+    await cache.load([{ family: "Inter" }], { fontSet });
+    expect(loads).toBe(2);
+  });
+
+  it("loads distinct style and weight faces from the same family", async () => {
+    const descriptors: string[] = [];
+    await loadAppearanceFonts(
+      [
+        { family: "Inter", style: "normal", weight: 400 },
+        { family: "Inter", style: "italic", weight: 700 },
+      ],
+      {
+        fontSet: {
+          load: async (descriptor) => {
+            descriptors.push(descriptor);
+            return [];
+          },
+        },
+      },
+    );
+    expect(descriptors).toEqual(['400 16px "Inter"', 'italic 700 16px "Inter"']);
+  });
+
+  it("evicts diagnosed probes so a repaired font can retry", async () => {
+    let loads = 0;
+    const cache = new AppearanceFontLoadCache();
+    const fontSet = {
+      load: async () => {
+        loads += 1;
+        if (loads === 1) throw new Error("broken");
+        return [];
+      },
+    };
+    expect((await cache.load([{ family: "Repairable" }], { fontSet })).diagnostics).toHaveLength(1);
+    expect((await cache.load([{ family: "Repairable" }], { fontSet })).diagnostics).toHaveLength(0);
+    expect(loads).toBe(2);
+  });
+
+  it("publishes diagnostics and clears them after a successful retry", async () => {
+    const snapshots: number[] = [];
+    const unsubscribe = subscribeAppearanceFontLoadDiagnostics(() => {
+      snapshots.push(getAppearanceFontLoadDiagnostics().length);
+    });
+    const first = await loadAppearanceFonts([{ family: "Repairable" }], {
+      fontSet: { load: async () => Promise.reject(new Error("broken")) },
+    });
+    setAppearanceFontLoadDiagnostics(first.diagnostics);
+    expect(getAppearanceFontLoadDiagnostics()[0]?.recovery).toContain("retry");
+
+    const repaired = await loadAppearanceFonts([{ family: "Repairable" }], {
+      fontSet: { load: async () => [] },
+    });
+    setAppearanceFontLoadDiagnostics(repaired.diagnostics);
+    unsubscribe();
+    expect(snapshots).toEqual([1, 0]);
+    expect(getAppearanceFontLoadDiagnostics()).toEqual([]);
   });
 });

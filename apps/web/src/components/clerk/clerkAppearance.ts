@@ -1,8 +1,9 @@
 import type { ClerkProviderProps } from "@clerk/react";
+import { WEB_RENDERER_OWNERSHIP } from "../../lib/webRendererOwnership";
 
-/** Keeps Clerk's stock component structure while binding its color system to
- * the live T3 Code palette. CSS variables make theme changes propagate to
- * portaled sign-in and profile surfaces without remounting Clerk. */
+/** Clerk mounts its modal/profile markup in a portal owned by the app document. */
+export const CLERK_PORTAL_RENDERER_OWNER = WEB_RENDERER_OWNERSHIP.clerkPortal;
+/** Bridge variables are CSS references, never copied raw package values. */
 export const clerkAppearance = {
   variables: {
     // Clerk reuses its primary color for filled buttons and bare links. The
@@ -13,14 +14,14 @@ export const clerkAppearance = {
     colorDanger: "var(--error)",
     colorSuccess: "var(--success)",
     colorWarning: "var(--warning)",
-    colorNeutral: "var(--foreground)",
-    colorForeground: "var(--foreground)",
+    colorNeutral: "var(--contrast-foreground)",
+    colorForeground: "var(--contrast-foreground)",
     // The stock dark theme's muted token is translucent. Clerk uses this as
     // the footer's background, so derive an opaque muted surface from the card.
-    colorMuted: "color-mix(in srgb, var(--card) 98%, var(--foreground))",
-    colorMutedForeground: "var(--muted-foreground)",
+    colorMuted: "color-mix(in srgb, var(--card) 98%, var(--contrast-foreground))",
+    colorMutedForeground: "var(--contrast-muted-foreground)",
     colorBackground: "var(--card)",
-    colorInputForeground: "var(--foreground)",
+    colorInputForeground: "var(--contrast-foreground)",
     colorInput: "var(--secondary)",
     colorRing: "var(--ring)",
   },

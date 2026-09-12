@@ -3,6 +3,7 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
+import { isProviderCommandCatalog } from "@t3tools/shared/providerSlashCommandCompletion";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -180,6 +181,8 @@ const MCP_ITEM_KEPT_FIELDS = [
   "durationMs",
 ] as const;
 
+const GENERIC_TOOL_ITEM_KEPT_FIELDS = ["type", "id", "name", "toolName", "tool", "status"] as const;
+
 /**
  * Pulls renderable text out of an MCP tool result: either a Codex-style
  * `{content: [{type: "text", text}, ...]}` record or a raw Claude
@@ -270,6 +273,60 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
   return projectedData;
 }
 
+function projectToolInput(value: unknown): unknown {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+      return undefined;
+    }
+    if (serialized.length <= 8_192) {
+      return value;
+    }
+    return {
+      preview: `${serialized.slice(0, 8_191)}…`,
+      truncated: true,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function projectGenericToolCallData(data: Record<string, unknown>): Record<string, unknown> {
+  const projectedData: Record<string, unknown> = {};
+  const item = asRecord(data.item);
+  if (item) {
+    const projectedItem: Record<string, unknown> = {};
+    for (const key of GENERIC_TOOL_ITEM_KEPT_FIELDS) {
+      if (key in item) {
+        projectedItem[key] = item[key];
+      }
+    }
+    if ("input" in item) {
+      const input = projectToolInput(item.input);
+      if (input !== undefined) {
+        projectedItem.input = input;
+      }
+    }
+    const result = summarizeMcpResult(item.result);
+    if (result) {
+      projectedItem.result = result;
+    }
+    projectedData.item = projectedItem;
+  }
+
+  if ("toolCallId" in data) {
+    projectedData.toolCallId = data.toolCallId;
+  }
+  if ("kind" in data) {
+    projectedData.kind = data.kind;
+  }
+  const rawOutput = projectRawOutput(data.rawOutput);
+  if (rawOutput) {
+    projectedData.rawOutput = rawOutput;
+  }
+  return projectedData;
+}
+
 function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
   const direct = asTrimmedString(value);
   if (direct) {
@@ -342,12 +399,28 @@ export function projectActivityPayload(
     return activity;
   }
 
+  const itemStatus = asRecord(data.item)?.status;
+  const projectedPayload =
+    payload.status === "completed" && (itemStatus === "failed" || itemStatus === "declined")
+      ? { ...payload, status: itemStatus }
+      : payload;
+
   if (payload.itemType === "mcp_tool_call") {
     return {
       ...activity,
       payload: {
-        ...payload,
+        ...projectedPayload,
         data: projectMcpToolCallData(data),
+      },
+    };
+  }
+
+  if (payload.itemType === "dynamic_tool_call" || payload.itemType === "collab_agent_tool_call") {
+    return {
+      ...activity,
+      payload: {
+        ...projectedPayload,
+        data: projectGenericToolCallData(data),
       },
     };
   }
@@ -384,7 +457,7 @@ export function projectActivityPayload(
   return {
     ...activity,
     payload: {
-      ...payload,
+      ...projectedPayload,
       data: projectedData,
     },
   };
@@ -536,6 +609,27 @@ function dropSupersededToolUpdatedActivities(
   });
 }
 
+function dropStaleCommandCatalogActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  const latestByProvider = new Map<string, OrchestrationThreadActivity>();
+  for (const activity of activities) {
+    if (
+      activity.kind === "provider.commands.updated" &&
+      isProviderCommandCatalog(activity.payload)
+    ) {
+      latestByProvider.set(activity.payload.providerInstanceId, activity);
+    }
+  }
+  if (latestByProvider.size === 0) return activities;
+  return activities.filter(
+    (activity) =>
+      activity.kind !== "provider.commands.updated" ||
+      !isProviderCommandCatalog(activity.payload) ||
+      latestByProvider.get(activity.payload.providerInstanceId) === activity,
+  );
+}
+
 export function projectThreadDetailSnapshot(
   snapshot: OrchestrationThreadDetailSnapshot,
 ): OrchestrationThreadDetailSnapshot {
@@ -544,7 +638,9 @@ export function projectThreadDetailSnapshot(
     thread: {
       ...snapshot.thread,
       activities: dropSupersededToolUpdatedActivities(
-        dropStaleContextWindowActivities(snapshot.thread.activities),
+        dropStaleContextWindowActivities(
+          dropStaleCommandCatalogActivities(snapshot.thread.activities),
+        ),
       ).map(projectActivityPayload),
     },
   };

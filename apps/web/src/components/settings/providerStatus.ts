@@ -6,7 +6,7 @@ import type { ServerProvider, ServerProviderVersionAdvisory } from "@t3tools/con
  */
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
-    dot: "bg-amber-400",
+    dot: "bg-muted-foreground/50",
   },
   error: {
     dot: "bg-destructive",
@@ -39,7 +39,7 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     return {
       headline: "Disabled",
       detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
+        provider.message ?? "This provider is installed but disabled for new sessions in KM Code.",
     };
   }
   if (!provider.installed) {

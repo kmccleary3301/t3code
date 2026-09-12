@@ -31,7 +31,8 @@ function DialogBackdrop({ className, ...props }: DialogPrimitive.Backdrop.Props)
       forceRender
       className={cn(DIALOG_BACKDROP_CLASS, className)}
       data-slot="dialog-backdrop"
-      {...props}
+      data-t3-surface="overlay"
+      data-t3-part="dialog"
     />
   );
 }
@@ -43,7 +44,8 @@ function DialogViewport({ className, ...props }: DialogPrimitive.Viewport.Props)
         "fixed inset-0 z-50 grid grid-rows-[1fr_auto_1fr] justify-items-center p-4",
         className,
       )}
-      data-slot="dialog-viewport"
+      data-t3-surface="portal"
+      data-t3-part="dialog"
       {...props}
     />
   );
@@ -73,6 +75,8 @@ function DialogPopup({
             className,
           )}
           data-slot="dialog-popup"
+          data-t3-part="dialog"
+          data-t3-surface="dialog"
           {...props}
         >
           {children}

@@ -552,7 +552,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={handleOpenChange}>
-      <DialogPopup className="max-w-xl overflow-hidden">
+      <DialogPopup className="max-w-xl overflow-hidden" data-t3-surface="source-control">
         <div className="flex min-h-0 flex-col overflow-hidden border-foreground/10 bg-transparent">
           <DialogHeader className="border-b border-border/70 bg-foreground/[0.025] dark:border-transparent dark:bg-transparent">
             <DialogTitle>Publish repository</DialogTitle>

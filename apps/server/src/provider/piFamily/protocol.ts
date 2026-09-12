@@ -41,6 +41,11 @@ export interface OmpReadyFrame extends RpcEnvelope {
 export interface OmpNegotiateProtocolCommand extends RpcEnvelope {
   readonly type: "negotiate_protocol";
   readonly protocolVersion: 2;
+  readonly capabilities?: {
+    readonly ui?: {
+      readonly askDialog?: boolean;
+    };
+  };
 }
 
 export interface OmpNegotiateProtocolResponse extends RpcResponse {
@@ -107,6 +112,7 @@ export interface RuntimeCapabilities {
     readonly widget: boolean;
     readonly openUrl: boolean;
     readonly arbitraryTerminalComponents: false;
+    readonly askDialog: boolean;
   };
   readonly tasks: {
     readonly lifecycle: boolean;
@@ -153,6 +159,7 @@ export function absentRuntimeCapabilities(runtime: PiFamilyRuntimeKind): Runtime
       widget: false,
       openUrl: false,
       arbitraryTerminalComponents: false,
+      askDialog: false,
     },
     tasks: {
       lifecycle: false,
@@ -204,6 +211,7 @@ export function negotiatedRuntimeCapabilities(
       widget: true,
       openUrl: false,
       arbitraryTerminalComponents: false,
+      askDialog: false,
     },
     tasks: {
       lifecycle: omp,
@@ -286,6 +294,25 @@ export type PortableUiRequest =
       readonly requestId?: string;
       readonly feature: string;
       readonly message: string;
+    }
+  | {
+      readonly kind: "askDialog";
+      readonly requestId: string;
+      readonly questions: ReadonlyArray<{
+        readonly id: string;
+        readonly header?: string;
+        readonly question: string;
+        readonly options: ReadonlyArray<{
+          readonly label: string;
+          readonly description?: string;
+        }>;
+        readonly multi?: boolean;
+      }>;
+    }
+  | {
+      readonly kind: "cancel";
+      readonly requestId: string;
+      readonly targetId: string;
     };
 
 export type PortableUiResponse =
@@ -293,7 +320,9 @@ export type PortableUiResponse =
   | {
       readonly requestId: string;
       readonly cancelled?: false;
-      readonly value: string | boolean | null;
+      readonly chat?: boolean;
+      readonly value?: string | boolean | null;
+      readonly answers?: JsonRecord;
     };
 
 export type CanonicalTaskStatus =
@@ -324,6 +353,10 @@ export interface NativeTaskRunHandles {
   readonly worktreePath?: string;
   readonly branch?: string;
   readonly jobId?: string;
+  /** Canonical workflow handle fields emitted to TaskProgressPayload. */
+  readonly scriptPath?: string;
+  readonly transcriptDir?: string;
+  readonly sessionUrl?: string;
   readonly [key: string]: unknown;
 }
 
@@ -357,6 +390,11 @@ export interface NativeTaskSnapshot extends NativeTaskIdentity {
   readonly metadata?: JsonRecord;
 }
 
+export interface PiFamilyPlanStep {
+  readonly step: string;
+  readonly status: "pending" | "inProgress" | "completed";
+}
+
 export type PiFamilyProjectedEvent =
   | { readonly kind: "runtime.ready"; readonly ready: OmpReadyFrame }
   | {
@@ -385,6 +423,12 @@ export type PiFamilyProjectedEvent =
   | {
       readonly kind: "task.started" | "task.progress" | "task.completed";
       readonly task: NativeTaskSnapshot;
+      readonly raw: RpcEnvelope;
+    }
+  | {
+      readonly kind: "plan.updated";
+      readonly plan: readonly PiFamilyPlanStep[];
+      readonly requestId?: string;
       readonly raw: RpcEnvelope;
     }
   | { readonly kind: "ui.request"; readonly request: PortableUiRequest; readonly raw: RpcEnvelope }
@@ -471,10 +515,35 @@ export function validateOmpReadyFrame(value: unknown): OmpReadyFrame {
   return record as unknown as OmpReadyFrame;
 }
 
-export function makeOmpNegotiateProtocolCommand(id: string): OmpNegotiateProtocolCommand {
+export function makeOmpNegotiateProtocolCommand(
+  id: string,
+  capabilities?: { readonly ui?: { readonly askDialog?: boolean } },
+): OmpNegotiateProtocolCommand {
   if (id.length === 0)
     throw new PiFamilyProtocolError("OMP negotiation id must not be empty", "OMP_NEGOTIATION_ID");
-  return { id, type: "negotiate_protocol", protocolVersion: 2 };
+  return {
+    id,
+    type: "negotiate_protocol",
+    protocolVersion: 2,
+    ...(capabilities !== undefined ? { capabilities } : {}),
+  };
+}
+
+export function formatPortableUiResponse(response: PortableUiResponse): JsonRecord {
+  if ("cancelled" in response && response.cancelled) {
+    return {
+      type: "extension_ui_response",
+      id: response.requestId,
+      cancelled: true,
+    };
+  }
+  return {
+    type: "extension_ui_response",
+    id: response.requestId,
+    ...(response.chat ? { chat: true } : {}),
+    ...(response.value !== undefined ? { value: response.value } : {}),
+    ...(response.answers ? { answers: response.answers } : {}),
+  };
 }
 
 export function validateOmpNegotiateProtocolResponse(value: unknown): OmpNegotiateProtocolResponse {
@@ -493,4 +562,93 @@ export function validateOmpNegotiateProtocolResponse(value: unknown): OmpNegotia
     );
   }
   return record as unknown as OmpNegotiateProtocolResponse;
+}
+export function readRuntimeCapabilities(
+  runtime: PiFamilyRuntimeKind,
+  value: unknown,
+  ready?: {
+    protocolVersion: 1 | 2;
+    supportedProtocolVersions: readonly (1 | 2)[];
+    maxFrameBytes?: number;
+    maxReassembledFrameBytes?: number;
+  },
+): RuntimeCapabilities {
+  const record = asRecord(value);
+  const protocolVersion = record?.protocolVersion === 2 || ready?.protocolVersion === 2 ? 2 : 1;
+  const base = negotiatedRuntimeCapabilities(runtime, protocolVersion);
+  const transport = asRecord(record?.transport);
+  const models = asRecord(record?.models);
+  const thinking = asRecord(record?.thinking);
+  const commands = asRecord(record?.commands);
+  const sessions = asRecord(record?.sessions);
+  const ui = asRecord(record?.ui);
+  const tasks = asRecord(record?.tasks);
+  const maxFrameBytes = asNumber(transport?.maxFrameBytes) ?? ready?.maxFrameBytes;
+  const maxReassembledFrameBytes =
+    asNumber(transport?.maxReassembledFrameBytes) ?? ready?.maxReassembledFrameBytes;
+  const supported = Array.isArray(record?.supportedProtocolVersions)
+    ? record.supportedProtocolVersions.filter(
+        (version): version is 1 | 2 => version === 1 || version === 2,
+      )
+    : (ready?.supportedProtocolVersions ?? base.supportedProtocolVersions);
+  const negotiatedProtocolVersion =
+    record?.negotiatedProtocolVersion === 2 || protocolVersion === 2 ? 2 : undefined;
+  return {
+    ...base,
+    ...(typeof record?.runtimeVersion === "string"
+      ? { runtimeVersion: record.runtimeVersion }
+      : {}),
+    protocolVersion,
+    supportedProtocolVersions: supported.length > 0 ? supported : base.supportedProtocolVersions,
+    ...(negotiatedProtocolVersion === 2 ? { negotiatedProtocolVersion: 2 } : {}),
+    transport: {
+      ...base.transport,
+      ...(maxFrameBytes === undefined ? {} : { maxFrameBytes }),
+      ...(maxReassembledFrameBytes === undefined ? {} : { maxReassembledFrameBytes }),
+      chunking: asBoolean(transport?.chunking) ?? base.transport.chunking,
+    },
+    models: {
+      discover: asBoolean(models?.discover) ?? base.models.discover,
+      switch: asBoolean(models?.switch) ?? base.models.switch,
+    },
+    thinking: {
+      discover: asBoolean(thinking?.discover) ?? base.thinking.discover,
+      switch: asBoolean(thinking?.switch) ?? base.thinking.switch,
+    },
+    commands: {
+      discover: asBoolean(commands?.discover) ?? base.commands.discover,
+      invokeNative: asBoolean(commands?.invokeNative) ?? base.commands.invokeNative,
+    },
+    sessions: {
+      resume: asBoolean(sessions?.resume) ?? base.sessions.resume,
+      tree: asBoolean(sessions?.tree) ?? base.sessions.tree,
+      fork: asBoolean(sessions?.fork) ?? base.sessions.fork,
+      compact: asBoolean(sessions?.compact) ?? base.sessions.compact,
+      nativeCheckpoint: asBoolean(sessions?.nativeCheckpoint) ?? base.sessions.nativeCheckpoint,
+      completeTurnRollback:
+        asBoolean(sessions?.completeTurnRollback) ?? base.sessions.completeTurnRollback,
+    },
+    ui: {
+      select: asBoolean(ui?.select) ?? base.ui.select,
+      confirm: asBoolean(ui?.confirm) ?? base.ui.confirm,
+      input: asBoolean(ui?.input) ?? base.ui.input,
+      editor: asBoolean(ui?.editor) ?? base.ui.editor,
+      notify: asBoolean(ui?.notify) ?? base.ui.notify,
+      status: asBoolean(ui?.status) ?? base.ui.status,
+      widget: asBoolean(ui?.widget) ?? base.ui.widget,
+      openUrl: asBoolean(ui?.openUrl) ?? base.ui.openUrl,
+      arbitraryTerminalComponents: false,
+      askDialog: asBoolean(ui?.askDialog) ?? base.ui.askDialog,
+    },
+    tasks: {
+      lifecycle: asBoolean(tasks?.lifecycle) ?? base.tasks.lifecycle,
+      nested: asBoolean(tasks?.nested) ?? base.tasks.nested,
+      childTranscript: asBoolean(tasks?.childTranscript) ?? base.tasks.childTranscript,
+      workflows: asBoolean(tasks?.workflows) ?? base.tasks.workflows,
+      background: asBoolean(tasks?.background) ?? base.tasks.background,
+      targetedCancellation:
+        asBoolean(tasks?.targetedCancellation) ?? base.tasks.targetedCancellation,
+    },
+    ...(record ? { raw: record } : {}),
+  };
 }

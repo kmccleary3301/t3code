@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type { AppearanceCommand, AppearanceSnapshot } from "@t3tools/client-runtime/appearance";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";
@@ -414,6 +415,190 @@ export function filterPinnedBrowseEntries(input: {
       ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ?? null)
       : null;
   return { visibleEntries, exactEntry };
+}
+
+export function buildAppearanceCommandPaletteItem(input: {
+  readonly snapshot: AppearanceSnapshot | null;
+  readonly icon: ReactNode;
+  readonly addonIcon: ReactNode;
+  readonly run: (command: AppearanceCommand) => Promise<void>;
+  readonly openSettings: () => Promise<void>;
+  readonly openAppearanceFolder: (() => Promise<void>) | null;
+}): CommandPaletteSubmenuItem {
+  const actions: CommandPaletteActionItem[] = [
+    {
+      kind: "action",
+      value: "appearance:settings",
+      searchTerms: ["appearance", "settings", "customizations", "packages", "snippets"],
+      title: "Open appearance settings",
+      description: "Manage packages, variants, snippets, and recovery",
+      icon: input.icon,
+      run: input.openSettings,
+    },
+    {
+      kind: "action",
+      value: "appearance:reload",
+      searchTerms: ["appearance", "reload", "refresh", "reconcile"],
+      title: "Reload appearance",
+      description:
+        input.snapshot === null ? "Appearance runtime is still loading" : "Refresh active styles",
+      icon: input.icon,
+      disabled: input.snapshot === null,
+      run: () => input.run({ type: "refresh" }),
+    },
+    {
+      kind: "action",
+      value: "appearance:safe-mode",
+      searchTerms: ["appearance", "safe mode", "recovery", "disable customizations"],
+      title:
+        input.snapshot?.safeMode === true
+          ? "Reset appearance to leave safe mode"
+          : "Enter appearance safe mode",
+      description:
+        input.snapshot?.safeMode === true
+          ? "Clear customizations and keep a recovery copy"
+          : "Bypass package CSS and snippets",
+      icon: input.icon,
+      run: () =>
+        input.run(
+          input.snapshot?.safeMode === true
+            ? { type: "reset" }
+            : { type: "safe-mode", enabled: true },
+        ),
+    },
+    {
+      kind: "action",
+      value: "appearance:reset",
+      searchTerms: ["appearance", "reset", "recovery", "defaults"],
+      title: "Reset appearance customizations",
+      description: "Keep a recovery copy where supported",
+      icon: input.icon,
+      run: () => input.run({ type: "reset" }),
+    },
+    input.openAppearanceFolder === null
+      ? {
+          kind: "action",
+          value: "appearance:folder",
+          searchTerms: ["appearance", "folder", "open", "reveal"],
+          title: "Open appearance folder",
+          description: "Only available in the desktop app",
+          icon: input.icon,
+          disabled: true,
+          run: async () => undefined,
+        }
+      : {
+          kind: "action",
+          value: "appearance:folder",
+          searchTerms: ["appearance", "folder", "open", "reveal"],
+          title: "Open appearance folder",
+          description: "Reveal local package files",
+          icon: input.icon,
+          run: input.openAppearanceFolder,
+        },
+  ];
+
+  if (input.snapshot !== null) {
+    for (const id of input.snapshot.order) {
+      const packageValue = input.snapshot.packages[id];
+      if (packageValue === undefined) continue;
+      const defaultVariant =
+        packageValue.profile.variants.find(
+          (variant) => variant.id === packageValue.profile.defaultVariant,
+        ) ?? packageValue.profile.variants[0];
+      if (defaultVariant === undefined) continue;
+      const packageName = packageValue.profile.metadata.name;
+      actions.push({
+        kind: "action",
+        value: `appearance:profile:${id}`,
+        searchTerms: [packageName, id, "profile", "package", "theme", "appearance"],
+        title: `Use ${packageName}`,
+        description: packageValue.enabled
+          ? `Profile · ${defaultVariant.label}`
+          : "Disabled package · activating also enables it",
+        icon: input.icon,
+        run: () =>
+          input.run({
+            type: "preference",
+            preference: {
+              ...input.snapshot!.preference,
+              mode: defaultVariant.appearance,
+              packageId: id,
+              variantId: defaultVariant.id,
+            },
+          }),
+      });
+      for (const variant of packageValue.profile.variants) {
+        actions.push({
+          kind: "action",
+          value: `appearance:variant:${id}:${variant.id}`,
+          searchTerms: [packageName, variant.label, variant.appearance, "variant", "appearance"],
+          title: `${packageName}: ${variant.label}`,
+          description: `${variant.appearance} variant${packageValue.enabled ? "" : " · package will be enabled"}`,
+          icon: input.icon,
+          run: () =>
+            input.run({
+              type: "preference",
+              preference: {
+                ...input.snapshot!.preference,
+                mode: variant.appearance,
+                packageId: id,
+                variantId: variant.id,
+              },
+            }),
+        });
+      }
+    }
+    for (const snippet of input.snapshot.snippets) {
+      const diagnostic = input.snapshot.diagnostics.some(
+        (entry) => entry.file?.includes(snippet.id) === true,
+      );
+      actions.push({
+        kind: "action",
+        value: `appearance:snippet:${snippet.id}`,
+        searchTerms: [snippet.id, "snippet", "css", snippet.enabled ? "disable" : "enable"],
+        title: `${snippet.enabled ? "Disable" : "Enable"} snippet: ${snippet.id}`,
+        description: diagnostic
+          ? "Error · edit or disable in appearance settings"
+          : snippet.advanced
+            ? "Advanced CSS snippet"
+            : "CSS snippet",
+        icon: input.icon,
+        run: () => input.run({ type: "snippet-enable", id: snippet.id, enabled: !snippet.enabled }),
+      });
+    }
+  }
+
+  return {
+    kind: "submenu",
+    value: "action:appearance",
+    searchTerms: ["appearance", "theme", "profile", "variant", "snippet", "recovery"],
+    title: "Appearance",
+    description:
+      input.snapshot === null
+        ? "Appearance runtime is loading"
+        : input.snapshot.safeMode
+          ? "Safe mode active"
+          : "Profiles, variants, snippets, and recovery",
+    icon: input.icon,
+    addonIcon: input.addonIcon,
+    groups: [
+      { value: "appearance-actions", label: "Appearance", items: actions.slice(0, 5) },
+      {
+        value: "appearance-profiles",
+        label: "Profiles and variants",
+        items: actions.filter(
+          (item) =>
+            item.value.startsWith("appearance:profile:") ||
+            item.value.startsWith("appearance:variant:"),
+        ),
+      },
+      {
+        value: "appearance-snippets",
+        label: "Snippets",
+        items: actions.filter((item) => item.value.startsWith("appearance:snippet:")),
+      },
+    ],
+  };
 }
 
 export function getCommandPaletteMode(input: {

@@ -2,7 +2,7 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
-const DESKTOP_RELEASE_TAG_URL = "https://github.com/pingdotgg/t3code/releases/tag";
+const DESKTOP_RELEASES_URL = "https://github.com/kmccleary3301/t3code/releases";
 
 /**
  * The main process fills `downloadedVersion` from the updater's `update-downloaded`
@@ -13,11 +13,9 @@ export function getDesktopUpdateDownloadedVersion(state: DesktopUpdateState): st
   return state.downloadedVersion ?? state.availableVersion;
 }
 
-/** Release notes for an exact downloaded build; nightly suffixes are part of the tag. */
+/** Release listing for a downloaded build when profile-specific tag metadata is unavailable. */
 export function getDesktopUpdateReleaseUrl(version: string | null): string | null {
-  const normalizedVersion = version?.trim();
-  if (!normalizedVersion) return null;
-  return `${DESKTOP_RELEASE_TAG_URL}/v${encodeURIComponent(normalizedVersion)}`;
+  return version?.trim() ? DESKTOP_RELEASES_URL : null;
 }
 
 export function resolveDesktopUpdateButtonAction(
@@ -64,15 +62,15 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
   if (!shouldShowArm64IntelBuildWarning(state)) {
     return "This install is using the correct architecture.";
   }
-
   const action = resolveDesktopUpdateButtonAction(state);
+
   if (action === "download") {
-    return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.";
+    return "This Mac has Apple Silicon, but KM Code is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.";
   }
   if (action === "install") {
-    return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.";
+    return "This Mac has Apple Silicon, but KM Code is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.";
   }
-  return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.";
+  return "This Mac has Apple Silicon, but KM Code is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.";
 }
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
@@ -106,7 +104,7 @@ export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
-  return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
+  return `Install update${version ? ` ${version}` : ""} and restart KM Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
 }
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {

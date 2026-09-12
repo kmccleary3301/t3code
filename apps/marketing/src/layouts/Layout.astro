@@ -13,8 +13,8 @@ interface Props {
 }
 
 const {
-  title = "T3 Code",
-  description = "T3 Code — The open-source control plane for coding agents.",
+  title = "KM Code",
+  description = "KM Code — The open-source control plane for coding agents.",
   pageClass,
 } = Astro.props;
 ---
@@ -40,8 +40,11 @@ const {
     <div class:list={["page", pageClass]}>
       <nav class="nav">
         <div class="nav-inner">
-          <a href="/" class="nav-brand" aria-label="T3 Code home">
-            <span class="nav-brand-name">T3 Code</span>
+          <a href="/" class="nav-brand" aria-label="KM Code home">
+            <svg class="nav-brand-mark" viewBox="-12.25 29.5 152.5 72" aria-hidden="true">
+              <path d="M3.7977 83.9321 2.9451 65.8061 35.5076 31.5000H53.0290L23.6886 63.0513L14.8902 72.3757ZM-10.2517 99.5000V31.5000H5.3688V99.5000ZM36.3098 99.5000 12.0780 69.9119 22.4274 58.6882 54.6821 99.5000ZM61.6341 99.5000V31.5000H74.6181L103.5766 79.5285H96.7161L125.1319 31.5000H138.1160L138.2517 99.5000H123.5207L123.3850 54.1818H126.1603L103.4024 92.2663H96.3476L73.1057 54.1818H76.3651V99.5000Z" />
+            </svg>
+            <span class="nav-brand-name">KM Code</span>
           </a>
           <div class="nav-right">
             <a
@@ -49,12 +52,12 @@ const {
               href={GITHUB_REPOSITORY_URL}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`Star T3 Code on GitHub — ${MARKETING_STATS.githubStars} stars`}
+              aria-label={`View KM Code source on GitHub; upstream T3 Code has ${MARKETING_STATS.githubStars} stars`}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M12 2.3l2.9 5.88 6.49.94-4.7 4.58 1.11 6.47L12 17.12l-5.8 3.05 1.11-6.47-4.7-4.58 6.49-.94L12 2.3z"/>
               </svg>
-              <span><strong>{MARKETING_STATS.githubStars}</strong> GitHub stars</span>
+              <span><strong>{MARKETING_STATS.githubStars}</strong> upstream T3 Code stars</span>
             </a>
           </div>
         </div>
@@ -67,18 +70,20 @@ const {
       <footer class="footer">
         <div class="footer-inner">
           <div class="footer-brand">
-            <img src="/icon.webp" alt="" />
-            <span>&copy; {new Date().getFullYear()} T3 Tools Inc · MIT licensed</span>
+            <svg class="footer-brand-mark" viewBox="-12.25 29.5 152.5 72" aria-hidden="true">
+              <path d="M3.7977 83.9321 2.9451 65.8061 35.5076 31.5000H53.0290L23.6886 63.0513L14.8902 72.3757ZM-10.2517 99.5000V31.5000H5.3688V99.5000ZM36.3098 99.5000 12.0780 69.9119 22.4274 58.6882 54.6821 99.5000ZM61.6341 99.5000V31.5000H74.6181L103.5766 79.5285H96.7161L125.1319 31.5000H138.1160L138.2517 99.5000H123.5207L123.3850 54.1818H126.1603L103.4024 92.2663H96.3476L73.1057 54.1818H76.3651V99.5000Z" />
+            </svg>
+            <span>&copy; {new Date().getFullYear()} KM Code · fork of T3 Code by T3 Tools Inc. · MIT licensed</span>
           </div>
           <div class="footer-links">
             <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
-            <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
+            <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Upstream T3 Code Discord</a>
             <a href="/download">Download</a>
-            <a href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">iOS app</a>
-            <a href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">Android app</a>
-            <a href="/terms-of-service">Terms</a>
-            <a href="/privacy-policy">Privacy</a>
-            <a href="/security-policy">Security</a>
+            <a href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">Upstream T3 Code iOS app</a>
+            <a href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">Upstream T3 Code Android app</a>
+            <a href="/terms-of-service">Upstream T3 Code terms</a>
+            <a href="/privacy-policy">Upstream T3 Code privacy</a>
+            <a href="/security-policy">Upstream T3 Code security</a>
           </div>
         </div>
       </footer>
@@ -96,23 +101,22 @@ const {
     </script>
   </body>
 </html>
-
 <style is:global>
   :root {
-    --bg: #09090b;
-    --bg-elev: #0c0c0e;
-    --bg-card: #111113;
-    --fg: #fafafa;
-    --fg-muted: #a1a1aa;
-    --fg-dim: #71717a;
-    --fg-faint: #52525b;
-    --border: rgba(255, 255, 255, 0.08);
-    --border-strong: rgba(255, 255, 255, 0.14);
-    --accent-h: 250;
-    --accent: oklch(0.68 0.17 var(--accent-h));
-    --accent-dim: oklch(0.68 0.17 var(--accent-h) / 0.15);
-    --ok: oklch(0.72 0.16 150);
-    --warn: oklch(0.76 0.15 75);
+    --bg: #171411;
+    --bg-elev: #1b1714;
+    --bg-card: #211b17;
+    --fg: #f5ede4;
+    --fg-muted: #c9b8a8;
+    --fg-dim: #9f8b78;
+    --fg-faint: #6f5a4b;
+    --border: rgba(245, 237, 228, 0.14);
+    --border-strong: rgba(245, 237, 228, 0.24);
+    --accent-h: 52;
+    --accent: #c9834a;
+    --accent-dim: rgba(201, 131, 74, 0.18);
+    --ok: #72a879;
+    --warn: #d9a35d;
     --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
     --radius: 12px;
@@ -326,6 +330,13 @@ const {
     transition: color 0.2s ease;
   }
 
+  .nav-brand-mark {
+    width: 38px;
+    height: 18px;
+    margin-right: 7px;
+    fill: var(--accent);
+  }
+
   .nav-brand:hover {
     color: #fff;
   }
@@ -335,6 +346,11 @@ const {
     font-weight: 650;
     letter-spacing: -0.025em;
     line-height: 1;
+  }
+  .footer-brand-mark {
+    width: 38px;
+    height: 18px;
+    fill: var(--accent);
   }
 
   .nav-right {

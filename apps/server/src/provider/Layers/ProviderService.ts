@@ -14,13 +14,17 @@ import {
   NonNegativeInt,
   ThreadId,
   ProviderInterruptTurnInput,
+  ProviderNativeCommandError,
+  ProviderNativeCommandsInput,
   ProviderNativeSessionError,
   ProviderNativeSessionListInput,
+  ProviderNativeSessionResumeCursor,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ProviderUploadFeedbackInput,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
@@ -136,6 +140,8 @@ function toRuntimeStatus(session: ProviderSession): "starting" | "running" | "st
       return "running";
   }
 }
+
+const isNativeSessionCursor = Schema.is(ProviderNativeSessionResumeCursor);
 
 function toRuntimePayloadFromSession(
   session: ProviderSession,
@@ -532,6 +538,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         threadId: input.threadId,
         runtimeMode: binding.runtimeMode,
         isActive: false,
+        binding,
       } as const;
     }
 
@@ -620,7 +627,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (!instanceInfo.enabled) {
           return yield* toValidationError(
             "ProviderService.startSession",
-            `Provider instance '${resolvedInstanceId}' is disabled in T3 Code settings.`,
+            `Provider instance '${resolvedInstanceId}' is disabled in KM Code settings.`,
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
@@ -734,13 +741,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     }
 
-    // Adapters inline attachment pixels into the model prompt, but the model's
-    // tools cannot dereference pixels. Appending the on-disk path is what lets
-    // a turn like "include this screenshot in the PR" copy the actual file.
-    // This runs after schema decode, so the appended lines are exempt from the
-    // PROVIDER_SEND_TURN_MAX_INPUT_CHARS check; attachment count is capped, so
-    // the overhead is bounded. Unresolvable ids are skipped here and surface
-    // as adapter errors when the file is read for inlining.
+    // Every attachment gets an on-disk path in the prompt so the model's tools
+    // can dereference the actual file. All attachments then go to the adapter,
+    // and each adapter decides what its provider ingests natively: OpenCode
+    // sends generic files as file parts, the others send images only and rely
+    // on the path line for everything else. Unresolvable ids are skipped here
+    // and surface as adapter errors when the file is read.
     const attachmentPathLines = attachments.flatMap((attachment) => {
       const attachmentPath = resolveAttachmentPath({
         attachmentsDir: serverConfig.attachmentsDir,
@@ -762,13 +768,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ...(inputTextWithAttachmentPaths !== undefined
         ? { input: inputTextWithAttachmentPaths }
         : {}),
-      attachments,
     };
     yield* Effect.annotateCurrentSpan({
       "provider.operation": "send-turn",
       "provider.thread_id": input.threadId,
       "provider.interaction_mode": input.interactionMode,
-      "provider.attachment_count": input.attachments.length,
+      "provider.attachment_count": attachments.length,
     });
     let metricProvider = "unknown";
     let metricModel = input.modelSelection?.model;
@@ -812,7 +817,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         // often, since every toggle restarts the session. Recording it per turn
         // gives a usage-weighted view and lets it cross with interactionMode.
         runtimeMode: routed.runtimeMode,
-        attachmentCount: input.attachments.length,
+        attachmentCount: attachments.length,
         hasInput: typeof input.input === "string" && input.input.trim().length > 0,
       });
       return turn;
@@ -1082,6 +1087,32 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
+  const discoverNativeCommands: ProviderServiceMethod<"discoverNativeCommands"> = Effect.fn(
+    "discoverNativeCommands",
+  )(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.discoverNativeCommands",
+      schema: ProviderNativeCommandsInput,
+      payload: rawInput,
+    });
+    const adapter = yield* registry.getByInstance(input.providerInstanceId).pipe(
+      Effect.mapError(
+        () =>
+          new ProviderNativeCommandError({
+            code: "unknown",
+            message: `Unknown provider instance '${input.providerInstanceId}'.`,
+          }),
+      ),
+    );
+    if (adapter.discoverNativeCommands === undefined) {
+      return yield* new ProviderNativeCommandError({
+        code: "unsupported",
+        message: `Provider '${adapter.provider}' does not support native command discovery.`,
+      });
+    }
+    return yield* adapter.discoverNativeCommands(input);
+  });
+
   const listNativeSessions: ProviderServiceMethod<"listNativeSessions"> = Effect.fn(
     "listNativeSessions",
   )(function* (rawInput) {
@@ -1115,6 +1146,62 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     }
     return yield* routed.adapter.readNativeHistory(routed.threadId, input.cursor);
+  });
+  const readNativeHistoryBySession: ProviderServiceMethod<"readNativeHistoryBySession"> = Effect.fn(
+    "readNativeHistoryBySession",
+  )(function* (input) {
+    const adapter = yield* registry.getByInstance(input.providerInstanceId);
+    if (adapter.readNativeHistoryBySession === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "unsupported",
+        message: `Provider '${adapter.provider}' has no offline native history reader.`,
+      });
+    }
+    return yield* adapter.readNativeHistoryBySession({
+      sessionId: input.sessionId,
+      cwd: input.cwd,
+      ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    });
+  });
+  const readSubagentTranscript: ProviderServiceMethod<"readSubagentTranscript"> = Effect.fn(
+    "readSubagentTranscript",
+  )(function* (input) {
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.readSubagentTranscript",
+      allowRecovery: false,
+    });
+    if (!routed.isActive && routed.adapter.readSubagentTranscriptBySession !== undefined) {
+      const nativeCursor = routed.binding.resumeCursor;
+      const cwd = readPersistedCwd(routed.binding.runtimePayload);
+      if (
+        !isNativeSessionCursor(nativeCursor) ||
+        nativeCursor.runtime !== routed.adapter.provider ||
+        cwd === undefined
+      ) {
+        return yield* new ProviderNativeSessionError({
+          code: "invalid",
+          message: `Thread '${input.threadId}' has no usable native session identity and workspace.`,
+        });
+      }
+      return yield* routed.adapter.readSubagentTranscriptBySession({
+        sessionId: nativeCursor.sessionId,
+        subagentId: input.subagentId,
+        cwd,
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      });
+    }
+    if (routed.adapter.readSubagentTranscript === undefined) {
+      return yield* new ProviderNativeSessionError({
+        code: "unsupported",
+        message: `Provider '${routed.adapter.provider}' has no subagent transcript reader.`,
+      });
+    }
+    return yield* routed.adapter.readSubagentTranscript(
+      routed.threadId,
+      input.subagentId,
+      input.cursor,
+    );
   });
   const renameNativeSession: ProviderServiceMethod<"renameNativeSession"> = Effect.fn(
     "renameNativeSession",
@@ -1236,6 +1323,46 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     }
     yield* restore(routed.threadId, input.checkpoint);
   });
+  const uploadFeedback: ProviderServiceMethod<"uploadFeedback"> = Effect.fn("uploadFeedback")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.uploadFeedback",
+        schema: ProviderUploadFeedbackInput,
+        payload: rawInput,
+      });
+      let routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation: "ProviderService.uploadFeedback",
+        allowRecovery: false,
+      });
+      if (routed.adapter.uploadFeedback === undefined) {
+        return yield* toValidationError(
+          "ProviderService.uploadFeedback",
+          `Provider '${routed.adapter.provider}' does not support feedback uploads.`,
+        );
+      }
+      if (!routed.isActive) {
+        routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.uploadFeedback",
+          allowRecovery: true,
+        });
+      }
+      const uploadFeedback = routed.adapter.uploadFeedback;
+      if (uploadFeedback === undefined) {
+        return yield* toValidationError(
+          "ProviderService.uploadFeedback",
+          `Provider '${routed.adapter.provider}' does not support feedback uploads.`,
+        );
+      }
+      yield* Effect.annotateCurrentSpan({
+        "provider.operation": "upload-feedback",
+        "provider.kind": routed.adapter.provider,
+        "provider.thread_id": input.threadId,
+      });
+      return yield* uploadFeedback(input);
+    },
+  );
 
   const runStopAll = Effect.fn("runStopAll")(function* () {
     const threadIds = yield* directory.listThreadIds();
@@ -1308,12 +1435,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     getCapabilities,
     getInstanceInfo,
     listNativeSessions,
+    discoverNativeCommands,
     readNativeHistory,
+    readNativeHistoryBySession,
+    readSubagentTranscript,
     renameNativeSession,
     forkNativeSession,
     rollbackConversation,
     captureNativeCheckpoint,
     restoreNativeCheckpoint,
+    uploadFeedback,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

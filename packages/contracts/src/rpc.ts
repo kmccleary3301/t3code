@@ -18,7 +18,15 @@ import {
   FilesystemBrowseResult,
   FilesystemBrowseError,
 } from "./filesystem.ts";
-import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
+import {
+  AssetAccessError,
+  AssetCreateUrlInput,
+  AssetCreateUrlResult,
+  AttachmentCreateUploadUrlInput,
+  AttachmentCreateUploadUrlResult,
+  AttachmentDeleteInput,
+  AttachmentUploadSigningKeyError,
+} from "./assets.ts";
 import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
@@ -65,7 +73,15 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
+  OrchestrationGetActivityDetailError,
 } from "./orchestration.ts";
+import {
+  ProviderNativeCommandError,
+  ProviderNativeCommandsInput,
+  ProviderUploadFeedbackError,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
+} from "./provider.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ProviderNativeSessionArchiveInput,
@@ -81,6 +97,8 @@ import {
   ProviderNativeSessionRenameResult,
   ProviderNativeSessionStopInput,
   ProviderNativeSessionStopResult,
+  ProviderSubagentTranscriptReadInput,
+  ProviderSubagentTranscriptReadResult,
 } from "./provider.ts";
 import {
   PullRequestActionInput,
@@ -169,6 +187,7 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  ServerProviderSlashCommand,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
@@ -225,6 +244,12 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   assetsCreateUrl: "assets.createUrl",
+  attachmentsCreateUploadUrl: "attachments.createUploadUrl",
+  attachmentsDelete: "attachments.delete",
+
+  // Provider methods
+  providerUploadFeedback: "provider.uploadFeedback",
+  providerNativeCommands: "provider.nativeCommands",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -284,6 +309,7 @@ export const WS_METHODS = {
   serverForkNativeSession: "server.forkNativeSession",
   serverStopNativeSession: "server.stopNativeSession",
   serverArchiveNativeSession: "server.archiveNativeSession",
+  serverReadSubagentTranscript: "server.readSubagentTranscript",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
@@ -447,6 +473,12 @@ export const WsServerStopNativeSessionRpc = Rpc.make(WS_METHODS.serverStopNative
 export const WsServerArchiveNativeSessionRpc = Rpc.make(WS_METHODS.serverArchiveNativeSession, {
   payload: ProviderNativeSessionArchiveInput,
   success: ProviderNativeSessionArchiveResult,
+  error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerReadSubagentTranscriptRpc = Rpc.make(WS_METHODS.serverReadSubagentTranscript, {
+  payload: ProviderSubagentTranscriptReadInput,
+  success: ProviderSubagentTranscriptReadResult,
   error: Schema.Union([ProviderNativeSessionError, EnvironmentAuthorizationError]),
 });
 
@@ -722,6 +754,28 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
+export const WsAttachmentsCreateUploadUrlRpc = Rpc.make(WS_METHODS.attachmentsCreateUploadUrl, {
+  payload: AttachmentCreateUploadUrlInput,
+  success: AttachmentCreateUploadUrlResult,
+  error: Schema.Union([AttachmentUploadSigningKeyError, EnvironmentAuthorizationError]),
+});
+
+export const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
+  payload: AttachmentDeleteInput,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
+  payload: ProviderUploadFeedbackInput,
+  success: ProviderUploadFeedbackResult,
+  error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
+});
+export const WsProviderNativeCommandsRpc = Rpc.make(WS_METHODS.providerNativeCommands, {
+  payload: ProviderNativeCommandsInput,
+  success: Schema.Array(ServerProviderSlashCommand),
+  error: Schema.Union([ProviderNativeCommandError, EnvironmentAuthorizationError]),
+});
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -942,6 +996,14 @@ export const WsOrchestrationGetWorkflowScriptRpc = Rpc.make(
     error: Schema.Union([OrchestrationGetWorkflowScriptError, EnvironmentAuthorizationError]),
   },
 );
+export const WsOrchestrationGetActivityDetailRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getActivityDetail,
+  {
+    payload: OrchestrationRpcSchemas.getActivityDetail.input,
+    success: OrchestrationRpcSchemas.getActivityDetail.output,
+    error: Schema.Union([OrchestrationGetActivityDetailError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsOrchestrationGetTurnDiffRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getTurnDiff, {
   payload: OrchestrationGetTurnDiffInput,
@@ -1005,7 +1067,16 @@ export const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTermi
 });
 
 export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerConfig, {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({
+    /**
+     * Whether this client understands `environmentThemesUpdated` events.
+     * Already-shipped clients decode the stream against the old event union
+     * and would die on an unknown member, so the server emits the theme
+     * stream only to subscribers that ask for it. Absent on old clients;
+     * dropped by old servers.
+     */
+    environmentThemes: Schema.optional(Schema.Boolean),
+  }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
   stream: true,
@@ -1057,6 +1128,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerForkNativeSessionRpc,
   WsServerStopNativeSessionRpc,
   WsServerArchiveNativeSessionRpc,
+  WsServerReadSubagentTranscriptRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
@@ -1097,6 +1169,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
+  WsAttachmentsCreateUploadUrlRpc,
+  WsAttachmentsDeleteRpc,
+  WsProviderUploadFeedbackRpc,
+  WsProviderNativeCommandsRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
@@ -1139,6 +1215,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeResourceTelemetryRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetWorkflowScriptRpc,
+  WsOrchestrationGetActivityDetailRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationSearchThreadsRpc,

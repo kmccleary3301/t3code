@@ -24,7 +24,6 @@ import { cn } from "~/lib/utils";
 interface Props {
   url: string;
   loading: boolean;
-  loadProgress: number;
   canGoBack: boolean;
   canGoForward: boolean;
   refreshDisabled: boolean;
@@ -65,7 +64,6 @@ const NOOP = () => {};
 export function PreviewChromeRow({
   url,
   loading,
-  loadProgress,
   canGoBack,
   canGoForward,
   refreshDisabled,
@@ -108,13 +106,18 @@ export function PreviewChromeRow({
   };
 
   return (
-    <div className="relative">
+    <div className="relative" data-t3-surface="preview-toolbar">
       <form
         onSubmit={submit}
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
-        <div className="flex items-center gap-0.5" role="group" aria-label="Navigation">
+        <div
+          className="flex items-center gap-0.5"
+          role="group"
+          aria-label="Navigation"
+          data-t3-surface="preview-tabs"
+        >
           <Tooltip>
             <TooltipTrigger
               render={
@@ -242,7 +245,8 @@ export function PreviewChromeRow({
                   disabled={pickDisabled}
                   aria-label={pickActive ? "Cancel annotation" : "Annotate preview"}
                   aria-pressed={pickActive ? "true" : "false"}
-                  type="button"
+                  data-t3-surface="preview-annotation"
+                  data-t3-part="preview-annotation"
                 />
               }
             >
@@ -266,6 +270,8 @@ export function PreviewChromeRow({
                   size="icon-xs"
                   onClick={(event) => onCapture(event.shiftKey)}
                   aria-label={recording ? "Stop recording" : "Capture screenshot"}
+                  data-t3-surface="preview-recording"
+                  data-t3-part="preview-recording"
                   type="button"
                   className="relative"
                   disabled={captureDisabled}
@@ -306,18 +312,15 @@ export function PreviewChromeRow({
             </TooltipPopup>
           </Tooltip>
         ) : null}
-        {trailingActions}
       </form>
-      {loadProgress > 0 ? (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 rounded-r-full bg-primary transition-all duration-150 ease-out"
-          style={{
-            width: `${loadProgress}%`,
-            boxShadow: "0 0 6px 1px var(--color-ring)",
-          }}
-        />
-      ) : null}
+      <div
+        aria-hidden
+        className="preview-loading-progress pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 w-full origin-left rounded-r-full bg-primary"
+        data-loading={loading}
+        data-t3-surface="preview-progress"
+        data-t3-part="preview-loading"
+        style={{ boxShadow: "0 0 6px 1px var(--color-ring)" }}
+      />
     </div>
   );
 }

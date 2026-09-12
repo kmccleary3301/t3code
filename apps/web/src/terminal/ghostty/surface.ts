@@ -1,3 +1,4 @@
+import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMacPlatform } from "../../lib/utils";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
@@ -13,7 +14,7 @@ import {
   type GhosttyCellRange,
   type GhosttyCellMetrics,
 } from "./renderer";
-import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
+import { WEB_RENDERER_OWNERSHIP } from "../../lib/webRendererOwnership";
 import { isMonospaceFamily } from "../../appearanceFonts";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
@@ -44,10 +45,13 @@ const TERMINAL_FONT_LOAD_VARIANTS = [
   "italic 700",
 ] as const;
 
-/** Requested terminal font; omitted fields fall back to the defaults. */
+/** Requested terminal font; omitted fields fall back to the normalized defaults. */
 export interface GhosttyTerminalFont {
   readonly family?: string;
   readonly size?: number;
+  readonly weight?: number;
+  readonly lineHeight?: number;
+  readonly ligatures?: boolean;
 }
 
 let symbolsFontLoad: Promise<void> | null = null;
@@ -418,6 +422,31 @@ export function shouldReportTerminalMouse(
   return tracking && !event.shiftKey && !event.ctrlKey && !event.metaKey;
 }
 
+type TerminalMouseAction = "press" | "release" | "motion";
+
+export function resolveTerminalMouseData(
+  action: TerminalMouseAction,
+  data: string,
+  previousMotionData: string,
+): { readonly send: boolean; readonly nextMotionData: string } {
+  const nextMotionData = action === "motion" ? data : "";
+  return {
+    send: data.length > 0 && (action !== "motion" || data !== previousMotionData),
+    nextMotionData,
+  };
+}
+
+export function resolveTerminalMouseTrackingState(
+  previousTracking: boolean,
+  tracking: boolean,
+  motionData: string,
+): { readonly tracking: boolean; readonly motionData: string } {
+  return {
+    tracking,
+    motionData: previousTracking === tracking ? motionData : "",
+  };
+}
+
 export function terminalWheelDeltaRows(
   event: Pick<WheelEvent, "deltaY" | "deltaMode">,
   cellHeight: number,
@@ -456,13 +485,6 @@ export function isTerminalLinkPointerGesture(
   return isMacPlatform(platform)
     ? event.metaKey && !event.ctrlKey
     : event.ctrlKey && !event.metaKey;
-}
-
-export function shouldShowTerminalLinkHover(
-  mouseTracking: boolean,
-  linkModifierActive: boolean,
-): boolean {
-  return !mouseTracking || linkModifierActive;
 }
 
 export function ghosttyMouseButton(button: number): number | null {
@@ -541,6 +563,9 @@ export class GhosttyTerminalSurface {
   private fontFamily: string;
   private requestedFontFamily: string | undefined;
   private fontSize: number;
+  private fontWeight: number;
+  private lineHeight: number;
+  private ligatures: boolean;
   private fontEpoch = 0;
   private pendingFontEpoch: number | null = null;
   private readonly resizeObserver: ResizeObserver;
@@ -593,6 +618,8 @@ export class GhosttyTerminalSurface {
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
   private wheelRemainder = 0;
+  private lastMouseMotionData = "";
+  private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
   // preference restarts a blink cycle that has no timer left to notice it.
@@ -619,13 +646,17 @@ export class GhosttyTerminalSurface {
     this.scrollbarThumb = scrollbarThumb;
     this.context = context;
     this.core = core;
-    this.metrics = metrics;
+    this.mouseAnyEventTracking = core.isMouseAnyEventTracking();
     this.options = options;
     this.theme = options.theme;
+    this.metrics = metrics;
+    this.resizeObserver = new ResizeObserver(() => this.fit());
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
-    this.resizeObserver = new ResizeObserver(() => this.fit());
+    this.fontWeight = Math.max(1, Math.min(1000, Math.round(options.font?.weight ?? 400)));
+    this.lineHeight = Math.max(0.8, Math.min(3, options.font?.lineHeight ?? 1.4));
+    this.ligatures = options.font?.ligatures ?? true;
     this.installEvents();
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
@@ -640,6 +671,7 @@ export class GhosttyTerminalSurface {
     const canvas = document.createElement("canvas");
     canvas.className = "block size-full cursor-text";
     canvas.setAttribute("aria-hidden", "true");
+    canvas.dataset.rendererOwner = WEB_RENDERER_OWNERSHIP.ghosttyCanvas;
 
     const input = document.createElement("textarea");
     input.className = "t3-ghostty-input";
@@ -660,7 +692,7 @@ export class GhosttyTerminalSurface {
     scrollbar.hidden = true;
     const scrollbarThumb = document.createElement("div");
     scrollbarThumb.className =
-      "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
+      "absolute inset-x-px top-0 rounded-[3px] bg-[var(--terminal-scrollbar,var(--app-scrollbar-thumb))] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--terminal-scrollbar-hover,var(--app-scrollbar-thumb-hover))] group-focus-visible:bg-[var(--terminal-scrollbar-hover,var(--app-scrollbar-thumb-hover))]";
     scrollbar.append(scrollbarThumb);
     mount.replaceChildren(canvas, input, scrollbar);
 
@@ -680,7 +712,10 @@ export class GhosttyTerminalSurface {
       // Metrics fall back to whichever faces are already available.
     }
     const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
-    const metrics = measureGhosttyCell(context, fontSize, fontFamily);
+    const metrics = measureGhosttyCell(context, fontSize, fontFamily, {
+      ...(options.font?.weight === undefined ? {} : { fontWeight: options.font.weight }),
+      ...(options.font?.lineHeight === undefined ? {} : { lineHeight: options.font.lineHeight }),
+    });
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(
       grid.cols,
@@ -710,6 +745,7 @@ export class GhosttyTerminalSurface {
   write(data: string): void {
     if (this.disposed) return;
     this.core.write(data);
+    this.synchronizeMouseTrackingState();
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true;
@@ -719,7 +755,9 @@ export class GhosttyTerminalSurface {
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
+    this.lastMouseMotionData = "";
     this.core.resetAndWrite(data);
+    this.synchronizeMouseTrackingState();
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
     this.cursorOn = true;
@@ -749,12 +787,17 @@ export class GhosttyTerminalSurface {
     this.fontFamily = fontFamily;
     this.requestedFontFamily = font.family;
     this.fontSize = fontSize;
+    this.fontWeight = Math.max(1, Math.min(1000, Math.round(font.weight ?? this.fontWeight)));
+    this.lineHeight = Math.max(0.8, Math.min(3, font.lineHeight ?? this.lineHeight));
+    this.ligatures = font.ligatures ?? this.ligatures;
     this.applyFontMetrics();
   }
 
   private applyFontMetrics(): void {
-    this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
-    this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
+    this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily, {
+      fontWeight: this.fontWeight,
+      lineHeight: this.lineHeight,
+    });
     // Cached IME textarea coordinates are stale in the new cell geometry.
     this.inputLeft = -1;
     this.inputTop = -1;
@@ -1272,9 +1315,10 @@ export class GhosttyTerminalSurface {
     if (this.linkActivationPointerId === event.pointerId) return;
     // Hover motion is only reportable in any-event tracking (DEC 1003); normal and
     // button-event tracking never report motion without a captured pressed button.
+    const anyEventTracking = this.synchronizeMouseTrackingState();
     if (
       this.mouseReportingPointerId === event.pointerId ||
-      shouldReportTerminalMouse(this.core.isMouseAnyEventTracking(), event)
+      shouldReportTerminalMouse(anyEventTracking, event)
     ) {
       event.preventDefault();
       this.hoverPointer = { x: event.clientX, y: event.clientY };
@@ -1286,6 +1330,7 @@ export class GhosttyTerminalSurface {
       this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
       return;
     }
+    this.lastMouseMotionData = "";
     if (!this.selectionAnchorScreen || !this.canvas.hasPointerCapture(event.pointerId)) {
       this.updateHoverCursor(event);
       return;
@@ -1364,6 +1409,7 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerLeave = () => {
+    this.lastMouseMotionData = "";
     this.clearHoveredLink();
   };
 
@@ -1375,10 +1421,7 @@ export class GhosttyTerminalSurface {
 
   private refreshHoveredLink(): void {
     const pointer = this.hoverPointer;
-    const link =
-      pointer && shouldShowTerminalLinkHover(this.core.isMouseTracking(), this.linkModifierActive)
-        ? this.linkAt(pointer.x, pointer.y)
-        : null;
+    const link = pointer && this.linkModifierActive ? this.linkAt(pointer.x, pointer.y) : null;
     this.setHoveredLink(link);
   }
 
@@ -1692,6 +1735,8 @@ export class GhosttyTerminalSurface {
       metrics: this.metrics,
       fontSize: this.fontSize,
       fontFamily: this.fontFamily,
+      fontWeight: this.fontWeight,
+      ligatures: this.ligatures,
       padding: CONTENT_PADDING,
       originY: this.originY,
       forceFull: this.forceFullRender,
@@ -1822,11 +1867,7 @@ export class GhosttyTerminalSurface {
     return terminalLinkAtPositionWithRange(this.snapshot.rowData, cell.y, cell.x);
   }
 
-  private sendMouse(
-    action: "press" | "release" | "motion",
-    button: number | null,
-    event: MouseEvent,
-  ): void {
+  private sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
     const bounds = this.canvas.getBoundingClientRect();
     const data = this.core.encodeMouse({
       action,
@@ -1848,7 +1889,23 @@ export class GhosttyTerminalSurface {
       paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
       anyButtonPressed: event.buttons !== 0,
     });
-    if (data.length > 0) this.options.onData(data);
+    const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
+    this.lastMouseMotionData = resolution.nextMotionData;
+    if (resolution.send) this.options.onData(data);
+  }
+
+  private synchronizeMouseTrackingState(): boolean {
+    // Output writes can toggle DEC 1003 without moving the pointer. Keep the
+    // previous mode so the next same-cell motion starts a fresh tracking session.
+    const tracking = this.core.isMouseAnyEventTracking();
+    const state = resolveTerminalMouseTrackingState(
+      this.mouseAnyEventTracking,
+      tracking,
+      this.lastMouseMotionData,
+    );
+    this.mouseAnyEventTracking = state.tracking;
+    this.lastMouseMotionData = state.motionData;
+    return tracking;
   }
 
   private buttonFromButtons(buttons: number): number | null {

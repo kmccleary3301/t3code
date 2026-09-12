@@ -4,6 +4,36 @@ import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
+export const COMPOSER_APP_SLASH_COMMANDS = [
+  "model",
+  "plan",
+  "default",
+] as const satisfies ReadonlyArray<ComposerSlashCommand>;
+
+export function composerAppSlashCommandForName(name: string): ComposerSlashCommand | null {
+  const exactName = name.trim();
+  return COMPOSER_APP_SLASH_COMMANDS.find((command) => command === exactName) ?? null;
+}
+
+export type ComposerSlashCommandDispatch =
+  | { readonly kind: "local"; readonly command: ComposerSlashCommand }
+  | { readonly kind: "provider" }
+  | { readonly kind: "unavailable" };
+
+export function resolveComposerSlashCommandDispatch(input: {
+  readonly commandName: string;
+  readonly executable?: boolean;
+}): ComposerSlashCommandDispatch {
+  const localCommand = composerAppSlashCommandForName(input.commandName);
+  if (input.executable === false) {
+    return localCommand === null
+      ? { kind: "unavailable" }
+      : { kind: "local", command: localCommand };
+  }
+  return { kind: "provider" };
+}
+export type ComposerSubmissionIntent = "foreground" | "background";
+
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
   query: string;
@@ -11,11 +41,16 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-export function shouldSubmitComposerOnEnter(input: {
+export function composerSubmissionIntentForEnter(input: {
   isMobileViewport: boolean;
   shiftKey: boolean;
-}): boolean {
-  return !input.isMobileViewport && !input.shiftKey;
+  modifierKey: boolean;
+  isDraftThread: boolean;
+}): ComposerSubmissionIntent | null {
+  if (input.isMobileViewport || input.shiftKey) {
+    return null;
+  }
+  return input.modifierKey && input.isDraftThread ? "background" : "foreground";
 }
 
 const isInlineTokenSegment = (
@@ -226,18 +261,15 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
   const cursor = clampCursor(text, cursorInput);
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
-
-  if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
-    if (commandMatch) {
-      const commandQuery = commandMatch[1] ?? "";
-      return {
-        kind: "slash-command",
-        query: commandQuery,
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
+  const trimmedLinePrefix = linePrefix.trimStart();
+  if (trimmedLinePrefix.startsWith("/")) {
+    const leadingWhitespace = linePrefix.length - trimmedLinePrefix.length;
+    return {
+      kind: "slash-command",
+      query: trimmedLinePrefix.slice(1),
+      rangeStart: lineStart + leadingWhitespace,
+      rangeEnd: cursor,
+    };
   }
 
   const tokenStart = tokenStartForCursor(text, cursor);

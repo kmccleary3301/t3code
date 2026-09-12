@@ -1,6 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - exercises real POSIX shells and HTTP processes.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeTimers from "node:timers";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { describeReadinessCause } from "@t3tools/shared/httpReadiness";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -14,17 +22,18 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
 import {
-  buildRemoteLaunchScript,
-  buildRemotePairingScript,
-  buildRemoteStopScript,
-  buildRemoteT3RunnerScript,
-  describeReadinessCause,
   issueRemotePairingToken,
   launchOrReuseRemoteServer,
-  REMOTE_PICK_PORT_SCRIPT,
   SshEnvironmentManager,
   waitForHttpReady,
 } from "./tunnel.ts";
+import {
+  buildRemoteLaunchScript,
+  buildRemoteStopScript,
+  buildRemoteT3RunnerScript,
+  remoteStateKey,
+  REMOTE_PICK_PORT_SCRIPT,
+} from "./remote-scripts.ts";
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
@@ -99,6 +108,209 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
   return command._tag === "StandardCommand" ? command.args : [];
 }
 
+interface ShellResult {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+interface RuntimeInfo {
+  readonly version: 1;
+  readonly pid: number;
+  readonly host: string;
+  readonly port: number;
+  readonly origin: string;
+  readonly startedAt: string;
+}
+
+interface RecordValue {
+  readonly [key: string]: unknown;
+}
+
+function isRecordValue(value: unknown): value is RecordValue {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readRuntimeInfo(home: string): RuntimeInfo | undefined {
+  try {
+    const runtimePath = NodePath.join(home, ".t3", "userdata", "server-runtime.json");
+    const parsed: unknown = JSON.parse(NodeFS.readFileSync(runtimePath, "utf8"));
+    if (
+      !isRecordValue(parsed) ||
+      parsed.version !== 1 ||
+      typeof parsed.pid !== "number" ||
+      !Number.isInteger(parsed.pid) ||
+      parsed.pid <= 0 ||
+      typeof parsed.host !== "string" ||
+      typeof parsed.port !== "number" ||
+      !Number.isInteger(parsed.port) ||
+      parsed.port <= 0 ||
+      typeof parsed.origin !== "string" ||
+      typeof parsed.startedAt !== "string"
+    ) {
+      return undefined;
+    }
+    return {
+      version: 1,
+      pid: parsed.pid,
+      host: parsed.host,
+      port: parsed.port,
+      origin: parsed.origin,
+      startedAt: parsed.startedAt,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseLaunchResult(stdout: string): {
+  readonly remotePort: number;
+  readonly serverKind: "external" | "managed";
+} {
+  const line = stdout.trim().split(/\r?\n/u).at(-1);
+  if (line === undefined) {
+    throw new Error("The remote launch script returned no output.");
+  }
+  const parsed: unknown = JSON.parse(line);
+  if (
+    !isRecordValue(parsed) ||
+    typeof parsed.remotePort !== "number" ||
+    !Number.isInteger(parsed.remotePort) ||
+    parsed.remotePort <= 0 ||
+    (parsed.serverKind !== "external" && parsed.serverKind !== "managed")
+  ) {
+    throw new Error(`Invalid remote launch output: ${line}`);
+  }
+  return {
+    remotePort: parsed.remotePort,
+    serverKind: parsed.serverKind,
+  };
+}
+
+function runPosixScript(
+  home: string,
+  script: string,
+  args: ReadonlyArray<string> = [],
+): Promise<ShellResult> {
+  const { promise, resolve, reject } = Promise.withResolvers<ShellResult>();
+  const child = NodeChildProcess.spawn("/bin/sh", ["-l", "-s", "--", ...args], {
+    env: {
+      ...process.env,
+      HOME: home,
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  // A real shell integration test cannot use fake timers; bound a broken script's lifetime.
+  const timeout = NodeTimers.setTimeout(() => {
+    child.kill("SIGKILL");
+  }, 10_000);
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  child.once("error", (error) => {
+    NodeTimers.clearTimeout(timeout);
+    reject(error);
+  });
+  child.once("close", (exitCode) => {
+    NodeTimers.clearTimeout(timeout);
+    resolve({ exitCode: exitCode ?? -1, stdout, stderr });
+  });
+  child.stdin?.end(script);
+  return promise;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function requestStatus(origin: string): Promise<number> {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  const request = NodeHttp.get(new URL(origin), (response) => {
+    response.resume();
+    response.once("end", () => resolve(response.statusCode ?? 0));
+  });
+  request.setTimeout(2_000, () => {
+    request.destroy(new Error("HTTP readiness request timed out."));
+  });
+  request.once("error", reject);
+  return promise;
+}
+
+function writeServerFixture(fixturePath: string): void {
+  NodeFS.writeFileSync(
+    fixturePath,
+    `const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+
+const args = process.argv.slice(2);
+const hostIndex = args.indexOf("--host");
+const portIndex = args.indexOf("--port");
+const baseDirIndex = args.indexOf("--base-dir");
+if (
+  args[0] !== "serve" ||
+  hostIndex < 0 ||
+  portIndex < 0 ||
+  baseDirIndex < 0 ||
+  args[hostIndex + 1] !== "127.0.0.1"
+) {
+  process.exit(2);
+}
+const host = args[hostIndex + 1];
+const configuredPort = Number(args[portIndex + 1]);
+const baseDir = args[baseDirIndex + 1];
+if (!Number.isInteger(configuredPort) || configuredPort <= 0 || !baseDir) {
+  process.exit(2);
+}
+
+const server = http.createServer((_request, response) => {
+  response.statusCode = 200;
+  response.end("ready");
+});
+const shutdown = () => {
+  server.close(() => process.exit(0));
+};
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
+server.once("error", () => process.exit(1));
+server.listen(configuredPort, host, () => {
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    process.exit(1);
+  }
+  const runtime = {
+    version: 1,
+    pid: process.pid,
+    host,
+    port: address.port,
+    origin: "http://127.0.0.1:" + address.port,
+    startedAt: new Date().toISOString(),
+  };
+  const userdataPath = path.join(baseDir, "userdata");
+  fs.mkdirSync(userdataPath, { recursive: true });
+  fs.writeFileSync(
+    path.join(userdataPath, "server-runtime.json"),
+    JSON.stringify(runtime) + "\\n",
+  );
+});
+`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+}
+
 describe("ssh tunnel scripts", () => {
   it("builds the remote t3 runner with npx and npm fallbacks", () => {
     const script = buildRemoteT3RunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
@@ -162,78 +374,132 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, 'exec node "$T3_NODE_SCRIPT_PATH" "$@"');
   });
 
-  it("uses the remote t3 runner for launch and pairing scripts", () => {
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
+  it("reuses an owned server and preserves an adopted external server", async () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-launch-test-"));
+    const fixturePath = NodePath.join(home, "server-fixture.cjs");
+    const ownedTarget = {
+      alias: "managed-target",
+      hostname: "managed.example.com",
       username: "julius",
       port: 2222,
     } as const;
+    const externalTarget = {
+      alias: "stale-target",
+      hostname: "stale.example.com",
+      username: "julius",
+      port: 2223,
+    } as const;
+    const runner = {
+      nodeScriptPath: fixturePath,
+      allowPackageInstall: false,
+    } as const;
+    let ownedPid: number | undefined;
 
-    assert.include(
-      buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
-      '[ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null',
-    );
-    assert.include(buildRemoteLaunchScript(), "RUNNER_CHANGED=1");
-    assert.include(buildRemoteLaunchScript(), "ensure_remote_node_path()");
-    assert.include(buildRemoteLaunchScript(), "if ! ensure_remote_node_path; then");
-    assert.include(
-      buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
-      `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`,
-    );
-    assert.include(
-      buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
-      "does not satisfy required range ",
-    );
-    assert.include(buildRemoteLaunchScript(), 'kill "$REMOTE_PID" 2>/dev/null || true');
-    assert.include(buildRemoteLaunchScript(), "wait_ready");
-    assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host 127.0.0.1');
-    assert.include(buildRemoteLaunchScript(), '--base-dir "$DEFAULT_SERVER_HOME"');
-    assert.notInclude(buildRemoteLaunchScript(), "server-home");
-    assert.include(buildRemoteLaunchScript(), "Remote T3 server did not become ready");
-    assert.include(buildRemoteLaunchScript(), 'wait_ready "60000"');
-    assert.include(buildRemoteLaunchScript(), 'if [ -s "$LOG_FILE" ]; then');
-    assert.include(buildRemoteLaunchScript(), "It wrote nothing to %s");
-    assert.include(buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
-    assert.include(
-      buildRemotePairingScript(target),
-      '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
-    );
-    assert.include(buildRemotePairingScript(target), 'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"');
-    assert.notInclude(buildRemotePairingScript(target), "server-home");
-    assert.include(buildRemotePairingScript(target, { packageSpec: "t3@nightly" }), "t3@nightly");
-    assert.include(
-      buildRemoteStopScript(target),
-      'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
-    );
-    assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
-    assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
-    assert.include(
-      buildRemoteLaunchScript(),
-      'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
-    );
-    assert.include(buildRemoteLaunchScript(), "resolve_default_runtime_port()");
-    assert.include(
-      buildRemoteLaunchScript(),
-      'DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port',
-    );
-    assert.include(
-      buildRemoteLaunchScript(),
-      "if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))",
-    );
-    assert.include(buildRemoteLaunchScript(), 'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"');
-    assert.include(buildRemoteLaunchScript(), 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
-    assert.include(buildRemoteLaunchScript(), 'rm -f "$PID_FILE"');
-    assert.include(buildRemoteLaunchScript(), "printf 'external\\n' >\"$MANAGED_FILE\"");
-    assert.include(buildRemoteLaunchScript(), 'if [ -z "$REMOTE_PORT" ]; then');
-    assert.isBelow(
-      buildRemoteLaunchScript().indexOf('if [ "$REMOTE_MANAGED" = "managed" ]'),
-      buildRemoteLaunchScript().indexOf("printf 'external\\n' >\"$MANAGED_FILE\""),
-    );
-    assert.isBelow(
-      buildRemoteLaunchScript().indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
-      buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
-    );
+    try {
+      writeServerFixture(fixturePath);
+      const ownedKey = remoteStateKey(ownedTarget);
+      const externalKey = remoteStateKey(externalTarget);
+      const ownedStateDir = NodePath.join(home, ".t3", "ssh-launch", ownedKey);
+      const externalStateDir = NodePath.join(home, ".t3", "ssh-launch", externalKey);
+
+      const firstLaunch = await runPosixScript(home, buildRemoteLaunchScript(runner), [ownedKey]);
+      if (firstLaunch.exitCode !== 0) {
+        throw new Error(`Initial remote launch failed: ${firstLaunch.stderr}`);
+      }
+      const firstResult = parseLaunchResult(firstLaunch.stdout);
+      assert.equal(firstResult.serverKind, "managed");
+
+      const firstRuntime = readRuntimeInfo(home);
+      if (firstRuntime === undefined) {
+        throw new Error("The fixture did not write a valid server runtime state.");
+      }
+      ownedPid = firstRuntime.pid;
+      assert.equal(firstResult.remotePort, firstRuntime.port);
+      assert.equal(firstRuntime.host, "127.0.0.1");
+      assert.equal(firstRuntime.origin, `http://127.0.0.1:${firstRuntime.port}`);
+      assert.isTrue(isProcessAlive(firstRuntime.pid));
+      assert.equal(await requestStatus(firstRuntime.origin), 200);
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(ownedStateDir, "pid"), "utf8"),
+        `${firstRuntime.pid}\n`,
+      );
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(ownedStateDir, "managed"), "utf8"),
+        "managed\n",
+      );
+
+      const secondLaunch = await runPosixScript(home, buildRemoteLaunchScript(runner), [ownedKey]);
+      if (secondLaunch.exitCode !== 0) {
+        throw new Error(`Repeated remote launch failed: ${secondLaunch.stderr}`);
+      }
+      const secondResult = parseLaunchResult(secondLaunch.stdout);
+      assert.equal(secondResult.serverKind, "managed");
+      assert.equal(secondResult.remotePort, firstRuntime.port);
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(ownedStateDir, "managed"), "utf8"),
+        "managed\n",
+      );
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(ownedStateDir, "pid"), "utf8"),
+        `${firstRuntime.pid}\n`,
+      );
+      const secondRuntime = readRuntimeInfo(home);
+      if (secondRuntime === undefined) {
+        throw new Error("The repeated launch removed the fixture runtime state.");
+      }
+      assert.equal(secondRuntime.pid, firstRuntime.pid);
+      assert.equal(secondRuntime.port, firstRuntime.port);
+      assert.isTrue(isProcessAlive(firstRuntime.pid));
+      assert.equal(await requestStatus(firstRuntime.origin), 200);
+
+      NodeFS.mkdirSync(externalStateDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(externalStateDir, "managed"), "managed\n", "utf8");
+      assert.isFalse(NodeFS.existsSync(NodePath.join(externalStateDir, "pid")));
+
+      const adoptedLaunch = await runPosixScript(home, buildRemoteLaunchScript(runner), [
+        externalKey,
+      ]);
+      if (adoptedLaunch.exitCode !== 0) {
+        throw new Error(`External adoption launch failed: ${adoptedLaunch.stderr}`);
+      }
+      const adoptedResult = parseLaunchResult(adoptedLaunch.stdout);
+      assert.equal(adoptedResult.serverKind, "external");
+      assert.equal(adoptedResult.remotePort, firstRuntime.port);
+      assert.isTrue(isProcessAlive(firstRuntime.pid));
+      assert.equal(await requestStatus(firstRuntime.origin), 200);
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(externalStateDir, "managed"), "utf8"),
+        "external\n",
+      );
+      assert.isFalse(NodeFS.existsSync(NodePath.join(externalStateDir, "pid")));
+
+      const externalStop = await runPosixScript(home, buildRemoteStopScript(externalTarget));
+      if (externalStop.exitCode !== 0) {
+        throw new Error(`External stop failed: ${externalStop.stderr}`);
+      }
+      assert.isTrue(isProcessAlive(firstRuntime.pid));
+      assert.equal(await requestStatus(firstRuntime.origin), 200);
+    } finally {
+      for (const target of [externalTarget, ownedTarget]) {
+        try {
+          await runPosixScript(home, buildRemoteStopScript(target));
+        } catch {
+          // Fall through to direct cleanup when a launch failed before its state files existed.
+        }
+      }
+      const runtimePid = readRuntimeInfo(home)?.pid;
+      for (const pid of new Set([ownedPid, runtimePid])) {
+        if (pid === undefined || !isProcessAlive(pid)) {
+          continue;
+        }
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The process may have exited between the liveness check and kill.
+        }
+      }
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
@@ -243,8 +509,12 @@ describe("ssh tunnel scripts", () => {
       username: "julius",
       port: 2222,
     } as const;
-    const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n')),
+    const spawnedCommands: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        spawnedCommands.push(commandArgs(command));
+        return makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n');
+      }),
     );
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.merge(NodeServices.layer, spawnerLayer);
@@ -252,6 +522,7 @@ describe("ssh tunnel scripts", () => {
     return Effect.gen(function* () {
       const result = yield* launchOrReuseRemoteServer(target);
       assert.equal(result.remotePort, 3774);
+      assert.deepEqual(spawnedCommands[0]?.slice(-5, -1), ["sh", "-l", "-s", "--"]);
     }).pipe(Effect.provide(processLayer));
   });
 

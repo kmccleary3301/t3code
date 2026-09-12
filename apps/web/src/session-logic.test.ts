@@ -11,7 +11,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
-  deriveTurnPlans,
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
@@ -126,6 +125,39 @@ describe("derivePendingApprovals", () => {
         requestKind: "command",
         createdAt: "2026-02-23T00:00:01.000Z",
         detail: "pwd",
+      },
+    ]);
+  });
+
+  it("keeps app access approvals and persistence choices from remote activities", () => {
+    const options = [
+      { decision: "decline", label: "Decline" },
+      { decision: "acceptAlways", label: "Always allow Safari" },
+      { decision: "accept", label: "Approve" },
+    ];
+    const activities = [
+      makeActivity({
+        kind: "approval.requested",
+        summary: "App access approval requested",
+        tone: "approval",
+        payload: {
+          requestId: "req-safari",
+          requestType: "mcp_elicitation_approval",
+          detail: "Allow ChatGPT to use Safari?",
+          appName: "Safari",
+          options,
+        },
+      }),
+    ];
+
+    expect(derivePendingApprovals(activities)).toEqual([
+      {
+        requestId: "req-safari",
+        requestKind: "mcp-elicitation",
+        createdAt: "2026-02-23T00:00:00.000Z",
+        detail: "Allow ChatGPT to use Safari?",
+        appName: "Safari",
+        options,
       },
     ]);
   });
@@ -462,73 +494,6 @@ describe("deriveActivePlanState", () => {
       { durationMs: 3_000, step: "Check", status: "completed" },
     ]);
   });
-});
-
-describe("deriveTurnPlans", () => {
-  it("keeps one entry per turn, anchored at the first snapshot with the latest steps", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "plan-1a",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: {
-          plan: [{ step: "Inspect code", status: "inProgress" }],
-        },
-      }),
-      makeActivity({
-        id: "plan-1b",
-        createdAt: "2026-02-23T00:00:05.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: {
-          plan: [{ step: "Inspect code", status: "completed" }],
-        },
-      }),
-      makeActivity({
-        id: "plan-2a",
-        createdAt: "2026-02-23T00:01:00.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-2",
-        payload: {
-          plan: [{ step: "Ship it", status: "pending" }],
-        },
-      }),
-    ];
-
-    const turnPlans = deriveTurnPlans(activities);
-    expect(turnPlans).toHaveLength(2);
-    expect(turnPlans[0]).toMatchObject({
-      id: "turn-plan:turn-1",
-      createdAt: "2026-02-23T00:00:01.000Z",
-      turnId: "turn-1",
-    });
-    expect(turnPlans[0]?.plan.steps).toEqual([
-      { durationMs: 4_000, step: "Inspect code", status: "completed" },
-    ]);
-    expect(turnPlans[1]?.plan.steps).toEqual([{ step: "Ship it", status: "pending" }]);
-  });
-
-  it("skips activities without parseable steps", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "plan-bad",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        turnId: "turn-1",
-        payload: { plan: [] },
-      }),
-    ];
-    expect(deriveTurnPlans(activities)).toEqual([]);
-  });
 
   it("tracks repeated step labels independently", () => {
     const activities: OrchestrationThreadActivity[] = [
@@ -576,7 +541,7 @@ describe("deriveTurnPlans", () => {
       }),
     ];
 
-    expect(deriveTurnPlans(activities)[0]?.plan.steps).toEqual([
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
       { durationMs: 4_000, step: "Check", status: "completed" },
       { durationMs: 6_000, step: "Check", status: "completed" },
     ]);
@@ -628,13 +593,13 @@ describe("deriveTurnPlans", () => {
       }),
     ];
 
-    expect(deriveTurnPlans(activities)[0]?.plan.steps).toEqual([
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
       { durationMs: 5_000, step: "First", status: "completed" },
       { durationMs: 5_000, step: "Second", status: "completed" },
     ]);
   });
 
-  it("drops a turn's chip when a later snapshot clears the plan", () => {
+  it("clears the active plan when a later snapshot has no steps", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "plan-set",
@@ -655,7 +620,7 @@ describe("deriveTurnPlans", () => {
         payload: { plan: [] },
       }),
     ];
-    expect(deriveTurnPlans(activities)).toEqual([]);
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))).toBeNull();
   });
 });
 
@@ -882,24 +847,149 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
-  it("omits tool started entries and keeps completed entries", () => {
-    const activities: OrchestrationThreadActivity[] = [
+  it("keeps the latest task progress without emitting plan-update log entries", () => {
+    const activities = [
+      makeActivity({ id: "before", kind: "tool.completed", summary: "Read files", sequence: 0 }),
+      makeActivity({
+        id: "plan-1",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        turnId: "turn-1",
+        sequence: 1,
+        payload: { plan: [{ step: "Verify the composer", status: "inProgress" }] },
+      }),
+      makeActivity({
+        id: "plan-2",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        turnId: "turn-1",
+        sequence: 2,
+        payload: { plan: [{ step: "Verify the composer", status: "completed" }] },
+      }),
+      makeActivity({ id: "after", kind: "tool.completed", summary: "Ran tests", sequence: 3 }),
+    ];
+    expect(deriveWorkLogEntries(activities).map((entry) => entry.id)).toEqual(["before", "after"]);
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toMatchObject([
+      { step: "Verify the composer", status: "completed" },
+    ]);
+  });
+
+  it("keeps a native tool.started row visible before progress", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "tool-start",
+        turnId: "turn-native",
+        summary: "Run tests started",
+        kind: "tool.started",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          data: { item: { command: ["bun", "run", "test"] } },
+        },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      id: "tool-start",
+      turnId: TurnId.make("turn-native"),
+      toolCallId: "call-native",
+      toolLifecycleStatus: "inProgress",
+      command: "bun run test",
+    });
+  });
+
+  it("reconciles native lifecycle transitions and duplicate completions by call identity", () => {
+    const activities = [
+      makeActivity({
+        id: "tool-start",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-native",
+        kind: "tool.started",
+        summary: "Run tests started",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          data: { item: { command: ["bun", "run", "test"] } },
+        },
+      }),
+      makeActivity({
+        id: "tool-updated",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-native",
+        kind: "tool.updated",
+        summary: "Run tests",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          status: "inProgress",
+        },
+      }),
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:03.000Z",
-        summary: "Tool call complete",
+        turnId: "turn-native",
         kind: "tool.completed",
+        summary: "Run tests completed",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          status: "completed",
+          detail: "all tests passed",
+        },
       }),
       makeActivity({
-        id: "tool-start",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        summary: "Tool call",
-        kind: "tool.started",
+        id: "tool-complete-duplicate",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        turnId: "turn-native",
+        kind: "tool.completed",
+        summary: "Run tests completed",
+        payload: {
+          toolCallId: "call-native",
+          itemType: "command_execution",
+          status: "completed",
+          detail: "all tests passed",
+        },
       }),
     ];
 
-    const entries = deriveWorkLogEntries(activities);
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+    expect(deriveWorkLogEntries(activities)).toMatchObject([
+      {
+        id: "tool-complete-duplicate",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        toolCallId: "call-native",
+        toolLifecycleStatus: "completed",
+        command: "bun run test",
+        detail: "all tests passed",
+      },
+    ]);
+  });
+  it("does not merge same-label tool invocations without call identities", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "tool-first",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        turnId: "turn-native",
+        kind: "tool.updated",
+        summary: "Run tests",
+        payload: {
+          itemType: "command_execution",
+          detail: "first invocation",
+        },
+      }),
+      makeActivity({
+        id: "tool-second",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        turnId: "turn-native",
+        kind: "tool.completed",
+        summary: "Run tests",
+        payload: {
+          itemType: "command_execution",
+          detail: "second invocation",
+        },
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["tool-first", "tool-second"]);
   });
 
   it("preserves explicit native terminal fallback actions", () => {
@@ -923,6 +1013,111 @@ describe("deriveWorkLogEntries", () => {
       providerInstanceId: "omp-main",
       feature: "setTitle",
     });
+  });
+
+  it("omits routine setup updates before work starts and after later turn activity", () => {
+    const setupActivities = [
+      makeActivity({
+        id: "setup-requested",
+        kind: "setup-script.requested",
+        summary: "Preparing setup script",
+        tone: "info",
+        sequence: 1,
+      }),
+      makeActivity({
+        id: "setup-started",
+        kind: "setup-script.started",
+        summary: "Setup script started",
+        tone: "info",
+        sequence: 2,
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(setupActivities)).toEqual([]);
+    expect(
+      deriveWorkLogEntries([
+        ...setupActivities,
+        makeActivity({
+          id: "first-turn-tool",
+          kind: "tool.completed",
+          summary: "Read project files",
+          turnId: "turn-1",
+          sequence: 3,
+        }),
+        makeActivity({
+          id: "later-turn-tool",
+          kind: "tool.completed",
+          summary: "Ran tests",
+          turnId: "turn-2",
+          sequence: 4,
+        }),
+      ]).map((entry) => entry.id),
+    ).toEqual(["first-turn-tool", "later-turn-tool"]);
+  });
+
+  it("preserves setup failures and unrelated info without a turn id", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "setup-requested",
+        kind: "setup-script.requested",
+        summary: "Preparing setup script",
+        tone: "info",
+        sequence: 1,
+      }),
+      makeActivity({
+        id: "setup-failed",
+        kind: "setup-script.failed",
+        summary: "Setup script failed to start",
+        tone: "error",
+        payload: { detail: "Could not start the setup terminal" },
+        sequence: 2,
+      }),
+      makeActivity({
+        id: "runtime-notice",
+        kind: "runtime.warning",
+        summary: "Reconnecting to provider",
+        tone: "info",
+        sequence: 3,
+      }),
+    ]);
+
+    expect(entries).toMatchObject([
+      {
+        id: "setup-failed",
+        label: "Setup script failed to start",
+        tone: "error",
+        detail: "Could not start the setup terminal",
+        turnId: null,
+      },
+      {
+        id: "runtime-notice",
+        label: "Reconnecting to provider",
+        tone: "info",
+        turnId: null,
+      },
+    ]);
+  });
+
+  it("drops runtime warnings with no displayable content, keeps ones with a preview", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "warning-noise",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "runtime.warning",
+        summary: "Claude system message 'background_tasks_changed' (no displayable text content)",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "warning-signal",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "runtime.warning",
+        summary: "Reconnecting... 2/5",
+        tone: "info",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries.map((entry) => entry.id)).toEqual(["warning-signal"]);
   });
 
   it("omits task.started but shows task.progress and task.completed", () => {
@@ -1579,6 +1774,118 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("keeps OMP tool input, output, correlation, and terminal status across lifecycle updates", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "omp-read-start",
+        createdAt: "2026-08-21T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Read File started",
+        payload: {
+          itemType: "dynamic_tool_call",
+          status: "inProgress",
+          detail: "Reading package manifest",
+          data: {
+            toolCallId: "omp-read-1",
+            kind: "read",
+            item: {
+              type: "dynamic_tool_call",
+              name: "read",
+              input: { path: "package.json" },
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "omp-read-complete",
+        createdAt: "2026-08-21T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Read File",
+        payload: {
+          itemType: "dynamic_tool_call",
+          status: "completed",
+          data: {
+            toolCallId: "omp-read-1",
+            kind: "read",
+            item: {
+              input: { path: "package.json" },
+              type: "dynamic_tool_call",
+              name: "read",
+              result: { content: [{ type: "text", text: '{ "name": "fixture" }' }] },
+            },
+            rawOutput: { content: '{ "name": "fixture" }' },
+          },
+        },
+      }),
+      makeActivity({
+        id: "omp-bash-start",
+        createdAt: "2026-08-21T00:00:03.000Z",
+        kind: "tool.started",
+        summary: "Terminal started",
+        payload: {
+          itemType: "command_execution",
+          status: "inProgress",
+          detail: "Checking fixture command",
+          data: {
+            toolCallId: "omp-bash-1",
+            kind: "execute",
+            item: {
+              type: "command_execution",
+              name: "bash",
+              input: { command: ["bash", "-lc", "printf fixture"] },
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "omp-bash-complete",
+        createdAt: "2026-08-21T00:00:04.000Z",
+        kind: "tool.completed",
+        summary: "Terminal",
+        payload: {
+          itemType: "command_execution",
+          status: "failed",
+          data: {
+            toolCallId: "omp-bash-1",
+            kind: "execute",
+            item: {
+              type: "command_execution",
+              name: "bash",
+              input: { command: ["bash", "-lc", "printf fixture"] },
+              result: { content: [{ type: "text", text: "fixture failed" }] },
+            },
+            rawOutput: { content: "fixture failed" },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      id: "omp-read-complete",
+      toolCallId: "omp-read-1",
+      toolTitle: "Read File",
+      detail: '{ "name": "fixture" }',
+      itemType: "dynamic_tool_call",
+      toolLifecycleStatus: "completed",
+      toolData: {
+        type: "dynamic_tool_call",
+        name: "read",
+        input: { path: "package.json" },
+        result: { content: [{ type: "text", text: '{ "name": "fixture" }' }] },
+      },
+    });
+    expect(entries[1]).toMatchObject({
+      id: "omp-bash-complete",
+      toolCallId: "omp-bash-1",
+      command: "printf fixture",
+      detail: "fixture failed",
+      itemType: "command_execution",
+      toolLifecycleStatus: "failed",
+    });
+  });
+
   it("does not use command stdout as the detail when Cursor omits the command input", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1614,47 +1921,6 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBeUndefined();
   });
 
-  it("collapses legacy completed tool rows that are missing tool metadata", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "legacy-read-update",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "tool.updated",
-        summary: "Read File",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Read File",
-          detail: "Read File",
-          data: {
-            toolCallId: "tool-read-legacy",
-            kind: "read",
-            rawInput: {},
-          },
-        },
-      }),
-      makeActivity({
-        id: "legacy-read-complete",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        kind: "tool.completed",
-        summary: "Read File",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Read File",
-          detail: "Read File",
-        },
-      }),
-    ];
-
-    const entries = deriveWorkLogEntries(activities);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      id: "legacy-read-complete",
-      toolTitle: "Read File",
-      itemType: "dynamic_tool_call",
-    });
-    expect(entries[0]?.detail).toBeUndefined();
-  });
-
   it("collapses repeated lifecycle updates for the same tool call into one entry", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1664,6 +1930,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-repeated",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },
@@ -1675,6 +1942,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-repeated",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
           data: {
@@ -1691,6 +1959,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call completed",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-repeated",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },
@@ -1702,66 +1971,13 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       id: "tool-complete",
-      createdAt: "2026-02-23T00:00:03.000Z",
+      createdAt: "2026-02-23T00:00:01.000Z",
       label: "Tool call completed",
       detail: 'Read: {"file_path":"/tmp/app.ts"}',
       command: "sed -n 1,40p /tmp/app.ts",
       itemType: "dynamic_tool_call",
       toolTitle: "Tool call",
     });
-  });
-
-  it("keeps separate tool entries when an identical call starts after the prior one completed", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "tool-1-update",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "tool.updated",
-        summary: "Tool call",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Tool call",
-          detail: 'Read: {"file_path":"/tmp/app.ts"}',
-        },
-      }),
-      makeActivity({
-        id: "tool-1-complete",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        kind: "tool.completed",
-        summary: "Tool call completed",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Tool call",
-          detail: 'Read: {"file_path":"/tmp/app.ts"}',
-        },
-      }),
-      makeActivity({
-        id: "tool-2-update",
-        createdAt: "2026-02-23T00:00:03.000Z",
-        kind: "tool.updated",
-        summary: "Tool call",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Tool call",
-          detail: 'Read: {"file_path":"/tmp/app.ts"}',
-        },
-      }),
-      makeActivity({
-        id: "tool-2-complete",
-        createdAt: "2026-02-23T00:00:04.000Z",
-        kind: "tool.completed",
-        summary: "Tool call completed",
-        payload: {
-          itemType: "dynamic_tool_call",
-          title: "Tool call",
-          detail: 'Read: {"file_path":"/tmp/app.ts"}',
-        },
-      }),
-    ];
-
-    const entries = deriveWorkLogEntries(activities);
-
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-1-complete", "tool-2-complete"]);
   });
 
   it("collapses same-timestamp lifecycle rows even when completed sorts before updated by id", () => {
@@ -1773,6 +1989,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-same-timestamp",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },
@@ -1784,6 +2001,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-same-timestamp",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },
@@ -1795,6 +2013,7 @@ describe("deriveWorkLogEntries", () => {
         summary: "Tool call",
         payload: {
           itemType: "dynamic_tool_call",
+          toolCallId: "call-same-timestamp",
           title: "Tool call",
           detail: 'Read: {"file_path":"/tmp/app.ts"}',
         },
@@ -2226,5 +2445,72 @@ describe("rerun workflows", () => {
     const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
     expect(spawnRows.map((row) => row.agentSpawn!.workflowId)).toEqual(["wf-run1", "wf-run2"]);
     expect(spawnRows.map((row) => row.turnId)).toEqual(["turn-1", "turn-2"]);
+  });
+});
+
+describe("session activity performance", () => {
+  it("reuses entries for unchanged activities", () => {
+    const activities = ["status", "diff", "log"].map((command, index) =>
+      makeActivity({
+        id: `stable-tool-${index}`,
+        kind: "tool.completed",
+        sequence: index,
+        payload: {
+          itemType: "command_execution",
+          data: { toolCallId: `stable-tool-${index}`, item: { command: ["git", command] } },
+        },
+      }),
+    );
+
+    const initialEntries = deriveWorkLogEntries(activities.slice(0, 2));
+    const appendedEntries = deriveWorkLogEntries(activities);
+    expect(appendedEntries[0]).toBe(initialEntries[0]);
+    expect(appendedEntries[1]).toBe(initialEntries[1]);
+  });
+
+  it("reuses entries when appending to 20,000 ordered tool activities", () => {
+    const activities = Array.from({ length: 20_000 }, (_, index) =>
+      makeActivity({
+        id: `benchmark-tool-${index}`,
+        createdAt: new Date(1_700_000_000_000 + index).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: index,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: `benchmark-tool-${index}`,
+            item: { command: ["git", "status"] },
+          },
+        },
+      }),
+    );
+    const initialEntries = deriveWorkLogEntries(activities);
+    expect(initialEntries).toHaveLength(20_000);
+    const updatedActivities = [
+      ...activities,
+      makeActivity({
+        id: "benchmark-tool-appended",
+        createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
+        kind: "tool.completed",
+        summary: "Ran command",
+        sequence: activities.length,
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: { toolCallId: "benchmark-tool-appended", item: { command: ["git", "diff"] } },
+        },
+      }),
+    ];
+
+    const updatedEntries = deriveWorkLogEntries(updatedActivities);
+    expect(updatedEntries).toHaveLength(20_001);
+    expect(initialEntries.every((entry, index) => updatedEntries[index] === entry)).toBe(true);
+    expect(updatedEntries.at(-1)).toMatchObject({
+      id: "benchmark-tool-appended",
+      command: "git diff",
+      toolLifecycleStatus: "completed",
+    });
   });
 });

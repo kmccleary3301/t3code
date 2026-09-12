@@ -1,5 +1,11 @@
+import { createEmptyAppearanceState } from "@t3tools/client-runtime/appearance";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import {
+  HostProcessArguments,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -32,6 +38,7 @@ vi.mock("electron", async (importOriginal) => ({
   },
 }));
 
+import { DesktopAppearanceStorage } from "../appearance/DesktopAppearanceStorage.ts";
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -43,10 +50,20 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  APPEARANCE_STARTUP_FAILED_CHANNEL,
+  APPEARANCE_STARTUP_READY_CHANNEL,
+  MENU_ACTION_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+
+vi.spyOn(DesktopAppearanceStorage.prototype, "load").mockResolvedValue(
+  createEmptyAppearanceState(),
+);
+vi.spyOn(DesktopAppearanceStorage.prototype, "watch").mockReturnValue(() => {});
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -60,7 +77,9 @@ const environmentInput = {
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
-function makeFakeBrowserWindow() {
+function makeFakeBrowserWindow(
+  options: { readonly loadURL?: (url: string) => Promise<void> } = {},
+) {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
@@ -94,7 +113,7 @@ function makeFakeBrowserWindow() {
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn(options.loadURL ?? (() => Promise.resolve())),
     maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
@@ -191,7 +210,6 @@ const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
 );
-
 function makeTestLayer(input: {
   readonly window: Electron.BrowserWindow;
   readonly createCount: Ref.Ref<number>;
@@ -205,6 +223,10 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly revealedWindows?: Electron.BrowserWindow[];
+  readonly platform?: NodeJS.Platform;
+  readonly hostArguments?: ReadonlyArray<string>;
+  readonly hostEnvironment?: NodeJS.ProcessEnv;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -253,15 +275,36 @@ function makeTestLayer(input: {
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: (window) =>
+      Effect.sync(() => {
+        input.revealedWindows?.push(window);
+      }),
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
+  const desktopEnvironmentLayer = DesktopEnvironment.layer({
+    ...environmentInput,
+    ...(input.platform === undefined ? {} : { platform: input.platform }),
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
+    ),
+  );
+
   return DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(HostProcessArguments, input.hostArguments ?? ["t3code"]),
+        Layer.succeed(HostProcessEnvironment, input.hostEnvironment ?? {}),
+        Layer.succeed(HostProcessPlatform, input.platform ?? environmentInput.platform),
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
@@ -431,6 +474,116 @@ describe("DesktopWindow", () => {
       }),
     );
   });
+  it("forces appearance recovery into the renderer URL before window creation", () => {
+    assert.isTrue(
+      DesktopWindow.isAppearanceSafeModeForced({
+        argv: ["t3code", "--safe-appearance"],
+        env: {},
+      }),
+    );
+    assert.isTrue(
+      DesktopWindow.isAppearanceSafeModeForced({
+        argv: ["t3code"],
+        env: { T3CODE_APPEARANCE_SAFE_MODE: "1" },
+      }),
+    );
+    assert.isTrue(
+      DesktopWindow.isAppearanceResetForced({
+        argv: ["t3code", "--reset-appearance"],
+      }),
+    );
+    assert.isFalse(DesktopWindow.isAppearanceResetForced({ argv: ["t3code"] }));
+    assert.equal(
+      DesktopWindow.withAppearanceSafeMode("t3code://app/", true),
+      "t3code://app/?t3-appearance=safe",
+    );
+    assert.equal(DesktopWindow.withAppearanceSafeMode("t3code://app/", false), "t3code://app/");
+  });
+  it("loads durable appearance recovery before creating a renderer", async () => {
+    assert.isTrue(
+      await DesktopWindow.shouldUseAppearanceSafeModeBeforeWindow(
+        { argv: ["t3code"], env: {} },
+        async () => true,
+      ),
+    );
+    assert.isTrue(
+      await DesktopWindow.shouldUseAppearanceSafeModeBeforeWindow(
+        { argv: ["t3code"], env: {} },
+        async () => Promise.reject(new Error("corrupt state")),
+      ),
+    );
+    assert.isFalse(
+      await DesktopWindow.shouldUseAppearanceSafeModeBeforeWindow(
+        { argv: ["t3code"], env: {} },
+        async () => false,
+      ),
+    );
+  });
+  it.effect("does not rerun a forced appearance reset for a second window", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        hostArguments: ["t3code", "--reset-appearance"],
+      });
+      const reset = vi
+        .spyOn(DesktopAppearanceStorage.prototype, "reset")
+        .mockRejectedValue(new Error("simulated reset failure"));
+      try {
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createMain;
+          yield* desktopWindow.createMain;
+          assert.equal(yield* Ref.get(createCount), 2);
+          assert.equal(reset.mock.calls.length, 1);
+        }).pipe(Effect.provide(layer));
+      } finally {
+        reset.mockRestore();
+      }
+    }),
+  );
+  it.effect("maps native titlebar and background options per desktop platform", () =>
+    Effect.gen(function* () {
+      for (const platform of ["darwin", "win32", "linux"] as const) {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          createdWindowOptions,
+          platform,
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createMain;
+        }).pipe(Effect.provide(layer));
+
+        const options = createdWindowOptions[0];
+        assert.isDefined(options);
+        assert.equal(options.backgroundColor, "#ffffff");
+        if (platform === "darwin") {
+          assert.equal(options.titleBarStyle, "hiddenInset");
+          assert.deepEqual(options.trafficLightPosition, { x: 16, y: 18 });
+          assert.isUndefined(options.titleBarOverlay);
+        } else {
+          assert.equal(options.titleBarStyle, "hidden");
+          assert.deepEqual(options.titleBarOverlay, {
+            color: "#01000000",
+            height: 40,
+            symbolColor: "#1f2937",
+          });
+        }
+      }
+    }),
+  );
 
   it.effect("does not open a development window until the backend is ready", () =>
     Effect.gen(function* () {
@@ -597,10 +750,13 @@ describe("DesktopWindow", () => {
 
         assert.equal(fakeWindow.maximize.mock.calls.length, 0);
         const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
-        if (!readyToShow) {
-          return yield* Effect.die("window ready-to-show listener was not registered");
+        const startupReady = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startupReady) {
+          return yield* Effect.die("window startup listeners were not registered");
         }
         readyToShow();
+        assert.equal(fakeWindow.maximize.mock.calls.length, 0);
+        startupReady({}, APPEARANCE_STARTUP_READY_CHANNEL);
         assert.equal(fakeWindow.maximize.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
@@ -626,11 +782,243 @@ describe("DesktopWindow", () => {
 
         assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
         const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
-        if (!readyToShow) {
-          return yield* Effect.die("window ready-to-show listener was not registered");
+        const startupReady = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startupReady) {
+          return yield* Effect.die("window startup listeners were not registered");
         }
         readyToShow();
+        assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
+        startupReady({}, APPEARANCE_STARTUP_READY_CHANNEL);
         assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("reveals builtin recovery when renderer startup fails", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        const startup = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startup) {
+          return yield* Effect.die("window startup listeners were not registered");
+        }
+        readyToShow();
+        assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
+        startup({}, APPEARANCE_STARTUP_FAILED_CHANNEL);
+        yield* Effect.yieldNow;
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not let a late ready message bypass recovery navigation", () =>
+    Effect.gen(function* () {
+      let finishRecovery: (() => void) | undefined;
+      const recovery = new Promise<void>((resolve) => {
+        finishRecovery = resolve;
+      });
+      const fakeWindow = makeFakeBrowserWindow({
+        loadURL: () => recovery,
+      });
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        const startup = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startup) {
+          return yield* Effect.die("window startup listeners were not registered");
+        }
+        readyToShow();
+        startup({}, APPEARANCE_STARTUP_FAILED_CHANNEL);
+        startup({}, APPEARANCE_STARTUP_READY_CHANNEL);
+        yield* Effect.yieldNow;
+        assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
+
+        finishRecovery?.();
+        yield* Effect.promise(() => recovery);
+        yield* Effect.yieldNow;
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("bounds standalone builtin recovery navigation", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow({
+        loadURL: () => new Promise(() => undefined),
+      });
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        const startup = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startup) {
+          return yield* Effect.die("window startup listeners were not registered");
+        }
+        readyToShow();
+        startup({}, APPEARANCE_STARTUP_FAILED_CHANNEL);
+        yield* TestClock.adjust(2_000);
+        yield* Effect.yieldNow;
+
+        const recoveryUrl = fakeWindow.loadURL.mock.calls[1]?.[0];
+        if (typeof recoveryUrl !== "string") {
+          return yield* Effect.die("standalone recovery navigation did not start");
+        }
+        assert.match(recoveryUrl, /^data:text\/html;charset=utf-8,/u);
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("requires a fresh appearance handshake after a pre-reveal renderer crash", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        const startup = fakeWindow.webContentsListeners.get("ipc-message");
+        const renderProcessGone = fakeWindow.webContentsListeners.get("render-process-gone");
+        if (!readyToShow || !startup || !renderProcessGone) {
+          return yield* Effect.die("window recovery listeners were not registered");
+        }
+
+        startup({}, APPEARANCE_STARTUP_READY_CHANNEL);
+        renderProcessGone({}, { reason: "crashed", exitCode: 9 });
+        yield* TestClock.adjust(500);
+        yield* Effect.yieldNow;
+        readyToShow();
+        assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
+
+        startup({}, APPEARANCE_STARTUP_READY_CHANNEL);
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps activation behind the appearance startup gate", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealedWindows: Electron.BrowserWindow[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        revealedWindows,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.activate;
+        yield* Effect.yieldNow;
+        assert.deepEqual(revealedWindows, []);
+
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        const startupReady = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!readyToShow || !startupReady) {
+          return yield* Effect.die("window startup listeners were not registered");
+        }
+        readyToShow();
+        startupReady({}, APPEARANCE_STARTUP_READY_CHANNEL);
+        yield* Effect.yieldNow;
+        assert.deepEqual(revealedWindows, [fakeWindow.window]);
+
+        yield* desktopWindow.activate;
+        assert.deepEqual(revealedWindows, [fakeWindow.window, fakeWindow.window]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("fails open after a non-retryable main-frame load failure", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealedWindows: Electron.BrowserWindow[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        revealedWindows,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const didFailLoad = fakeWindow.webContentsListeners.get("did-fail-load");
+        if (!didFailLoad) return yield* Effect.die("renderer load listener was not registered");
+
+        didFailLoad({}, -3, "ERR_ABORTED", "t3code-dev://app/", true);
+        yield* Effect.yieldNow;
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+        assert.deepEqual(revealedWindows, [fakeWindow.window]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("fails open when the appearance startup handshake times out", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealedWindows: Electron.BrowserWindow[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        revealedWindows,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        if (!readyToShow) return yield* Effect.die("ready-to-show listener was not registered");
+        readyToShow();
+
+        yield* TestClock.adjust(30_000);
+        yield* Effect.yieldNow;
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
+        assert.deepEqual(revealedWindows, [fakeWindow.window]);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1063,6 +1451,37 @@ describe("DesktopWindow", () => {
         yield* TestClock.adjust(250);
         assert.equal(fakeWindow.loadURL.mock.calls.length, 2);
         assert.equal(fakeWindow.reload.mock.calls.length, 0);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("cancels a queued development retry before recovery navigation", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const didFailLoad = fakeWindow.webContentsListeners.get("did-fail-load");
+        const startup = fakeWindow.webContentsListeners.get("ipc-message");
+        if (!didFailLoad || !startup) {
+          return yield* Effect.die("renderer recovery listeners were not registered");
+        }
+
+        didFailLoad({}, -9, "ERR_UNEXPECTED", "t3code-dev://app/", true);
+        startup({}, APPEARANCE_STARTUP_FAILED_CHANNEL);
+        yield* Effect.yieldNow;
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 2);
+
+        yield* TestClock.adjust(100);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 2);
       }).pipe(Effect.provide(layer));
     }),
   );

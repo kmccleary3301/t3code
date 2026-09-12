@@ -16,7 +16,7 @@ const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 
 function policyInstruction(instruction: string | undefined): ReadonlyArray<string> {
   const trimmed = instruction?.trim();
-  return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 4_000)] : [];
+  return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 20_000)] : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +216,7 @@ export interface ThreadTitlePromptInput {
 
 // Keep shared editorial rules in these two prompts in sync. Regeneration
 // intentionally adds guidance for thread history and the previous title.
-const INITIAL_THREAD_TITLE_PROMPT = `Generate a title that will help the user recognize this T3 Code thread weeks later.
+const INITIAL_THREAD_TITLE_PROMPT = `Generate a title that will help the user recognize this KM Code thread weeks later.
 Return JSON with exactly one key: title.
 
 Before answering, silently reduce the request to:
@@ -241,7 +241,7 @@ Editorial rules:
 - When a URL or attachment is the only source of the subject, use available tools to inspect it. If it cannot be resolved, remain accurate rather than guessing.`;
 
 function regenerateThreadTitlePrompt(previousTitle: string): string {
-  return `Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.
+  return `Regenerate the title for an existing KM Code thread so the user can recognize it weeks later.
 The previous title was ${JSON.stringify(previousTitle)}.
 Return JSON with exactly one key: title.
 

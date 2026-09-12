@@ -113,11 +113,13 @@ const startupDependencies = Layer.mergeAll(
     respondToUserInput: () => Effect.die("unused"),
     stopSession: () => Effect.die("unused"),
     listSessions: () => Effect.succeed([]),
+    discoverNativeCommands: () => Effect.die("unused"),
     getCapabilities: () => Effect.die("unused"),
     getInstanceInfo: () => Effect.die("unused"),
     rollbackConversation: () => Effect.die("unused"),
     captureNativeCheckpoint: () => Effect.succeed(undefined),
     restoreNativeCheckpoint: () => Effect.void,
+    uploadFeedback: () => Effect.die("unused"),
     streamEvents: Stream.empty,
   }),
 );

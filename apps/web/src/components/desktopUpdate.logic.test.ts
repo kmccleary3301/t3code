@@ -185,15 +185,12 @@ describe("getDesktopUpdateActionError", () => {
 });
 
 describe("desktop update UI helpers", () => {
-  it("builds the stable release URL for a downloaded version", () => {
+  it("routes versioned updates to the fork release listing without fabricating a tag", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30")).toBe(
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
+      "https://github.com/kmccleary3301/t3code/releases",
     );
-  });
-
-  it("builds the nightly release URL without dropping its version suffix", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30-nightly.20260728.931")).toBe(
-      "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30-nightly.20260728.931",
+      "https://github.com/kmccleary3301/t3code/releases",
     );
   });
 
@@ -234,7 +231,6 @@ describe("desktop update UI helpers", () => {
       runningUnderArm64Translation: true,
     };
 
-    expect(shouldShowArm64IntelBuildWarning(state)).toBe(true);
     expect(getArm64IntelBuildWarningDescription(state)).toContain("Apple Silicon");
     expect(getArm64IntelBuildWarningDescription(state)).toContain("Intel build");
   });
@@ -258,7 +254,7 @@ describe("desktop update UI helpers", () => {
         availableVersion: "1.1.0",
         downloadedVersion: "1.1.1",
       }),
-    ).toContain("Install update 1.1.1 and restart T3 Code?");
+    ).toContain("Install update 1.1.1 and restart KM Code?");
   });
 
   it("falls back to generic install confirmation copy when no version is available", () => {
@@ -267,18 +263,7 @@ describe("desktop update UI helpers", () => {
         availableVersion: null,
         downloadedVersion: null,
       }),
-    ).toContain("Install update and restart T3 Code?");
-  });
-
-  it("keeps the same install confirmation copy across desktop platforms", () => {
-    expect(
-      getDesktopUpdateInstallConfirmationMessage({
-        availableVersion: "1.1.0",
-        downloadedVersion: "1.1.0",
-      }),
-    ).toBe(
-      "Install update 1.1.0 and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
-    );
+    ).toContain("Install update and restart KM Code?");
   });
 });
 

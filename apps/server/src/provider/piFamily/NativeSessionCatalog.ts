@@ -3,12 +3,12 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeReadline from "node:readline";
 
 import type {
   ProviderInstanceId,
   ProviderNativeSessionStatus,
   ProviderNativeSessionSummary,
+  ProviderSubagentTranscriptReadResult,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -17,7 +17,7 @@ import * as Option from "effect/Option";
 
 import { ProviderNativeSessionError } from "@t3tools/contracts";
 import type { ProviderNativeHistoryMessage } from "../Services/ProviderAdapter.ts";
-
+import { readNativeHistoryMessages, readNativeSubagentTranscript } from "./NativeSessionArchive.ts";
 import type { PiFamilyRuntimeKind } from "./protocol.ts";
 
 const SESSION_PREFIX_BYTES = 16 * 1024;
@@ -57,6 +57,27 @@ function resolveFromCwd(cwd: string, directory: string): string {
   return NodePath.isAbsolute(directory) ? directory : NodePath.resolve(cwd, directory);
 }
 
+function configuredHomeDirectory(config: PiFamilySessionCatalogConfig): string {
+  const configuredHome = config.environment?.HOME;
+  return configuredHome === undefined || configuredHome.length === 0
+    ? NodeOS.homedir()
+    : resolveFromCwd(config.cwd, configuredHome);
+}
+
+function resolvePiFamilyAgentDirectory(config: PiFamilySessionCatalogConfig): string {
+  const agentDirectory = config.agentDirectory ?? config.environment?.PI_CODING_AGENT_DIR;
+  if (agentDirectory !== undefined) return resolveFromCwd(config.cwd, agentDirectory);
+  const homeDirectory = configuredHomeDirectory(config);
+  if (config.runtime === "omp") {
+    const profile =
+      argumentValue(config.launchArguments, "--profile") ?? config.environment?.OMP_PROFILE;
+    if (profile !== undefined) {
+      return NodePath.join(homeDirectory, ".omp", "profiles", profile, "agent");
+    }
+  }
+  return NodePath.join(homeDirectory, config.runtime === "omp" ? ".omp" : ".pi", "agent");
+}
+
 export function resolvePiFamilySessionDirectory(config: PiFamilySessionCatalogConfig): string {
   const explicitSessionDirectory = argumentValue(config.launchArguments, "--session-dir");
   if (explicitSessionDirectory !== undefined) {
@@ -68,24 +89,14 @@ export function resolvePiFamilySessionDirectory(config: PiFamilySessionCatalogCo
     return resolveFromCwd(config.cwd, environmentSessionDirectory);
   }
 
-  const agentDirectory = config.agentDirectory ?? config.environment?.PI_CODING_AGENT_DIR;
-  if (agentDirectory !== undefined) {
-    return NodePath.join(resolveFromCwd(config.cwd, agentDirectory), "sessions");
-  }
+  return NodePath.join(resolvePiFamilyAgentDirectory(config), "sessions");
+}
 
-  if (config.runtime === "omp") {
-    const profile =
-      argumentValue(config.launchArguments, "--profile") ?? config.environment?.OMP_PROFILE;
-    if (profile !== undefined) {
-      return NodePath.join(NodeOS.homedir(), ".omp", "profiles", profile, "agent", "sessions");
-    }
-  }
-  return NodePath.join(
-    NodeOS.homedir(),
-    config.runtime === "omp" ? ".omp" : ".pi",
-    "agent",
-    "sessions",
-  );
+export async function resolvePiFamilyWorkspacePath(value: string): Promise<string> {
+  return NodeFSP.realpath(value).catch((error) => {
+    if (asRecord(error)?.code === "ENOENT") return value;
+    throw error;
+  });
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -145,22 +156,24 @@ function parseSessionHeader(prefix: string): SessionHeader | undefined {
 }
 
 function extractText(content: unknown): string | undefined {
-  if (typeof content === "string") return content.trim() || undefined;
-  if (!Array.isArray(content)) return undefined;
+  if (typeof content === "string") return content.length === 0 ? undefined : content;
+  const blocks = Array.isArray(content) ? content : [content];
   const parts: string[] = [];
-  for (const block of content) {
-    if (
-      typeof block === "object" &&
-      block !== null &&
-      "type" in block &&
-      block.type === "text" &&
-      "text" in block &&
-      typeof block.text === "string"
-    ) {
-      parts.push(block.text);
-    }
+  for (const block of blocks) {
+    const record = asRecord(block);
+    const text =
+      typeof record?.text === "string"
+        ? record.text
+        : typeof record?.thinking === "string"
+          ? record.thinking
+          : typeof record?.reasoning === "string"
+            ? record.reasoning
+            : typeof record?.content === "string" && record.type !== "toolCall"
+              ? record.content
+              : undefined;
+    if (text !== undefined && text.length > 0) parts.push(text);
   }
-  const text = parts.join(" ").trim();
+  const text = parts.join("");
   return text.length > 0 ? text : undefined;
 }
 
@@ -368,6 +381,31 @@ function compareSessionCatalogEntries(
   );
 }
 
+async function entriesForWorkspace(
+  entries: SessionCatalogEntry[],
+  cwd: string,
+): Promise<SessionCatalogEntry[]> {
+  const target = NodePath.resolve(cwd);
+  const canonicalPaths = new Map<string, Promise<string>>();
+  const canonicalPath = (value: string): Promise<string> => {
+    let pending = canonicalPaths.get(value);
+    if (pending === undefined) {
+      pending = resolvePiFamilyWorkspacePath(value);
+      canonicalPaths.set(value, pending);
+    }
+    return pending;
+  };
+  const matches = await Promise.all(
+    entries.map(async (entry) => {
+      const candidate = NodePath.resolve(entry.header.cwd);
+      return (
+        candidate === target || (await canonicalPath(candidate)) === (await canonicalPath(target))
+      );
+    }),
+  );
+  return entries.filter((_, index) => matches[index]);
+}
+
 export function listPiFamilyNativeSessions(
   config: PiFamilySessionCatalogConfig,
   providerInstanceId: ProviderInstanceId,
@@ -383,11 +421,7 @@ export function listPiFamilyNativeSessions(
         if (asRecord(error)?.code === "ENOENT") return [];
         throw error;
       }
-      const summaries = entries
-        .filter(
-          (entry) =>
-            cwd === undefined || NodePath.resolve(entry.header.cwd) === NodePath.resolve(cwd),
-        )
+      const summaries = (cwd === undefined ? entries : await entriesForWorkspace(entries, cwd))
         .sort(compareSessionCatalogEntries)
         .map((entry): ProviderNativeSessionSummary => {
           const model = sessionModel(entry.suffix);
@@ -422,49 +456,68 @@ export function listPiFamilyNativeSessions(
   });
 }
 
-type NativeHistoryNode = {
-  readonly parentId: string | null;
-  readonly message?: ProviderNativeHistoryMessage;
-};
-
-function historyMessage(record: Record<string, unknown>): ProviderNativeHistoryMessage | undefined {
-  if (record.type !== "message") return undefined;
-  const message = asRecord(record.message);
-  if (message === undefined) return undefined;
-  const role =
-    message?.role === "user"
-      ? "user"
-      : message?.role === "assistant"
-        ? "assistant"
-        : message?.role === "developer" || message?.role === "system"
-          ? "system"
-          : undefined;
-  if (role === undefined) return undefined;
-  const text = extractText(message.content);
-  if (text === undefined) return undefined;
-  const timestamp = isoTimestamp(record.timestamp ?? message.timestamp);
-  if (timestamp === undefined) return undefined;
-  return {
-    role,
-    text,
-    timestamp,
-    ...(typeof message.model === "string" ? { model: message.model } : {}),
-  };
-}
-
 async function findSessionFile(
   root: string,
   sessionId: string,
   cwd: string,
 ): Promise<string | undefined> {
   const entries = await discoverSessionCatalogEntries(root);
-  return entries
-    .filter(
-      (entry) =>
-        entry.header.id === sessionId &&
-        NodePath.resolve(entry.header.cwd) === NodePath.resolve(cwd),
-    )
-    .sort(compareSessionCatalogEntries)[0]?.filePath;
+  const matching = await entriesForWorkspace(
+    entries.filter((entry) => entry.header.id === sessionId),
+    cwd,
+  );
+  return matching.sort(compareSessionCatalogEntries)[0]?.filePath;
+}
+export async function findPiFamilySessionFile(
+  config: PiFamilySessionCatalogConfig,
+  sessionId: string,
+  cwd: string,
+): Promise<string | undefined> {
+  const root = resolvePiFamilySessionDirectory(config);
+  return await findSessionFile(root, sessionId, cwd);
+}
+
+export function readPiFamilyNativeSubagentTranscript(
+  config: PiFamilySessionCatalogConfig,
+  sessionId: string,
+  subagentId: string,
+  cwd: string,
+  cursor?: string,
+): Effect.Effect<ProviderSubagentTranscriptReadResult, ProviderNativeSessionError> {
+  if (config.runtime !== "omp") {
+    return Effect.fail(
+      new ProviderNativeSessionError({
+        code: "unsupported",
+        message: "Subagent transcripts are only available for OMP sessions.",
+      }),
+    );
+  }
+  const root = resolvePiFamilySessionDirectory(config);
+  return Effect.tryPromise({
+    try: async () => {
+      const parentSessionFile = await findSessionFile(root, sessionId, cwd);
+      if (parentSessionFile === undefined) {
+        throw new ProviderNativeSessionError({
+          code: "not_found",
+          message: `${config.runtime.toUpperCase()} session '${sessionId}' was not found in this project.`,
+        });
+      }
+      return await readNativeSubagentTranscript({
+        parentSessionFile,
+        sessionId,
+        subagentId,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+    },
+    catch: (cause) =>
+      isNativeSessionError(cause)
+        ? cause
+        : new ProviderNativeSessionError({
+            code: "native",
+            message:
+              cause instanceof Error ? cause.message : "Failed to read native subagent transcript",
+          }),
+  });
 }
 
 export function readPiFamilyNativeHistoryMessages(
@@ -475,49 +528,25 @@ export function readPiFamilyNativeHistoryMessages(
   const root = resolvePiFamilySessionDirectory(config);
   return Effect.tryPromise({
     try: async () => {
-      const filePath = await findSessionFile(root, sessionId, cwd);
-      if (filePath === undefined) {
+      const sessionFile = await findSessionFile(root, sessionId, cwd);
+      if (sessionFile === undefined) {
         throw new ProviderNativeSessionError({
           code: "not_found",
           message: `${config.runtime.toUpperCase()} session '${sessionId}' was not found in this project.`,
         });
       }
-      const nodes = new Map<string, NativeHistoryNode>();
-      let leafId: string | undefined;
-      const lines = NodeReadline.createInterface({
-        input: NodeFS.createReadStream(filePath, { encoding: "utf8" }),
-        crlfDelay: Number.POSITIVE_INFINITY,
+      return await readNativeHistoryMessages({
+        sessionFile,
+        runtime: config.runtime,
+        agentDirectory: resolvePiFamilyAgentDirectory(config),
       });
-      for await (const line of lines) {
-        const record = parseRecord(line);
-        if (record === undefined || typeof record.id !== "string") continue;
-        const parentId =
-          record.parentId === null || typeof record.parentId === "string" ? record.parentId : null;
-        const message = historyMessage(record);
-        nodes.set(record.id, {
-          parentId,
-          ...(message === undefined ? {} : { message }),
-        });
-        leafId = record.id;
-      }
-      const messages: ProviderNativeHistoryMessage[] = [];
-      const visited = new Set<string>();
-      while (leafId !== undefined && !visited.has(leafId)) {
-        visited.add(leafId);
-        const node = nodes.get(leafId);
-        if (node === undefined) break;
-        if (node.message !== undefined) messages.push(node.message);
-        leafId = node.parentId ?? undefined;
-      }
-      messages.reverse();
-      return messages;
     },
     catch: (cause) =>
       isNativeSessionError(cause)
         ? cause
         : new ProviderNativeSessionError({
             code: "native",
-            message: cause instanceof Error ? cause.message : "Failed to read OMP history",
+            message: cause instanceof Error ? cause.message : "Failed to read native history",
           }),
   });
 }

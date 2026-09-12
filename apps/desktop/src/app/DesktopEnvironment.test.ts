@@ -68,6 +68,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.serverRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
+      assert.equal(environment.displayName, "KM Code (Dev)");
       assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
       assert.equal(environment.linuxWmClass, "t3code-dev");
       assert.deepEqual(
@@ -92,10 +93,33 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.isDevelopment, false);
+      assert.equal(environment.displayName, "KM Code");
+      assert.equal(environment.legacyUserDataDirName, "T3 Code (Alpha)");
       assert.equal(environment.stateDir, "/tmp/t3/userdata");
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
       assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+    }),
+  );
+
+  it.effect("uses nightly branding while preserving legacy development data names", () =>
+    Effect.gen(function* () {
+      const nightly = yield* makeEnvironment({
+        appVersion: "0.0.22-nightly.20260815.1",
+        isPackaged: true,
+      });
+      const piDevelopment = yield* makeEnvironment(
+        {},
+        {
+          T3_PRODUCT_PROFILE: "pi-omp",
+          VITE_DEV_SERVER_URL: "http://localhost:5173",
+        },
+      );
+
+      assert.equal(nightly.displayName, "KM Code (Nightly)");
+      assert.equal(nightly.legacyUserDataDirName, "T3 Code (Alpha)");
+      assert.equal(piDevelopment.displayName, "KM Code (Dev)");
+      assert.equal(piDevelopment.legacyUserDataDirName, "T3 Code Pi + OMP (Dev)");
     }),
   );
 

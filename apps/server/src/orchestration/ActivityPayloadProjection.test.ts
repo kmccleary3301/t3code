@@ -136,6 +136,76 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 
+  it("keeps OMP dynamic and subagent call inputs with bounded result previews", () => {
+    const readTool = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        data: {
+          toolCallId: "omp-read-1",
+          kind: "read",
+          item: {
+            type: "dynamic_tool_call",
+            name: "read",
+            input: { path: "marker.txt" },
+            result: {
+              content: [{ type: "text", text: `PASSTHROUGH_MARKER\n${"x".repeat(5_000)}` }],
+            },
+          },
+          rawOutput: { content: `PASSTHROUGH_MARKER\n${"y".repeat(5_000)}` },
+        },
+      }),
+    );
+    const taskTool = projectActivityPayload(
+      activity({
+        itemType: "collab_agent_tool_call",
+        data: {
+          toolCallId: "omp-task-1",
+          kind: "task",
+          item: {
+            type: "collab_agent_tool_call",
+            name: "task",
+            input: {
+              context: "Verify the child passthrough",
+              tasks: [{ agent: "sonic", task: "Reply with CHILD_OK" }],
+            },
+            result: { content: [{ type: "text", text: "CHILD_OK" }] },
+          },
+        },
+      }),
+    );
+
+    expect(readTool.payload).toMatchObject({
+      data: {
+        toolCallId: "omp-read-1",
+        kind: "read",
+        item: {
+          type: "dynamic_tool_call",
+          name: "read",
+          input: { path: "marker.txt" },
+          result: { content: "PASSTHROUGH_MARKER" },
+        },
+        rawOutput: { content: "PASSTHROUGH_MARKER" },
+      },
+    });
+    expect(taskTool.payload).toMatchObject({
+      data: {
+        toolCallId: "omp-task-1",
+        kind: "task",
+        item: {
+          type: "collab_agent_tool_call",
+          name: "task",
+          input: {
+            context: "Verify the child passthrough",
+            tasks: [{ agent: "sonic", task: "Reply with CHILD_OK" }],
+          },
+          result: { content: "CHILD_OK" },
+        },
+      },
+    });
+    expect(JSON.stringify(readTool.payload).length).toBeLessThan(1_000);
+    expect(JSON.stringify(taskTool.payload).length).toBeLessThan(1_000);
+  });
+
   it("slims Codex-shaped mcp_tool_call items to rendered fields plus a result summary", () => {
     const projected = projectActivityPayload(
       activity({

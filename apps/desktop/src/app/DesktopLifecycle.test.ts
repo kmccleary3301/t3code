@@ -207,7 +207,7 @@ describe("DesktopLifecycle", () => {
     }),
   );
 
-  it.effect("ignores app activation while quitting", () =>
+  it.effect("routes activation events through the window gate unless quitting", () =>
     Effect.gen(function* () {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
       let activationCount = 0;
@@ -233,11 +233,16 @@ describe("DesktopLifecycle", () => {
           const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
           const state = yield* DesktopState.DesktopState;
           yield* lifecycle.register;
+
+          appListeners.get("second-instance")?.();
+          yield* Effect.yieldNow;
+          assert.equal(activationCount, 1);
+
           yield* Ref.set(state.quitting, true);
-
           appListeners.get("activate")?.();
-
-          assert.equal(activationCount, 0);
+          appListeners.get("second-instance")?.();
+          yield* Effect.yieldNow;
+          assert.equal(activationCount, 1);
         }),
       ).pipe(Effect.provide(layer));
     }),

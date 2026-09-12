@@ -1,7 +1,6 @@
 "use strict";
 
-// Ships the branded T3 mark to the Live Activity / widget extension.
-//
+// Ships the branded KM mark to the Live Activity / widget extension.
 // expo-widgets generates ExpoWidgetsTarget without a Resources build phase and
 // has no asset support, so this plugin (a) writes an SVG template image set into
 // the generated widget asset catalog and (b) wires that catalog into the widget

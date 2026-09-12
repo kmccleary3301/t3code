@@ -1,3 +1,9 @@
+import {
+  createEmptyAppearanceState,
+  resolveAppearanceState,
+} from "@t3tools/client-runtime/appearance";
+import { normalizeThemeDefinition } from "@t3tools/shared/appearance";
+import { T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
@@ -5,6 +11,7 @@ import {
   browseInputEndPaddingClass,
   buildBrowseGroups,
   buildThreadActionItems,
+  buildAppearanceCommandPaletteItem,
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
@@ -109,6 +116,111 @@ describe("reduceCommandPaletteUiState", () => {
       mode: "command",
       openIntent: null,
     });
+  });
+});
+
+describe("buildAppearanceCommandPaletteItem", () => {
+  it("exposes recovery actions while the runtime loads", () => {
+    const item = buildAppearanceCommandPaletteItem({
+      snapshot: null,
+      icon: null,
+      addonIcon: null,
+      run: vi.fn(),
+      openSettings: vi.fn(),
+      openAppearanceFolder: null,
+    });
+
+    expect(item.groups[0]?.items.map((action) => action.value)).toEqual([
+      "appearance:settings",
+      "appearance:reload",
+      "appearance:safe-mode",
+      "appearance:reset",
+      "appearance:folder",
+    ]);
+    expect(item.groups[0]?.items[1]?.disabled).toBe(true);
+    expect(item.groups[0]?.items[4]?.disabled).toBe(true);
+  });
+  it("maps forced safe-mode exit to the confirmed reset command", async () => {
+    const run = vi.fn(async () => undefined);
+    const state = { ...createEmptyAppearanceState(), safeMode: true };
+    const item = buildAppearanceCommandPaletteItem({
+      snapshot: {
+        ...state,
+        preview: null,
+        resolved: resolveAppearanceState(state, null, () => "dark"),
+      },
+      icon: null,
+      addonIcon: null,
+      run,
+      openSettings: vi.fn(),
+      openAppearanceFolder: null,
+    });
+    const action = item.groups[0]?.items.find(
+      (candidate) => candidate.value === "appearance:safe-mode",
+    );
+    if (action === undefined || action.kind !== "action") {
+      throw new Error("Expected the safe-mode action.");
+    }
+    await action.run();
+    expect(action.title).toBe("Reset appearance to leave safe mode");
+    expect(run).toHaveBeenCalledWith({ type: "reset" });
+  });
+
+  it("includes installed profiles, variants, and snippet toggles", () => {
+    const state = createEmptyAppearanceState();
+    const profile = normalizeThemeDefinition(T3_CHAT_THEME);
+    const manifest = {
+      schema: profile.schema,
+      version: 2,
+      metadata: profile.metadata,
+      compatibility: profile.compatibility,
+      capabilities: profile.requestedCapabilities,
+      fallback: profile.fallback,
+      defaultVariant: profile.defaultVariant,
+      variants: profile.variants,
+      assets: profile.assets,
+      styles: profile.styles,
+      presentation: profile.presentation,
+    } as const;
+    const packageState = {
+      profile,
+      manifest,
+      manifestHash: "fixture",
+      enabled: false,
+      assets: [],
+      stylesheets: [],
+      diagnostics: [],
+    } as const;
+    const populated = {
+      ...state,
+      packages: { [profile.metadata.id]: packageState },
+      order: [profile.metadata.id],
+      snippets: [
+        { id: "focus", css: ":focus { outline: 2px solid red; }", enabled: false, advanced: true },
+      ],
+    };
+    const item = buildAppearanceCommandPaletteItem({
+      snapshot: {
+        ...populated,
+        preview: null,
+        resolved: resolveAppearanceState(populated, null, () => "dark"),
+      },
+      icon: null,
+      addonIcon: null,
+      run: vi.fn(),
+      openSettings: vi.fn(),
+      openAppearanceFolder: vi.fn(),
+    });
+
+    expect(item.groups[1]?.items.map((action) => action.value)).toEqual([
+      `appearance:profile:${profile.metadata.id}`,
+      ...profile.variants.map(
+        (variant) => `appearance:variant:${profile.metadata.id}:${variant.id}`,
+      ),
+    ]);
+    expect(item.groups[2]?.items.map((action) => action.value)).toEqual([
+      "appearance:snippet:focus",
+    ]);
   });
 });
 
