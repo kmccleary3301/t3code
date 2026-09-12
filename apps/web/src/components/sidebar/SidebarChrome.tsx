@@ -51,7 +51,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   return (
     <SidebarHeader
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0 overflow-visible",
         isElectron && "drag-region",
       )}
       data-t3-surface="sidebar-header"
@@ -86,28 +86,30 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-8 w-fit min-w-0 shrink-0 items-center gap-2 rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-full w-fit min-w-0 shrink-0 items-center gap-2.5 overflow-visible rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
     >
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1.5">
         <KMMark />
         <span
           className={cn(
-            "-translate-y-px truncate text-sm font-medium tracking-tight",
+            "-translate-y-px truncate text-sm font-semibold tracking-tight",
             onBackdrop ? "text-white/70" : "text-muted-foreground",
           )}
         >
           Code
         </span>
       </div>
-      <img
-        src="/mascot/kyle-mascot-128.png"
-        alt="Kyle"
-        className="size-7 shrink-0 rounded-full object-cover select-none shadow-sm border border-white/20 transition-transform duration-200 hover:scale-110 active:scale-95"
-        draggable={false}
-      />
+      <div className="relative flex size-10 shrink-0 items-center justify-center overflow-visible">
+        <img
+          src="/mascot/kyle-mascot-256.png"
+          alt="Kyle"
+          className="size-10 shrink-0 rounded-full object-cover select-none shadow-md border-2 border-white/25 bg-background/50 transition-all duration-200 hover:scale-115 hover:shadow-lg hover:border-white/50 active:scale-95"
+          draggable={false}
+        />
+      </div>
     </Link>
   );
 }
