@@ -12,9 +12,9 @@ Icon Composer projects and the export pipeline in `scripts/export-brand-icons.ts
 package and format these layers for each target platform.
 
 Run `pnpm icons:export` from the repository root to regenerate the tracked
-iOS, macOS, Linux, Windows, and web assets. Development web exports are copied to
-`apps/web/public` for the browser favicon and splash screen. Run
-`pnpm icons:check` to verify generated assets and public copies match their
+iOS, Linux, Windows, and web assets (as well as macOS via the portable fallback).
+Development web exports are copied to `apps/web/public` for the browser favicon and splash screen.
+Run `pnpm icons:check` to verify generated assets and public copies match their
 sources without changing files.
 
 Icon export prefers Icon Composer 2 or newer on macOS. The script selects the
@@ -30,9 +30,13 @@ exportable without Xcode; it does not reproduce Icon Composer's native shadow.
 
 ## macOS exports
 
-The portable fallback writes the macOS PNG with the classic safe area: the
-opaque icon body is 824×824, inset 100 pixels on every side, with transparent
-space outside the body. Do not edit generated PNG or ICO files directly.
+When using the portable fallback (`toolPath === null`), the script automatically
+generates the macOS PNG with the classic safe area: the opaque icon body is
+824×824, inset 100 pixels on every side, with transparent space outside the body.
+When native Icon Composer (`ictool`) is used, native macOS exports require
+Icon Composer's GUI-only pre-Tahoe preset and are not updated automatically by `ictool`;
+in that mode, manual export from Icon Composer or the portable fallback is used.
+Do not edit generated PNG or ICO files directly.
 
 ## Android adaptive and monochrome marks
 

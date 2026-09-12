@@ -1,6 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Resvg } from "@resvg/resvg-js";
-import { encodePngIco, portableIconSvg, readPngDimensions } from "./icon-export.ts";
+import {
+  encodePngIco,
+  IconExportSourceMissingError,
+  portableIconSvg,
+  readPngDimensions,
+} from "./icon-export.ts";
 const pngHeader = (width: number, height: number) => {
   const contents = Buffer.alloc(24);
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(contents);
@@ -75,5 +80,19 @@ describe("icon export", () => {
     const centerOffset = (32 * 64 + 32) * 4;
     assert.isTrue(pixels[centerOffset] > 100, "expected red channel to be rendered");
     assert.isTrue(pixels[centerOffset + 3] > 100, "expected alpha channel to be rendered");
+  });
+
+  it("throws IconExportSourceMissingError when a layer source is missing", () => {
+    const iconJson = JSON.stringify({
+      groups: [
+        {
+          layers: [{ "image-name": "missing.png" }],
+        },
+      ],
+    });
+    assert.throws(
+      () => portableIconSvg(iconJson, new Map(), false),
+      /Missing Icon Composer source project: missing.png/,
+    );
   });
 });

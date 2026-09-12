@@ -71,6 +71,16 @@ export function encodePngIco(images: ReadonlyArray<PngIconImage>): Buffer {
 
   return Buffer.concat([header, ...images.map((image) => image.contents)]);
 }
+export class IconExportSourceMissingError extends Schema.TaggedErrorClass<IconExportSourceMissingError>()(
+  "IconExportSourceMissingError",
+  {
+    sourcePath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Missing Icon Composer source project: ${this.sourcePath}`;
+  }
+}
 
 export const PortableIconLayer = Schema.Struct({
   "image-name": Schema.String,
@@ -108,7 +118,7 @@ export function portableIconSvg(
   const children = layers.flatMap((layer) => {
     const source = layerSources.get(layer["image-name"]);
     if (source === undefined) {
-      throw new Error(`Missing source asset for layer: ${layer["image-name"]}`);
+      throw new IconExportSourceMissingError({ sourcePath: layer["image-name"] });
     }
     const isPng = layer["image-name"].endsWith(".png");
     const mime = isPng ? "image/png" : "image/svg+xml";

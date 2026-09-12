@@ -16,6 +16,7 @@ import { Resvg } from "@resvg/resvg-js";
 import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
 import {
   encodePngIco,
+  IconExportSourceMissingError,
   portableIconSvg,
   readPngDimensions,
   WINDOWS_ICON_SIZES,
@@ -152,16 +153,7 @@ export class IconExportToolResolutionError extends Schema.TaggedErrorClass<IconE
   }
 }
 
-export class IconExportSourceMissingError extends Schema.TaggedErrorClass<IconExportSourceMissingError>()(
-  "IconExportSourceMissingError",
-  {
-    sourcePath: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Missing Icon Composer source project: ${this.sourcePath}`;
-  }
-}
+export { IconExportSourceMissingError };
 
 export class IconExportRenditionError extends Schema.TaggedErrorClass<IconExportRenditionError>()(
   "IconExportRenditionError",
