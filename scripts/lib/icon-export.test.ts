@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
+import { Resvg } from "@resvg/resvg-js";
 
 import { encodePngIco, readPngDimensions } from "./icon-export.ts";
-
 const pngHeader = (width: number, height: number) => {
   const contents = Buffer.alloc(24);
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(contents);
@@ -43,5 +43,20 @@ describe("icon export", () => {
         ]),
       /provided more than once/,
     );
+  });
+
+  it("renders a non-blank raster from an SVG with embedded PNG layer", () => {
+    const redPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <image href="data:image/png;base64,${redPng.toString("base64")}" x="0" y="0" width="64" height="64"/>
+    </svg>`;
+    const resvg = new Resvg(svg, { fitTo: { mode: "width", value: 64 } });
+    const rendered = resvg.render().asPng();
+    const dimensions = readPngDimensions(rendered);
+    assert.deepEqual(dimensions, { width: 64, height: 64 });
+    assert.isTrue(rendered.length > 50);
   });
 });
