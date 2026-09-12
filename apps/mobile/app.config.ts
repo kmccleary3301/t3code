@@ -28,8 +28,8 @@ const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 // Universal exports already contain their own rounded-square silhouette. Using one as an adaptive
 // foreground makes Android draw an icon shape inside the launcher's mask.
+const androidAdaptiveBackground = fromRepoRoot(BRAND_ASSET_PATHS.androidAdaptiveBackgroundPng);
 const androidAdaptiveForeground = fromRepoRoot(BRAND_ASSET_PATHS.androidAdaptiveForegroundPng);
-
 if (
   isIosPersonalTeamBuild &&
   (!personalTeamBundleIdentifier ||
@@ -44,6 +44,7 @@ const DEVELOPMENT_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIconComposerProject),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
+  androidAdaptiveBackground,
   androidAdaptiveForeground,
   androidAdaptiveBackgroundColor: "#171411",
   androidMonochromeIcon: fromRepoRoot(BRAND_ASSET_PATHS.androidMonochromePng),
@@ -55,6 +56,7 @@ const PREVIEW_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIconComposerProject),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
+  androidAdaptiveBackground,
   androidAdaptiveForeground,
   androidAdaptiveBackgroundColor: "#171411",
   androidMonochromeIcon: fromRepoRoot(BRAND_ASSET_PATHS.androidMonochromePng),
@@ -66,6 +68,7 @@ const RELEASE_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
+  androidAdaptiveBackground,
   androidAdaptiveForeground,
   androidAdaptiveBackgroundColor: "#171411",
   androidMonochromeIcon: fromRepoRoot(BRAND_ASSET_PATHS.androidMonochromePng),
@@ -240,6 +243,7 @@ const config: ExpoConfig = {
     package: variant.androidPackage,
     adaptiveIcon: {
       backgroundColor: variant.assets.androidAdaptiveBackgroundColor,
+      backgroundImage: variant.assets.androidAdaptiveBackground,
       foregroundImage: variant.assets.androidAdaptiveForeground,
       monochromeImage: variant.assets.androidMonochromeIcon,
     },

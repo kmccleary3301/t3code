@@ -40,11 +40,13 @@ Do not edit generated PNG or ICO files directly.
 
 ## Android adaptive and monochrome marks
 
+`apps/mobile/assets/android-icon-background.svg` is the source of truth for
+the full-bleed 432×432 neon gradient background (`apps/mobile/assets/android-icon-background.png`).
+
 `apps/mobile/assets/android-icon-foreground.svg` is the source of truth for
-the normal Android adaptive launcher foreground. It contains the transparent
-portrait cutout centered within Android's 264px diameter safe zone, allowing
-the launcher to apply its mask over the dark background without nested-shape
-distortion.
+the Android adaptive launcher foreground (`apps/mobile/assets/android-icon-foreground.png`).
+It contains the transparent portrait cutout centered within Android's 264px diameter safe zone,
+allowing the launcher to apply its mask over the neon background without nested-shape distortion.
 
 `apps/mobile/assets/android-icon-mark.svg` is the source of truth for the
 flat monochrome launcher silhouette (`apps/mobile/assets/android-icon-mark.png`, 432×432).
@@ -62,7 +64,7 @@ The tracked generated assets across all platforms include:
 - `assets/dev/{blueprint-ios-1024.png,blueprint-universal-1024.png,blueprint-macos-1024.png,blueprint-windows.ico,blueprint-web-favicon.ico,blueprint-web-favicon-16x16.png,blueprint-web-favicon-32x32.png,blueprint-web-apple-touch-180.png}`
 - `assets/nightly/{nightly-ios-1024.png,nightly-universal-1024.png,nightly-macos-1024.png,nightly-windows.ico,nightly-web-favicon.ico,nightly-web-favicon-16x16.png,nightly-web-favicon-32x32.png,nightly-web-apple-touch-180.png}`
 - `assets/prod/{black-ios-1024.png,black-universal-1024.png,black-macos-1024.png,t3-black-windows.ico,t3-black-web-favicon.ico,t3-black-web-favicon-16x16.png,t3-black-web-favicon-32x32.png,t3-black-web-apple-touch-180.png}`
-- `apps/mobile/assets/{android-icon-foreground.png,android-icon-mark.png,android-notification-icon.png}`
+- `apps/mobile/assets/{android-icon-background.png,android-icon-foreground.png,android-icon-mark.png,android-notification-icon.png}`
 - `apps/web/public/{favicon.ico,favicon-16x16.png,favicon-32x32.png,apple-touch-icon.png}`
 
 The existing filenames remain stable for package, URL, and native consumers.

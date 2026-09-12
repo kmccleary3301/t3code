@@ -840,6 +840,11 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
 
   const androidAssets = [
     {
+      source: BRAND_ASSET_PATHS.androidAdaptiveBackgroundSvg,
+      output: BRAND_ASSET_PATHS.androidAdaptiveBackgroundPng,
+      size: 432,
+    },
+    {
       source: BRAND_ASSET_PATHS.androidAdaptiveForegroundSvg,
       output: BRAND_ASSET_PATHS.androidAdaptiveForegroundPng,
       size: 432,
