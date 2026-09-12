@@ -90,9 +90,13 @@ describe("icon export", () => {
         },
       ],
     });
-    assert.throws(
-      () => portableIconSvg(iconJson, new Map(), false),
-      /Missing Icon Composer source project: missing.png/,
-    );
+    let thrown: unknown;
+    try {
+      portableIconSvg(iconJson, new Map(), false);
+    } catch (error) {
+      thrown = error;
+    }
+    assert.instanceOf(thrown, IconExportSourceMissingError);
+    assert.equal((thrown as IconExportSourceMissingError).sourcePath, "missing.png");
   });
 });

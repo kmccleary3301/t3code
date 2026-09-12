@@ -47,14 +47,13 @@ the launcher to apply its mask over the dark background without nested-shape
 distortion.
 
 `apps/mobile/assets/android-icon-mark.svg` is the source of truth for the
-flat monochrome silhouette and status bar notification mark. It uses the
-clean KM monogram geometry and is rendered to:
+flat monochrome launcher silhouette (`apps/mobile/assets/android-icon-mark.png`, 432×432).
 
-- `apps/mobile/assets/android-icon-mark.png` (432×432)
-- `apps/mobile/assets/android-notification-icon.png` (96×96)
+`apps/mobile/assets/android-notification-icon.svg` is the source of truth for the
+status bar notification mark (`apps/mobile/assets/android-notification-icon.png`, 96×96).
 
-Both source marks remain transparent outside their subjects and keep their
-artwork strictly within Android's adaptive safe zone.
+Both marks use the clean KM monogram geometry, remain transparent outside their subjects,
+and keep their artwork strictly within Android's adaptive safe zone.
 
 ## Generated outputs
 
