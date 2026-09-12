@@ -836,7 +836,15 @@ describe("DesktopAppearanceStorage", () => {
       { mode: 0o600 },
     );
     const rollbackDeadline = Date.now() + 10_000;
-    while ((await readFile(Path.join(packagePath, "desktop.css"), "utf8")) !== firstCss) {
+    const readCurrentCss = async () => {
+      try {
+        return await readFile(Path.join(packagePath, "desktop.css"), "utf8");
+      } catch (error: any) {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      }
+    };
+    while ((await readCurrentCss()) !== firstCss) {
       if (Date.now() >= rollbackDeadline) {
         throw new Error("Timed out waiting for watcher rollback of desktop.css");
       }
