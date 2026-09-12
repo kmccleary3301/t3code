@@ -86,7 +86,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1.5 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-8 w-fit min-w-0 shrink-0 items-center gap-2 rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -103,9 +103,9 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
         </span>
       </div>
       <img
-        src="/mascot/kyle-mascot-64.png"
+        src="/mascot/kyle-mascot-128.png"
         alt="Kyle"
-        className="h-3.5 w-3.5 shrink-0 rounded-full object-cover select-none shadow-xs border border-white/20 transition-transform duration-200 hover:scale-125 active:scale-95"
+        className="size-7 shrink-0 rounded-full object-cover select-none shadow-sm border border-white/20 transition-transform duration-200 hover:scale-110 active:scale-95"
         draggable={false}
       />
     </Link>
